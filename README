@@ -1,3 +1,21 @@
+		   CORE-V GCC Development
+
+NOTE: This is not the standard GNU GCC. For that repository go to
+git://gcc.gnu.org/git/gcc.git.
+
+This is the repository for CORE-V GCC development prior to submitting for
+inclusion upstream. It has at most only two branches
+
+1. development - this is where the active development continues. This branch
+tracks upstream FSF GCC and incorporates changes for CORE-V. It should always
+compile and pass tests.
+
+2. stable - if it exists, this branch is an occasional snapshot of the
+development branch, at points of significant CORE-V feature enhancement.  This
+branch has always been thoroughly tested.
+
+The remainder of this file is the standard FSF README file for gcc
+
 This directory contains the GNU Compiler Collection (GCC).
 
 The GNU Compiler Collection is free software.  See the files whose
