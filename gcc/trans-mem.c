@@ -1,5 +1,5 @@
 /* Passes for transactional memory support.
-   Copyright (C) 2008-2020 Free Software Foundation, Inc.
+   Copyright (C) 2008-2021 Free Software Foundation, Inc.
    Contributed by Richard Henderson <rth@redhat.com>
    and Aldy Hernandez <aldyh@redhat.com>.
 
@@ -51,6 +51,9 @@
 #include "tree-ssa-address.h"
 #include "stringpool.h"
 #include "attribs.h"
+#include "alloc-pool.h"
+#include "symbol-summary.h"
+#include "symtab-thunks.h"
 
 #define A_RUNINSTRUMENTEDCODE	0x0001
 #define A_RUNUNINSTRUMENTEDCODE	0x0002
@@ -2030,7 +2033,7 @@ tm_region_init (struct tm_region *region)
   /* We could store this information in bb->aux, but we may get called
      through get_all_tm_blocks() from another pass that may be already
      using bb->aux.  */
-  bb_regions.safe_grow_cleared (last_basic_block_for_fn (cfun));
+  bb_regions.safe_grow_cleared (last_basic_block_for_fn (cfun), true);
 
   all_tm_regions = region;
   bb = single_succ (ENTRY_BLOCK_PTR_FOR_FN (cfun));
@@ -2774,7 +2777,7 @@ get_bb_regions_instrumented (bool traverse_clones,
   vec<tm_region *> ret;
 
   ret.create (n);
-  ret.safe_grow_cleared (n);
+  ret.safe_grow_cleared (n, true);
   stuff.bb2reg = &ret;
   stuff.include_uninstrumented_p = include_uninstrumented_p;
   expand_regions (all_tm_regions, collect_bb2reg, &stuff, traverse_clones);
@@ -4410,12 +4413,8 @@ ipa_tm_scan_irr_block (basic_block bb)
 	     is to wrap it in a __tm_waiver block.  This is not
 	     yet implemented, so we can't check for it.  */
 	  if (is_tm_safe (current_function_decl))
-	    {
-	      tree t = build1 (NOP_EXPR, void_type_node, size_zero_node);
-	      SET_EXPR_LOCATION (t, gimple_location (stmt));
-	      error ("%K%<asm%> not allowed in %<transaction_safe%> function",
-		     t);
-	    }
+	    error_at (gimple_location (stmt),
+		      "%<asm%> not allowed in %<transaction_safe%> function");
 	  return true;
 
 	default:
@@ -4729,7 +4728,8 @@ ipa_tm_mayenterirr_function (struct cgraph_node *node)
      result in one of the bits above being set so that we will not
      have to recurse next time.  */
   if (node->alias)
-    return ipa_tm_mayenterirr_function (cgraph_node::get (node->thunk.alias));
+    return ipa_tm_mayenterirr_function
+		 (cgraph_node::get (thunk_info::get (node)->alias));
 
   /* What remains is unmarked local functions without items that force
      the function to go irrevocable.  */
@@ -4994,7 +4994,7 @@ ipa_tm_create_version (struct cgraph_node *old_node)
   new_node->lowered = true;
   new_node->tm_clone = 1;
   if (!old_node->implicit_section)
-    new_node->set_section (old_node->get_section ());
+    new_node->set_section (*old_node);
   get_cg_data (&old_node, true)->clone = new_node;
 
   if (old_node->get_availability () >= AVAIL_INTERPOSABLE)
@@ -5475,7 +5475,7 @@ ipa_tm_execute (void)
 		 we need not scan the callees now, as the base will do.  */
 	      if (node->alias)
 		{
-		  node = cgraph_node::get (node->thunk.alias);
+		  node = cgraph_node::get (thunk_info::get (node)->alias);
 		  d = get_cg_data (&node, true);
 		  maybe_push_queue (node, &tm_callees, &d->in_callee_queue);
 		  continue;

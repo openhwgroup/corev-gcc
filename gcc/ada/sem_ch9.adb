@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2020, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2021, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -23,46 +23,50 @@
 --                                                                          --
 ------------------------------------------------------------------------------
 
-with Aspects;   use Aspects;
-with Atree;     use Atree;
-with Checks;    use Checks;
-with Contracts; use Contracts;
-with Debug;     use Debug;
-with Einfo;     use Einfo;
-with Errout;    use Errout;
-with Exp_Ch9;   use Exp_Ch9;
-with Elists;    use Elists;
-with Freeze;    use Freeze;
-with Layout;    use Layout;
-with Lib;       use Lib;
-with Lib.Xref;  use Lib.Xref;
-with Namet;     use Namet;
-with Nlists;    use Nlists;
-with Nmake;     use Nmake;
-with Opt;       use Opt;
-with Restrict;  use Restrict;
-with Rident;    use Rident;
-with Rtsfind;   use Rtsfind;
-with Sem;       use Sem;
-with Sem_Aux;   use Sem_Aux;
-with Sem_Ch3;   use Sem_Ch3;
-with Sem_Ch5;   use Sem_Ch5;
-with Sem_Ch6;   use Sem_Ch6;
-with Sem_Ch8;   use Sem_Ch8;
-with Sem_Ch13;  use Sem_Ch13;
-with Sem_Elab;  use Sem_Elab;
-with Sem_Eval;  use Sem_Eval;
-with Sem_Prag;  use Sem_Prag;
-with Sem_Res;   use Sem_Res;
-with Sem_Type;  use Sem_Type;
-with Sem_Util;  use Sem_Util;
-with Sem_Warn;  use Sem_Warn;
-with Snames;    use Snames;
-with Stand;     use Stand;
-with Sinfo;     use Sinfo;
+with Aspects;        use Aspects;
+with Atree;          use Atree;
+with Checks;         use Checks;
+with Contracts;      use Contracts;
+with Debug;          use Debug;
+with Einfo;          use Einfo;
+with Einfo.Entities; use Einfo.Entities;
+with Einfo.Utils;    use Einfo.Utils;
+with Errout;         use Errout;
+with Exp_Ch9;        use Exp_Ch9;
+with Elists;         use Elists;
+with Freeze;         use Freeze;
+with Layout;         use Layout;
+with Lib;            use Lib;
+with Lib.Xref;       use Lib.Xref;
+with Namet;          use Namet;
+with Nlists;         use Nlists;
+with Nmake;          use Nmake;
+with Opt;            use Opt;
+with Restrict;       use Restrict;
+with Rident;         use Rident;
+with Rtsfind;        use Rtsfind;
+with Sem;            use Sem;
+with Sem_Aux;        use Sem_Aux;
+with Sem_Ch3;        use Sem_Ch3;
+with Sem_Ch5;        use Sem_Ch5;
+with Sem_Ch6;        use Sem_Ch6;
+with Sem_Ch8;        use Sem_Ch8;
+with Sem_Ch13;       use Sem_Ch13;
+with Sem_Elab;       use Sem_Elab;
+with Sem_Eval;       use Sem_Eval;
+with Sem_Prag;       use Sem_Prag;
+with Sem_Res;        use Sem_Res;
+with Sem_Type;       use Sem_Type;
+with Sem_Util;       use Sem_Util;
+with Sem_Warn;       use Sem_Warn;
+with Snames;         use Snames;
+with Stand;          use Stand;
+with Sinfo;          use Sinfo;
+with Sinfo.Nodes;    use Sinfo.Nodes;
+with Sinfo.Utils;    use Sinfo.Utils;
 with Style;
-with Tbuild;    use Tbuild;
-with Uintp;     use Uintp;
+with Tbuild;         use Tbuild;
+with Uintp;          use Uintp;
 
 package body Sem_Ch9 is
 
@@ -790,13 +794,13 @@ package body Sem_Ch9 is
          if Kind /= E_Block and then Kind /= E_Loop
            and then not Is_Entry (Task_Nam)
          then
-            Error_Msg_N ("enclosing body of accept must be a task", N);
+            Error_Msg_N ("enclosing body of ACCEPT must be a task", N);
             return;
          end if;
       end loop;
 
       if Ekind (Etype (Task_Nam)) /= E_Task_Type then
-         Error_Msg_N ("invalid context for accept statement",  N);
+         Error_Msg_N ("invalid context for ACCEPT statement",  N);
          return;
       end if;
 
@@ -844,7 +848,7 @@ package body Sem_Ch9 is
       end loop;
 
       if Entry_Nam = Any_Id then
-         Error_Msg_N ("no entry declaration matches accept statement",  N);
+         Error_Msg_N ("no entry declaration matches ACCEPT statement",  N);
          return;
       else
          Set_Entity (Nam, Entry_Nam);
@@ -882,7 +886,7 @@ package body Sem_Ch9 is
 
          if Entry_Nam = Scope_Stack.Table (J).Entity then
             Error_Msg_N
-              ("duplicate accept statement for same entry (RM 9.5.2 (15))", N);
+              ("duplicate ACCEPT statement for same entry (RM 9.5.2 (15))", N);
 
             --  Do not continue analysis of accept statement, to prevent
             --  cascaded errors.
@@ -904,8 +908,8 @@ package body Sem_Ch9 is
 
                when N_Asynchronous_Select =>
                   Error_Msg_N
-                    ("accept statements are not allowed within an "
-                     & "asynchronous select inner to the enclosing task body",
+                    ("ACCEPT statement not allowed within an "
+                     & "asynchronous SELECT inner to the enclosing task body",
                      N);
                   exit;
 
@@ -1228,9 +1232,9 @@ package body Sem_Ch9 is
       Analyze (Formals);
 
       if Present (Entry_Index_Specification (Formals)) then
-         Set_Ekind (Id, E_Entry_Family);
+         Mutate_Ekind (Id, E_Entry_Family);
       else
-         Set_Ekind (Id, E_Entry);
+         Mutate_Ekind (Id, E_Entry);
       end if;
 
       Set_Etype          (Id, Standard_Void_Type);
@@ -1252,7 +1256,7 @@ package body Sem_Ch9 is
       E := First_Entity (P_Type);
       while Present (E) loop
          if Chars (E) = Chars (Id)
-           and then (Ekind (E) = Ekind (Id))
+           and then Ekind (E) = Ekind (Id)
            and then Type_Conformant (Id, E)
          then
             Entry_Name := E;
@@ -1522,7 +1526,7 @@ package body Sem_Ch9 is
 
       if Nkind (Call) = N_Explicit_Dereference then
          Error_Msg_N
-           ("entry call or dispatching primitive of interface required ", N);
+           ("entry call or dispatching primitive of interface required", N);
       end if;
 
       if Is_Non_Empty_List (Statements (N)) then
@@ -1547,13 +1551,13 @@ package body Sem_Ch9 is
       --  Case of no discrete subtype definition
 
       if No (D_Sdef) then
-         Set_Ekind (Def_Id, E_Entry);
+         Mutate_Ekind (Def_Id, E_Entry);
 
       --  Processing for discrete subtype definition present
 
       else
          Enter_Name (Def_Id);
-         Set_Ekind (Def_Id, E_Entry_Family);
+         Mutate_Ekind (Def_Id, E_Entry_Family);
          Analyze (D_Sdef);
          Make_Index (D_Sdef, N, Def_Id);
 
@@ -1718,11 +1722,11 @@ package body Sem_Ch9 is
          Make_Index (Def, N);
       end if;
 
-      Set_Ekind (Loop_Id, E_Loop);
+      Mutate_Ekind (Loop_Id, E_Loop);
       Set_Scope (Loop_Id, Current_Scope);
       Push_Scope (Loop_Id);
       Enter_Name (Iden);
-      Set_Ekind (Iden, E_Entry_Index_Parameter);
+      Mutate_Ekind (Iden, E_Entry_Index_Parameter);
       Set_Etype (Iden, Etype (Def));
    end Analyze_Entry_Index_Specification;
 
@@ -1804,7 +1808,7 @@ package body Sem_Ch9 is
       Freeze_Previous_Contracts (N);
 
       Tasking_Used := True;
-      Set_Ekind (Body_Id, E_Protected_Body);
+      Mutate_Ekind (Body_Id, E_Protected_Body);
       Set_Etype (Body_Id, Standard_Void_Type);
       Spec_Id := Find_Concurrent_Spec (Body_Id);
 
@@ -1951,9 +1955,7 @@ package body Sem_Ch9 is
       Tasking_Used := True;
       Analyze_Declarations (Visible_Declarations (N));
 
-      if Present (Private_Declarations (N))
-        and then not Is_Empty_List (Private_Declarations (N))
-      then
+      if not Is_Empty_List (Private_Declarations (N)) then
          Last_Id := Last_Entity (Prot_Typ);
          Analyze_Declarations (Private_Declarations (N));
 
@@ -2020,12 +2022,18 @@ package body Sem_Ch9 is
          Set_Completion_Referenced (T);
       end if;
 
-      Set_Ekind              (T, E_Protected_Type);
+      Mutate_Ekind           (T, E_Protected_Type);
       Set_Is_First_Subtype   (T);
-      Init_Size_Align        (T);
+      Reinit_Size_Align      (T);
       Set_Etype              (T, T);
       Set_Has_Delayed_Freeze (T);
       Set_Stored_Constraint  (T, No_Elist);
+
+      --  Initialize type's primitive operations list, for possible use when
+      --  the extension of prefixed call notation for untagged types is enabled
+      --  (such as by use of -gnatX).
+
+      Set_Direct_Primitive_Operations (T, New_Elmt_List);
 
       --  Mark this type as a protected type for the sake of restrictions,
       --  unless the protected type is declared in a private part of a package
@@ -2134,8 +2142,8 @@ package body Sem_Ch9 is
       E := First_Entity (Current_Scope);
       while Present (E) loop
          if Ekind (E) = E_Void then
-            Set_Ekind (E, E_Component);
-            Init_Component_Location (E);
+            Mutate_Ekind (E, E_Component);
+            Reinit_Component_Location (E);
          end if;
 
          Next_Entity (E);
@@ -2360,7 +2368,8 @@ package body Sem_Ch9 is
          --  entry body) unless it is a parameter of the innermost enclosing
          --  accept statement (or entry body).
 
-         if Object_Access_Level (Target_Obj) >= Scope_Depth (Outer_Ent)
+         if Static_Accessibility_Level (Target_Obj, Zero_On_Dynamic_Level)
+              >= Scope_Depth (Outer_Ent)
            and then
              (not Is_Entity_Name (Target_Obj)
                or else not Is_Formal (Entity (Target_Obj))
@@ -2618,7 +2627,7 @@ package body Sem_Ch9 is
                    (Nkind (Delay_Statement (Alt)) = N_Delay_Relative_Statement)
                then
                   Error_Msg_N
-                    ("delay_until and delay_relative alternatives ", Alt);
+                    ("delay_until and delay_relative alternatives", Alt);
                   Error_Msg_N
                     ("\cannot appear in the same selective_wait", Alt);
                end if;
@@ -2670,7 +2679,7 @@ package body Sem_Ch9 is
                               if Entity (EDN1) = Ent then
                                  Error_Msg_Sloc := Sloc (Stm1);
                                  Error_Msg_N
-                                   ("accept duplicates one on line#??", Stm);
+                                   ("ACCEPT duplicates one on line#??", Stm);
                                  exit;
                               end if;
                            end if;
@@ -2690,16 +2699,16 @@ package body Sem_Ch9 is
       Check_Potentially_Blocking_Operation (N);
 
       if Terminate_Present and Delay_Present then
-         Error_Msg_N ("at most one of terminate or delay alternative", N);
+         Error_Msg_N ("at most one of TERMINATE or DELAY alternative", N);
 
       elsif not Accept_Present then
          Error_Msg_N
-           ("select must contain at least one accept alternative", N);
+           ("SELECT must contain at least one ACCEPT alternative", N);
       end if;
 
       if Present (Else_Statements (N)) then
          if Terminate_Present or Delay_Present then
-            Error_Msg_N ("else part not allowed with other alternatives", N);
+            Error_Msg_N ("ELSE part not allowed with other alternatives", N);
          end if;
 
          Analyze_Statements (Else_Statements (N));
@@ -2770,12 +2779,12 @@ package body Sem_Ch9 is
       --  its own body.
 
       Enter_Name (Typ);
-      Set_Ekind            (Typ, E_Protected_Type);
+      Mutate_Ekind         (Typ, E_Protected_Type);
       Set_Etype            (Typ, Typ);
       Set_Anonymous_Object (Typ, Obj_Id);
 
       Enter_Name (Obj_Id);
-      Set_Ekind                  (Obj_Id, E_Variable);
+      Mutate_Ekind               (Obj_Id, E_Variable);
       Set_Etype                  (Obj_Id, Typ);
       Set_SPARK_Pragma           (Obj_Id, SPARK_Mode_Pragma);
       Set_SPARK_Pragma_Inherited (Obj_Id);
@@ -2856,12 +2865,12 @@ package body Sem_Ch9 is
       --  in its own body.
 
       Enter_Name (Typ);
-      Set_Ekind            (Typ, E_Task_Type);
+      Mutate_Ekind         (Typ, E_Task_Type);
       Set_Etype            (Typ, Typ);
       Set_Anonymous_Object (Typ, Obj_Id);
 
       Enter_Name (Obj_Id);
-      Set_Ekind                  (Obj_Id, E_Variable);
+      Mutate_Ekind               (Obj_Id, E_Variable);
       Set_Etype                  (Obj_Id, Typ);
       Set_SPARK_Pragma           (Obj_Id, SPARK_Mode_Pragma);
       Set_SPARK_Pragma_Inherited (Obj_Id);
@@ -2917,7 +2926,7 @@ package body Sem_Ch9 is
 
       Tasking_Used := True;
       Set_Scope (Body_Id, Current_Scope);
-      Set_Ekind (Body_Id, E_Task_Body);
+      Mutate_Ekind (Body_Id, E_Task_Body);
       Set_Etype (Body_Id, Standard_Void_Type);
       Spec_Id := Find_Concurrent_Spec (Body_Id);
 
@@ -3134,18 +3143,24 @@ package body Sem_Ch9 is
             Set_Completion_Referenced (T);
 
          else
-            Set_Ekind (T, E_Task_Type);
+            Mutate_Ekind (T, E_Task_Type);
             Set_Corresponding_Record_Type (T, Empty);
          end if;
       end if;
 
-      Set_Ekind              (T, E_Task_Type);
+      Mutate_Ekind           (T, E_Task_Type);
       Set_Is_First_Subtype   (T, True);
       Set_Has_Task           (T, True);
-      Init_Size_Align        (T);
+      Reinit_Size_Align      (T);
       Set_Etype              (T, T);
       Set_Has_Delayed_Freeze (T, True);
       Set_Stored_Constraint  (T, No_Elist);
+
+      --  Initialize type's primitive operations list, for possible use when
+      --  the extension of prefixed call notation for untagged types is enabled
+      --  (such as by use of -gnatX).
+
+      Set_Direct_Primitive_Operations (T, New_Elmt_List);
 
       --  Set the SPARK_Mode from the current context (may be overwritten later
       --  with an explicit pragma).
@@ -3532,6 +3547,14 @@ package body Sem_Ch9 is
 
             Next (Iface);
          end loop;
+
+         --  Check consistency of any nonoverridable aspects that are
+         --  inherited from multiple sources.
+
+         Check_Inherited_Nonoverridable_Aspects
+           (Inheritor      => N,
+            Interface_List => Interface_List (N),
+            Parent_Type    => Empty);
       end if;
 
       if not Has_Private_Declaration (T) then
@@ -3668,7 +3691,7 @@ package body Sem_Ch9 is
 
          elsif Nkind (Trigger) = N_Explicit_Dereference then
             Error_Msg_N
-              ("entry call or dispatching primitive of interface required ",
+              ("entry call or dispatching primitive of interface required",
                 Trigger);
          end if;
       end if;

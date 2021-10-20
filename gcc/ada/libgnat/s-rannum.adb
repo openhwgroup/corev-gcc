@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 2007-2020, Free Software Foundation, Inc.         --
+--          Copyright (C) 2007-2021, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -86,7 +86,6 @@
 --                                                                          --
 ------------------------------------------------------------------------------
 
-with Ada.Strings.Text_Output.Utils;
 with Ada.Unchecked_Conversion;
 
 with System.Random_Seed;
@@ -178,7 +177,10 @@ is
    function Random (Gen : Generator) return Unsigned_32 is
       G : Generator renames Gen.Writable.Self.all;
       Y : State_Val;
-      I : Integer;      --  should avoid use of identifier I ???
+      I : Integer;
+      --  Naming exception: I is fine to use here as it is the name used in
+      --  the original paper describing the Mersenne Twister and in common
+      --  descriptions of the algorithm.
 
    begin
       I := G.I;
@@ -387,6 +389,12 @@ is
         or Unsigned_64 (Unsigned_32'(Random (Gen)));
    end Random;
 
+   function Random (Gen : Generator) return Unsigned_128 is
+   begin
+      return Shift_Left (Unsigned_128 (Unsigned_64'(Random (Gen))), 64)
+        or Unsigned_128 (Unsigned_64'(Random (Gen)));
+   end Random;
+
    ---------------------
    -- Random_Discrete --
    ---------------------
@@ -402,6 +410,41 @@ is
 
       elsif Max < Min then
          raise Constraint_Error;
+
+      --  In the 128-bit case, we have to be careful since not all 128-bit
+      --  unsigned values are representable in GNAT's universal integer.
+
+      elsif Result_Subtype'Base'Size > 64 then
+         declare
+            --  Ignore unequal-size warnings since GNAT's handling is correct.
+
+            pragma Warnings ("Z");
+            function Conv_To_Unsigned is
+               new Unchecked_Conversion (Result_Subtype'Base, Unsigned_128);
+            function Conv_To_Result is
+               new Unchecked_Conversion (Unsigned_128, Result_Subtype'Base);
+            pragma Warnings ("z");
+
+            N : constant Unsigned_128 :=
+                  Conv_To_Unsigned (Max) - Conv_To_Unsigned (Min) + 1;
+
+            X, Slop : Unsigned_128;
+
+         begin
+            if N = 0 then
+               return Conv_To_Result (Conv_To_Unsigned (Min) + Random (Gen));
+
+            else
+               Slop := Unsigned_128'Last rem N + 1;
+
+               loop
+                  X := Random (Gen);
+                  exit when Slop = N or else X <= Unsigned_128'Last - Slop;
+               end loop;
+
+               return Conv_To_Result (Conv_To_Unsigned (Min) + X rem N);
+            end if;
+         end;
 
       --  In the 64-bit case, we have to be careful since not all 64-bit
       --  unsigned values are representable in GNAT's universal integer.
@@ -645,9 +688,9 @@ is
    ---------------
 
    procedure Put_Image
-     (S : in out Strings.Text_Output.Sink'Class; V : State) is
+     (S : in out Strings.Text_Buffers.Root_Buffer_Type'Class; V : State) is
    begin
-      Strings.Text_Output.Utils.Put_String (S, Image (V));
+      Strings.Text_Buffers.Put (S, Image (V));
    end Put_Image;
 
    -----------

@@ -1,5 +1,5 @@
 /* gfortran backend interface
-   Copyright (C) 2000-2020 Free Software Foundation, Inc.
+   Copyright (C) 2000-2021 Free Software Foundation, Inc.
    Contributed by Paul Brook.
 
 This file is part of GCC.
@@ -126,6 +126,8 @@ static const struct attribute_spec gfc_attribute_table[] =
 #undef LANG_HOOKS_OMP_CLAUSE_LINEAR_CTOR
 #undef LANG_HOOKS_OMP_CLAUSE_DTOR
 #undef LANG_HOOKS_OMP_FINISH_CLAUSE
+#undef LANG_HOOKS_OMP_ALLOCATABLE_P
+#undef LANG_HOOKS_OMP_SCALAR_TARGET_P
 #undef LANG_HOOKS_OMP_SCALAR_P
 #undef LANG_HOOKS_OMP_DISREGARD_VALUE_EXPR
 #undef LANG_HOOKS_OMP_PRIVATE_DEBUG_CLAUSE
@@ -162,7 +164,9 @@ static const struct attribute_spec gfc_attribute_table[] =
 #define LANG_HOOKS_OMP_CLAUSE_LINEAR_CTOR	gfc_omp_clause_linear_ctor
 #define LANG_HOOKS_OMP_CLAUSE_DTOR		gfc_omp_clause_dtor
 #define LANG_HOOKS_OMP_FINISH_CLAUSE		gfc_omp_finish_clause
+#define LANG_HOOKS_OMP_ALLOCATABLE_P		gfc_omp_allocatable_p
 #define LANG_HOOKS_OMP_SCALAR_P			gfc_omp_scalar_p
+#define LANG_HOOKS_OMP_SCALAR_TARGET_P		gfc_omp_scalar_target_p
 #define LANG_HOOKS_OMP_DISREGARD_VALUE_EXPR	gfc_omp_disregard_value_expr
 #define LANG_HOOKS_OMP_PRIVATE_DEBUG_CLAUSE	gfc_omp_private_debug_clause
 #define LANG_HOOKS_OMP_PRIVATE_OUTER_REF	gfc_omp_private_outer_ref
@@ -255,8 +259,8 @@ gfc_init (void)
 
   gfc_init_1 ();
 
-  if (!gfc_new_file ())
-    fatal_error (input_location, "cannot open input file: %s", gfc_source_file);
+  /* Calls exit in case of a fail. */
+  gfc_new_file ();
 
   if (flag_preprocess_only)
     return false;
@@ -531,7 +535,7 @@ gfc_builtin_function (tree decl)
   return decl;
 }
 
-/* So far we need just these 7 attribute types.  */
+/* So far we need just these 10 attribute types.  */
 #define ATTR_NULL			0
 #define ATTR_LEAF_LIST			(ECF_LEAF)
 #define ATTR_NOTHROW_LEAF_LIST		(ECF_NOTHROW | ECF_LEAF)
@@ -540,6 +544,11 @@ gfc_builtin_function (tree decl)
 #define ATTR_PURE_NOTHROW_LEAF_LIST	(ECF_NOTHROW | ECF_LEAF | ECF_PURE)
 #define ATTR_NOTHROW_LIST		(ECF_NOTHROW)
 #define ATTR_CONST_NOTHROW_LIST		(ECF_NOTHROW | ECF_CONST)
+#define ATTR_ALLOC_WARN_UNUSED_RESULT_SIZE_2_NOTHROW_LIST \
+					(ECF_NOTHROW)
+#define ATTR_COLD_NORETURN_NOTHROW_LEAF_LIST \
+					(ECF_COLD | ECF_NORETURN | \
+					 ECF_NOTHROW | ECF_LEAF)
 
 static void
 gfc_define_builtin (const char *name, tree type, enum built_in_function code,
@@ -881,7 +890,7 @@ gfc_init_builtin_functions (void)
 		      BUILT_IN_POWIF, "powif", ATTR_CONST_NOTHROW_LEAF_LIST);
 
 
-  if (targetm.libc_has_function (function_c99_math_complex))
+  if (targetm.libc_has_function (function_c99_math_complex, NULL_TREE))
     {
       gfc_define_builtin ("__builtin_cbrtl", mfunc_longdouble[0],
 			  BUILT_IN_CBRTL, "cbrtl",
@@ -903,7 +912,7 @@ gfc_init_builtin_functions (void)
 			  ATTR_CONST_NOTHROW_LEAF_LIST);
     }
 
-  if (targetm.libc_has_function (function_sincos))
+  if (targetm.libc_has_function (function_sincos, NULL_TREE))
     {
       gfc_define_builtin ("__builtin_sincosl",
 			  func_longdouble_longdoublep_longdoublep,
@@ -1236,6 +1245,13 @@ gfc_init_builtin_functions (void)
 #undef DEF_GOACC_BUILTIN
 #undef DEF_GOACC_BUILTIN_COMPILER
 #undef DEF_GOMP_BUILTIN
+      tree gomp_alloc = builtin_decl_explicit (BUILT_IN_GOMP_ALLOC);
+      tree two = build_int_cst (integer_type_node, 2);
+      DECL_ATTRIBUTES (gomp_alloc)
+	= tree_cons (get_identifier ("warn_unused_result"), NULL_TREE,
+		     tree_cons (get_identifier ("alloc_size"),
+				build_tree_list (NULL_TREE, two),
+				DECL_ATTRIBUTES (gomp_alloc)));
     }
 
   gfc_define_builtin ("__builtin_trap", builtin_types[BT_FN_VOID],

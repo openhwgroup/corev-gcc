@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+//go:build js
 // +build js
 
 package testing
@@ -26,6 +27,7 @@ func runExample(eg InternalExample) (ok bool) {
 	stdout := os.Stdout
 	f := createTempFile(eg.Name)
 	os.Stdout = f
+	finished := false
 	start := time.Now()
 
 	// Clean up in a deferred call so we can recover if the example panics.
@@ -50,11 +52,12 @@ func runExample(eg InternalExample) (ok bool) {
 		}
 
 		err := recover()
-		ok = eg.processRunResult(out, timeSpent, err)
+		ok = eg.processRunResult(out, timeSpent, finished, err)
 	}()
 
 	// Run example.
 	eg.F()
+	finished = true
 	return
 }
 

@@ -1,5 +1,5 @@
 /* String length optimization
-   Copyright (C) 2011-2020 Free Software Foundation, Inc.
+   Copyright (C) 2011-2021 Free Software Foundation, Inc.
    Contributed by Jakub Jelinek <jakub@redhat.com>
 
 This file is part of GCC.
@@ -30,6 +30,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "ssa.h"
 #include "cgraph.h"
 #include "gimple-pretty-print.h"
+#include "gimple-ssa-warn-access.h"
 #include "gimple-ssa-warn-restrict.h"
 #include "fold-const.h"
 #include "stor-layout.h"
@@ -46,8 +47,8 @@ along with GCC; see the file COPYING3.  If not see
 #include "tree-ssa-propagate.h"
 #include "tree-ssa-strlen.h"
 #include "tree-hash-traits.h"
-#include "tree-object-size.h"
 #include "builtins.h"
+#include "pointer-query.h"
 #include "target.h"
 #include "diagnostic-core.h"
 #include "diagnostic.h"
@@ -192,51 +193,123 @@ struct laststmt_struct
 } laststmt;
 
 static int get_stridx_plus_constant (strinfo *, unsigned HOST_WIDE_INT, tree);
-static void handle_builtin_stxncpy_strncat (bool, gimple_stmt_iterator *);
 
 /* Sets MINMAX to either the constant value or the range VAL is in
    and returns either the constant value or VAL on success or null
-   when the range couldn't be determined.  Uses RVALS when nonnull
-   to determine the range, otherwise get_range_info.  */
+   when the range couldn't be determined.  Uses RVALS or CFUN for
+   range info, whichever is nonnull.  */
 
 tree
-get_range (tree val, wide_int minmax[2], const vr_values *rvals /* = NULL */)
+get_range (tree val, gimple *stmt, wide_int minmax[2],
+	   range_query *rvals /* = NULL */)
 {
-  if (TREE_CODE (val) == INTEGER_CST)
+  if (!rvals)
     {
-      minmax[0] = minmax[1] = wi::to_wide (val);
-      return val;
-    }
-
-  if (TREE_CODE (val) != SSA_NAME)
-    return NULL_TREE;
-
-  if (rvals)
-    {
-      /* The range below may be "inaccurate" if a constant has been
-	 substituted earlier for VAL by this pass that hasn't been
-	 propagated through the CFG.  This shoud be fixed by the new
-	 on-demand VRP if/when it becomes available (hopefully in
-	 GCC 11).  */
-      const value_range *vr
-	= (CONST_CAST (class vr_values *, rvals)->get_value_range (val));
-      value_range_kind rng = vr->kind ();
-      if (rng != VR_RANGE || !range_int_cst_p (vr))
+      if (!cfun)
+	/* When called from front ends for global initializers CFUN
+	   may be null.  */
 	return NULL_TREE;
 
-      minmax[0] = wi::to_wide (vr->min ());
-      minmax[1] = wi::to_wide (vr->max ());
+      rvals = get_range_query (cfun);
+    }
+
+  value_range vr;
+  if (!rvals->range_of_expr (vr, val, stmt))
+    return NULL_TREE;
+
+  value_range_kind rng = vr.kind ();
+  if (rng == VR_RANGE)
+    {
+      /* Only handle straight ranges.  */
+      minmax[0] = wi::to_wide (vr.min ());
+      minmax[1] = wi::to_wide (vr.max ());
       return val;
     }
 
-  value_range_kind rng = get_range_info (val, minmax, minmax + 1);
-  if (rng == VR_RANGE)
-    return val;
-
-  /* Do not handle anti-ranges and instead make use of the on-demand
-     VRP if/when it becomes available (hopefully in GCC 11).  */
   return NULL_TREE;
 }
+
+class strlen_pass : public dom_walker
+{
+public:
+  strlen_pass (cdi_direction direction)
+    : dom_walker (direction),
+      evrp (false),
+      ptr_qry (&evrp, &var_cache),
+      var_cache (),
+      m_cleanup_cfg (false)
+  {
+  }
+
+  ~strlen_pass ();
+
+  virtual edge before_dom_children (basic_block);
+  virtual void after_dom_children (basic_block);
+
+  bool check_and_optimize_stmt (bool *cleanup_eh);
+  bool check_and_optimize_call (bool *zero_write);
+  bool handle_assign (tree lhs, bool *zero_write);
+  bool handle_store (bool *zero_write);
+  void handle_pointer_plus ();
+  void handle_builtin_strlen ();
+  void handle_builtin_strchr ();
+  void handle_builtin_strcpy (built_in_function);
+  void handle_integral_assign (bool *cleanup_eh);
+  void handle_builtin_stxncpy_strncat (bool append_p);
+  void handle_builtin_memcpy (built_in_function bcode);
+  void handle_builtin_strcat (built_in_function bcode);
+  void handle_builtin_strncat (built_in_function);
+  bool handle_builtin_memset (bool *zero_write);
+  bool handle_builtin_memcmp ();
+  bool handle_builtin_string_cmp ();
+  void handle_alloc_call (built_in_function);
+  void maybe_warn_overflow (gimple *stmt, bool call_lhs, tree len,
+			    strinfo *si = NULL, bool plus_one = false,
+			    bool rawmem = false);
+  void maybe_warn_overflow (gimple *stmt, bool call_lhs,
+			    unsigned HOST_WIDE_INT len,
+			    strinfo *si = NULL,
+			    bool plus_one = false, bool rawmem = false);
+  void adjust_last_stmt (strinfo *si, gimple *stmt, bool is_strcat);
+  tree strxcmp_eqz_result (gimple *stmt, tree arg1, int idx1,
+			   tree arg2, int idx2,
+			   unsigned HOST_WIDE_INT bound,
+			   unsigned HOST_WIDE_INT len[2],
+			   unsigned HOST_WIDE_INT *psize);
+  bool count_nonzero_bytes (tree expr_or_type,
+			    unsigned lenrange[3], bool *nulterm,
+			    bool *allnul, bool *allnonnul);
+  bool count_nonzero_bytes (tree exp,
+			    unsigned HOST_WIDE_INT offset,
+			    unsigned HOST_WIDE_INT nbytes,
+			    unsigned lenrange[3], bool *nulterm,
+			    bool *allnul, bool *allnonnul,
+			    ssa_name_limit_t &snlim);
+  bool count_nonzero_bytes_addr (tree exp,
+				 unsigned HOST_WIDE_INT offset,
+				 unsigned HOST_WIDE_INT nbytes,
+				 unsigned lenrange[3], bool *nulterm,
+				 bool *allnul, bool *allnonnul,
+				 ssa_name_limit_t &snlim);
+  bool get_len_or_size (gimple *stmt, tree arg, int idx,
+			unsigned HOST_WIDE_INT lenrng[2],
+			unsigned HOST_WIDE_INT *size, bool *nulterm);
+
+  /* EVRP analyzer used for printf argument range processing, and to
+     track strlen results across integer variable assignments.  */
+  evrp_range_analyzer evrp;
+
+  /* A pointer_query object and its cache to store information about
+     pointers and their targets in.  */
+  pointer_query ptr_qry;
+  pointer_query::cache_type var_cache;
+
+  gimple_stmt_iterator m_gsi;
+
+  /* Flag that will trigger TODO_cleanup_cfg to be returned in strlen
+     execute function.  */
+  bool m_cleanup_cfg;
+};
 
 /* Return:
 
@@ -248,7 +321,7 @@ get_range (tree val, wide_int minmax[2], const vr_values *rvals /* = NULL */)
 	  or the relationship between the number of leading nonzero
 	  characters in SI and OFF is unknown.  */
 
-static inline int
+static int
 compare_nonzero_chars (strinfo *si, unsigned HOST_WIDE_INT off)
 {
   if (si->nonzero_chars
@@ -263,7 +336,7 @@ compare_nonzero_chars (strinfo *si, unsigned HOST_WIDE_INT off)
 
 static int
 compare_nonzero_chars (strinfo *si, unsigned HOST_WIDE_INT off,
-		       const vr_values *rvals)
+		       range_query *rvals)
 {
   if (!si->nonzero_chars)
     return -1;
@@ -274,20 +347,19 @@ compare_nonzero_chars (strinfo *si, unsigned HOST_WIDE_INT off,
   if (!rvals || TREE_CODE (si->nonzero_chars) != SSA_NAME)
     return -1;
 
-  const value_range_equiv *vr
-    = (CONST_CAST (class vr_values *, rvals)
-       ->get_value_range (si->nonzero_chars));
-
-  value_range_kind rng = vr->kind ();
-  if (rng != VR_RANGE || !range_int_cst_p (vr))
+  value_range vr;
+  if (!rvals->range_of_expr (vr, si->nonzero_chars, si->stmt))
+    return -1;
+  value_range_kind rng = vr.kind ();
+  if (rng != VR_RANGE)
     return -1;
 
   /* If the offset is less than the minimum length or if the bounds
      of the length range are equal return the result of the comparison
      same as in the constant case.  Otherwise return a conservative
      result.  */
-  int cmpmin = compare_tree_int (vr->min (), off);
-  if (cmpmin > 0 || tree_int_cst_equal (vr->min (), vr->max ()))
+  int cmpmin = compare_tree_int (vr.min (), off);
+  if (cmpmin > 0 || tree_int_cst_equal (vr.min (), vr.max ()))
     return cmpmin;
 
   return -1;
@@ -332,7 +404,7 @@ get_next_strinfo (strinfo *si)
 
 static int
 get_addr_stridx (tree exp, tree ptr, unsigned HOST_WIDE_INT *offset_out,
-		 const vr_values *rvals = NULL)
+		 range_query *rvals = NULL)
 {
   HOST_WIDE_INT off;
   struct stridxlist *list, *last = NULL;
@@ -392,7 +464,7 @@ get_addr_stridx (tree exp, tree ptr, unsigned HOST_WIDE_INT *offset_out,
    When nonnull, uses RVALS to determine range information.  */
 
 static int
-get_stridx (tree exp, wide_int offrng[2] = NULL, const vr_values *rvals = NULL)
+get_stridx (tree exp, wide_int offrng[2] = NULL, range_query *rvals = NULL)
 {
   if (offrng)
     offrng[0] = offrng[1] = wi::zero (TYPE_PRECISION (ptrdiff_type_node));
@@ -474,7 +546,7 @@ get_stridx (tree exp, wide_int offrng[2] = NULL, const vr_values *rvals = NULL)
 		       return the index corresponding to the SSA_NAME.
 		       Do this irrespective of the whether the offset
 		       is known.  */
-		    if (get_range (off, offrng, rvals))
+		    if (get_range (off, def_stmt, offrng, rvals))
 		      {
 			/* When the offset range is known, increment it
 			   it by the constant offset computed in prior
@@ -712,7 +784,7 @@ set_strinfo (int idx, strinfo *si)
   if (vec_safe_length (stridx_to_strinfo) && (*stridx_to_strinfo)[0])
     unshare_strinfo_vec ();
   if (vec_safe_length (stridx_to_strinfo) <= (unsigned int) idx)
-    vec_safe_grow_cleared (stridx_to_strinfo, idx + 1);
+    vec_safe_grow_cleared (stridx_to_strinfo, idx + 1, true);
   (*stridx_to_strinfo)[idx] = si;
 }
 
@@ -864,11 +936,11 @@ get_string_length (strinfo *si)
 }
 
 /* Dump strlen data to FP for statement STMT.  When non-null, RVALS
-   points to EVRP info and is used to dump strlen range for non-constant
-   results.  */
+   points to the valuation engine used to calculate ranges, and is
+   used to dump strlen range for non-constant results.  */
 
 DEBUG_FUNCTION void
-dump_strlen_info (FILE *fp, gimple *stmt, const vr_values *rvals)
+dump_strlen_info (FILE *fp, gimple *stmt, range_query *rvals)
 {
   if (stmt)
     {
@@ -909,20 +981,30 @@ dump_strlen_info (FILE *fp, gimple *stmt, const vr_values *rvals)
 		      wide_int min, max;
 		      if (rvals)
 			{
-			  const value_range *vr
-			    = CONST_CAST (class vr_values *, rvals)
-			    ->get_value_range (si->nonzero_chars);
-			  rng = vr->kind ();
-			  if (range_int_cst_p (vr))
+			  value_range vr;
+			  rvals->range_of_expr (vr, si->nonzero_chars,
+						si->stmt);
+			  rng = vr.kind ();
+			  if (range_int_cst_p (&vr))
 			    {
-			      min = wi::to_wide (vr->min ());
-			      max = wi::to_wide (vr->max ());
+			      min = wi::to_wide (vr.min ());
+			      max = wi::to_wide (vr.max ());
 			    }
 			  else
 			    rng = VR_UNDEFINED;
 			}
 		      else
-			rng = get_range_info (si->nonzero_chars, &min, &max);
+			{
+			  value_range vr;
+			  get_range_query (cfun)
+			    ->range_of_expr (vr, si->nonzero_chars);
+			  rng = vr.kind ();
+			  if (!vr.undefined_p ())
+			    {
+			      min = wi::to_wide (vr.min ());
+			      max = wi::to_wide (vr.max ());
+			    }
+			}
 
 		      if (rng == VR_RANGE || rng == VR_ANTI_RANGE)
 			{
@@ -1004,13 +1086,14 @@ dump_strlen_info (FILE *fp, gimple *stmt, const vr_values *rvals)
 
 /* Attempt to determine the length of the string SRC.  On success, store
    the length in *PDATA and return true.  Otherwise, return false.
-   VISITED is a bitmap of visited PHI nodes.  RVALS points to EVRP info
-   and PSSA_DEF_MAX to an SSA_NAME assignment limit used to prevent runaway
-   recursion.  */
+   VISITED is a bitmap of visited PHI nodes.  RVALS points to the valuation
+   engine used to calculate ranges.  PSSA_DEF_MAX to an SSA_NAME
+   assignment limit used to prevent runaway recursion.  */
 
 static bool
-get_range_strlen_dynamic (tree src, c_strlen_data *pdata, bitmap *visited,
-			  const vr_values *rvals, unsigned *pssa_def_max)
+get_range_strlen_dynamic (tree src, gimple *stmt,
+			  c_strlen_data *pdata, bitmap *visited,
+			  range_query *rvals, unsigned *pssa_def_max)
 {
   int idx = get_stridx (src);
   if (!idx)
@@ -1042,8 +1125,8 @@ get_range_strlen_dynamic (tree src, c_strlen_data *pdata, bitmap *visited,
 		    continue;
 
 		  c_strlen_data argdata = { };
-		  if (get_range_strlen_dynamic (arg, &argdata, visited, rvals,
-						pssa_def_max))
+		  if (get_range_strlen_dynamic (arg, phi, &argdata, visited,
+						rvals, pssa_def_max))
 		    {
 		      /* Set the DECL of an unterminated array this argument
 			 refers to if one hasn't been found yet.  */
@@ -1110,14 +1193,12 @@ get_range_strlen_dynamic (tree src, c_strlen_data *pdata, bitmap *visited,
 	    pdata->minlen = si->nonzero_chars;
 	  else if (TREE_CODE (si->nonzero_chars) == SSA_NAME)
 	    {
-	      const value_range_equiv *vr
-		= CONST_CAST (class vr_values *, rvals)
-		->get_value_range (si->nonzero_chars);
-	      if (vr->kind () == VR_RANGE
-		  && range_int_cst_p (vr))
+	      value_range vr;
+	      rvals->range_of_expr (vr, si->nonzero_chars, si->stmt);
+	      if (range_int_cst_p (&vr))
 		{
-		  pdata->minlen = vr->min ();
-		  pdata->maxlen = vr->max ();
+		  pdata->minlen = vr.min ();
+		  pdata->maxlen = vr.max ();
 		}
 	      else
 		pdata->minlen = build_zero_cst (size_type_node);
@@ -1156,14 +1237,12 @@ get_range_strlen_dynamic (tree src, c_strlen_data *pdata, bitmap *visited,
 	}
       else if (pdata->minlen && TREE_CODE (pdata->minlen) == SSA_NAME)
 	{
-	  const value_range_equiv *vr
-	    = CONST_CAST (class vr_values *, rvals)
-	    ->get_value_range (si->nonzero_chars);
-	  if (vr->kind () == VR_RANGE
-	      && range_int_cst_p (vr))
+	  value_range vr;
+	  rvals->range_of_expr (vr, si->nonzero_chars, stmt);
+	  if (range_int_cst_p (&vr))
 	    {
-	      pdata->minlen = vr->min ();
-	      pdata->maxlen = vr->max ();
+	      pdata->minlen = vr.min ();
+	      pdata->maxlen = vr.max ();
 	      pdata->maxbound = pdata->maxlen;
 	    }
 	  else
@@ -1198,17 +1277,17 @@ get_range_strlen_dynamic (tree src, c_strlen_data *pdata, bitmap *visited,
    Try to obtain the range of the lengths of the string(s) referenced
    by SRC, or the size of the largest array SRC refers to if the range
    of lengths cannot be determined, and store all in *PDATA.  RVALS
-   points to EVRP info.  */
+   points to the valuation engine used to calculate ranges.  */
 
 void
-get_range_strlen_dynamic (tree src, c_strlen_data *pdata,
-			  const vr_values *rvals)
+get_range_strlen_dynamic (tree src, gimple *stmt, c_strlen_data *pdata,
+			  range_query *rvals)
 {
   bitmap visited = NULL;
   tree maxbound = pdata->maxbound;
 
   unsigned limit = param_ssa_name_def_chain_limit;
-  if (!get_range_strlen_dynamic (src, pdata, &visited, rvals, &limit))
+  if (!get_range_strlen_dynamic (src, stmt, pdata, &visited, rvals, &limit))
     {
       /* On failure extend the length range to an impossible maximum
 	 (a valid MAXLEN must be less than PTRDIFF_MAX - 1).  Other
@@ -1262,16 +1341,19 @@ maybe_invalidate (gimple *stmt, bool zero_write = false)
 	continue;
 
       ao_ref r;
-      tree size = NULL_TREE;
-      if (si->nonzero_chars)
-	{
-	  /* Include the terminating nul in the size of the string
-	     to consider when determining possible clobber.  */
-	  tree type = TREE_TYPE (si->nonzero_chars);
-	  size = fold_build2 (PLUS_EXPR, type, si->nonzero_chars,
-			      build_int_cst (type, 1));
-	}
+      tree size = si->nonzero_chars;
       ao_ref_init_from_ptr_and_size (&r, si->ptr, size);
+      /* Include the terminating nul in the size of the string
+	 to consider when determining possible clobber.  But do not
+	 add it to 'size' since we don't know whether it would
+	 actually fit the allocated area.  */
+      if (known_size_p (r.size))
+	{
+	  if (known_le (r.size, HOST_WIDE_INT_MAX - BITS_PER_UNIT))
+	    r.max_size += BITS_PER_UNIT;
+	  else
+	    r.max_size = -1;
+	}
       if (stmt_may_clobber_ref_p_1 (stmt, &r))
 	{
 	  if (dump_file && (dump_flags & TDF_DETAILS))
@@ -1365,7 +1447,7 @@ get_stridx_plus_constant (strinfo *basesi, unsigned HOST_WIDE_INT off,
 
   if (TREE_CODE (ptr) == SSA_NAME
       && ssa_ver_to_stridx.length () <= SSA_NAME_VERSION (ptr))
-    ssa_ver_to_stridx.safe_grow_cleared (num_ssa_names);
+    ssa_ver_to_stridx.safe_grow_cleared (num_ssa_names, true);
 
   gcc_checking_assert (compare_tree_int (si->nonzero_chars, off) != -1);
   for (chainsi = si; chainsi->next; chainsi = si)
@@ -1429,7 +1511,7 @@ zero_length_string (tree ptr, strinfo *chainsi)
   strinfo *si;
   int idx;
   if (ssa_ver_to_stridx.length () <= SSA_NAME_VERSION (ptr))
-    ssa_ver_to_stridx.safe_grow_cleared (num_ssa_names);
+    ssa_ver_to_stridx.safe_grow_cleared (num_ssa_names, true);
   gcc_checking_assert (TREE_CODE (ptr) == SSA_NAME
 		       && ssa_ver_to_stridx[SSA_NAME_VERSION (ptr)] == 0);
 
@@ -1582,7 +1664,7 @@ find_equal_ptrs (tree ptr, int idx)
       /* We might find an endptr created in this pass.  Grow the
 	 vector in that case.  */
       if (ssa_ver_to_stridx.length () <= SSA_NAME_VERSION (ptr))
-	ssa_ver_to_stridx.safe_grow_cleared (num_ssa_names);
+	ssa_ver_to_stridx.safe_grow_cleared (num_ssa_names, true);
 
       if (ssa_ver_to_stridx[SSA_NAME_VERSION (ptr)] != 0)
 	return;
@@ -1661,8 +1743,8 @@ valid_builtin_call (gimple *stmt)
    just memcpy (x, y, strlen (y)).  SI must be the zero length
    strinfo.  */
 
-static void
-adjust_last_stmt (strinfo *si, gimple *stmt, bool is_strcat)
+void
+strlen_pass::adjust_last_stmt (strinfo *si, gimple *stmt, bool is_strcat)
 {
   tree vuse, callee, len;
   struct laststmt_struct last = laststmt;
@@ -1749,7 +1831,9 @@ adjust_last_stmt (strinfo *si, gimple *stmt, bool is_strcat)
       /* Don't fold away an out of bounds access, as this defeats proper
 	 warnings.  */
       tree dst = gimple_call_arg (last.stmt, 0);
-      tree size = compute_objsize (dst, 0);
+
+      access_ref aref;
+      tree size = compute_objsize (dst, 1, &aref, &ptr_qry);
       if (size && tree_int_cst_lt (size, len))
 	return;
     }
@@ -1802,17 +1886,17 @@ set_strlen_range (tree lhs, wide_int min, wide_int max,
 	}
       else if (TREE_CODE (bound) == SSA_NAME)
 	{
-	  wide_int minbound, maxbound;
-	  value_range_kind rng = get_range_info (bound, &minbound, &maxbound);
-	  if (rng == VR_RANGE)
+	  value_range r;
+	  get_range_query (cfun)->range_of_expr (r, bound);
+	  if (!r.undefined_p ())
 	    {
 	      /* For a bound in a known range, adjust the range determined
 		 above as necessary.  For a bound in some anti-range or
 		 in an unknown range, use the range determined by callers.  */
-	      if (wi::ltu_p (minbound, min))
-		min = minbound;
-	      if (wi::ltu_p (maxbound, max))
-		max = maxbound;
+	      if (wi::ltu_p (r.lower_bound (), min))
+		min = r.lower_bound ();
+	      if (wi::ltu_p (r.upper_bound (), max))
+		max = r.upper_bound ();
 	    }
 	}
     }
@@ -1901,186 +1985,74 @@ maybe_set_strlen_range (tree lhs, tree src, tree bound)
 /* Diagnose buffer overflow by a STMT writing LEN + PLUS_ONE bytes,
    either into a region allocated for the object SI when non-null,
    or into an object designated by the LHS of STMT otherwise.
+   For a call STMT, when CALL_LHS is set use its left hand side
+   as the destination, otherwise use argument zero.
    When nonnull uses RVALS to determine range information.
    RAWMEM may be set by memcpy and other raw memory functions
    to allow accesses across subobject boundaries.  */
 
-static void
-maybe_warn_overflow (gimple *stmt, tree len,
-		     const vr_values *rvals = NULL,
-		     strinfo *si = NULL, bool plus_one = false,
-		     bool rawmem = false)
+void
+strlen_pass::maybe_warn_overflow (gimple *stmt, bool call_lhs, tree len,
+				  strinfo *si, bool plus_one, bool rawmem)
 {
-  if (!len || gimple_no_warning_p (stmt))
+  if (!len || warning_suppressed_p (stmt, OPT_Wstringop_overflow_))
     return;
 
   /* The DECL of the function performing the write if it is done
      by one.  */
   tree writefn = NULL_TREE;
-  /* The destination expression involved in the store STMT.  */
+  /* The destination expression involved in the store or call STMT.  */
   tree dest = NULL_TREE;
 
   if (is_gimple_assign (stmt))
     dest = gimple_assign_lhs (stmt);
   else if (is_gimple_call (stmt))
     {
-      dest = gimple_call_arg (stmt, 0);
+      if (call_lhs)
+	dest = gimple_call_lhs (stmt);
+      else
+	{
+	  gcc_assert (gimple_call_builtin_p (stmt, BUILT_IN_NORMAL));
+	  dest = gimple_call_arg (stmt, 0);
+	}
+
+      if (!dest)
+	return;
       writefn = gimple_call_fndecl (stmt);
     }
-
-  if (TREE_NO_WARNING (dest))
+  else
     return;
+
+  if (warning_suppressed_p (dest, OPT_Wstringop_overflow_))
+    return;
+
+  const int ostype = rawmem ? 0 : 1;
 
   /* Use maximum precision to avoid overflow in the addition below.
      Make sure all operands have the same precision to keep wide_int
      from ICE'ing.  */
 
-  /* Convenience constants.  */
-  const widest_int diff_min
-    = wi::to_widest (TYPE_MIN_VALUE (ptrdiff_type_node));
-  const widest_int diff_max
-    = wi::to_widest (TYPE_MAX_VALUE (ptrdiff_type_node));
-  const widest_int size_max
-    = wi::to_widest (TYPE_MAX_VALUE (size_type_node));
-
-  /* The offset into the destination object computed below and not
-     reflected in DESTSIZE.  */
-  widest_int offrng[2] = { 0, 0 };
-
-  if (!si)
-    {
-      /* If no destination STRINFO was provided try to get it from
-	 the DEST argument.  */
-      tree ref = dest;
-      if (TREE_CODE (ref) == ARRAY_REF)
-	{
-	  /* Handle stores to VLAs (represented as
-	     ARRAY_REF (MEM_REF (vlaptr, 0), N].  */
-	  tree off = TREE_OPERAND (ref, 1);
-	  ref = TREE_OPERAND (ref, 0);
-	  wide_int rng[2];
-	  if (get_range (off, rng, rvals))
-	    {
-	      /* Convert offsets to the maximum precision.  */
-	      offrng[0] = widest_int::from (rng[0], SIGNED);
-	      offrng[1] = widest_int::from (rng[1], SIGNED);
-	    }
-	  else
-	    {
-	      offrng[0] = diff_min;
-	      offrng[1] = diff_max;
-	    }
-	}
-
-      if (TREE_CODE (ref) == MEM_REF)
-	{
-	  tree mem_off = TREE_OPERAND (ref, 1);
-	  ref = TREE_OPERAND (ref, 0);
-	  wide_int rng[2];
-	  if (get_range (mem_off, rng, rvals))
-	    {
-	      offrng[0] += widest_int::from (rng[0], SIGNED);
-	      offrng[1] += widest_int::from (rng[1], SIGNED);
-	    }
-	  else
-	    {
-	      offrng[0] = diff_min;
-	      offrng[1] = diff_max;
-	    }
-	}
-
-      wide_int rng[2];
-      if (int idx = get_stridx (ref, rng, rvals))
-	{
-	  si = get_strinfo (idx);
-	  offrng[0] += widest_int::from (rng[0], SIGNED);
-	  offrng[1] += widest_int::from (rng[1], SIGNED);
-	}
-    }
-
-  /* The allocation call if the destination object was allocated
-     by one.  */
-  gimple *alloc_call = NULL;
-  /* The DECL of the destination object if known and not dynamically
-     allocated.  */
-  tree destdecl = NULL_TREE;
-  /* The offset into the destination object set by compute_objsize
-     but already reflected in DESTSIZE.  */
-  tree destoff = NULL_TREE;
+  access_ref aref;
   /* The size of the destination region (which is smaller than
      the destination object for stores at a non-zero offset).  */
-  tree destsize = NULL_TREE;
-
-  /* Compute the range of sizes of the destination object.  The range
-     is constant for declared objects but may be a range for allocated
-     objects.  */
-  widest_int sizrng[2] = { 0, 0 };
-  if (si)
-    {
-      wide_int rng[2];
-      destsize = gimple_call_alloc_size (si->alloc, rng, rvals);
-      if (destsize)
-	{
-	  sizrng[0] = widest_int::from (rng[0], UNSIGNED);
-	  sizrng[1] = widest_int::from (rng[1], UNSIGNED);
-	}
-      alloc_call = si->alloc;
-    }
-  else
-    offrng[0] = offrng[1] = 0;
+  tree destsize = compute_objsize (dest, ostype, &aref, &ptr_qry);
 
   if (!destsize)
     {
-      /* If there is no STRINFO for DEST, fall back on compute_objsize.  */
-      tree off = NULL_TREE;
-      destsize = compute_objsize (dest, rawmem ? 0 : 1, &destdecl, &off, rvals);
-      if (destsize)
-	{
-	  /* Remember OFF but clear OFFRNG that may have been set above.  */
-	  destoff = off;
-	  offrng[0] = offrng[1] = 0;
-
-	  if (destdecl && TREE_CODE (destdecl) == SSA_NAME)
-	    {
-	      gimple *stmt = SSA_NAME_DEF_STMT (destdecl);
-	      if (is_gimple_call (stmt))
-		alloc_call = stmt;
-	      destdecl = NULL_TREE;
-	    }
-
-	  wide_int rng[2];
-	  if (get_range (destsize, rng, rvals))
-	    {
-	      sizrng[0] = widest_int::from (rng[0], UNSIGNED);
-	      sizrng[1] = widest_int::from (rng[1], UNSIGNED);
-	    }
-	  else
-	    {
-	      /* On failure, rather than failing, set the maximum range
-		 so that overflow in allocated objects whose size depends
-		 on the strlen of the source can still be diagnosed
-		 below.  */
-	      sizrng[0] = 0;
-	      sizrng[1] = size_max;
-	    }
-	}
+      aref.sizrng[0] = 0;
+      aref.sizrng[1] = wi::to_offset (max_object_size ());
     }
-
-  if (!destsize)
-    {
-      sizrng[0] = 0;
-      sizrng[1] = size_max;
-    };
 
   /* Return early if the DESTSIZE size expression is the same as LEN
      and the offset into the destination is zero.  This might happen
      in the case of a pair of malloc and memset calls to allocate
      an object and clear it as if by calloc.  */
-  if (destsize == len && !plus_one && offrng[0] == 0 && offrng[0] == offrng[1])
+  if (destsize == len && !plus_one
+      && aref.offrng[0] == 0 && aref.offrng[0] == aref.offrng[1])
     return;
 
   wide_int rng[2];
-  if (!get_range (len, rng, rvals))
+  if (!get_range (len, stmt, rng, ptr_qry.rvals))
     return;
 
   widest_int lenrng[2] =
@@ -2094,46 +2066,16 @@ maybe_warn_overflow (gimple *stmt, tree len,
 
   /* The size of the remaining space in the destination computed
      as the size of the latter minus the offset into it.  */
-  widest_int spcrng[2] = { sizrng[0], sizrng[1] };
-  if (wi::neg_p (offrng[0]) && wi::neg_p (offrng[1]))
-    {
-      /* When the offset is negative and the size of the destination
-	 object unknown there is little to do.
-	 FIXME: Detect offsets that are necessarily invalid regardless
-	 of the size of the object.  */
-      if (!destsize)
-	return;
-
-      /* The remaining space is necessarily zero.  */
-      spcrng[0] = spcrng[1] = 0;
-    }
-  else if (wi::neg_p (offrng[0]))
-    {
-      /* When the lower bound of the offset is negative but the upper
-	 bound is not, reduce the upper bound of the remaining space
-	 by the upper bound of the offset but leave the lower bound
-	 unchanged.  If that makes the upper bound of the space less
-	 than the lower bound swap the two.  */
-      spcrng[1] -= wi::ltu_p (offrng[1], spcrng[1]) ? offrng[1] : spcrng[1];
-      if (wi::ltu_p (spcrng[1], spcrng[0]))
-	std::swap (spcrng[1], spcrng[0]);
-    }
-  else
-    {
-      /* When the offset is positive reduce the remaining space by
-	 the lower bound of the offset or clear it if the offset is
-	 greater.  */
-      spcrng[0] -= wi::ltu_p (offrng[0], spcrng[0]) ? offrng[0] : spcrng[0];
-      spcrng[1] -= wi::ltu_p (offrng[0], spcrng[1]) ? offrng[0] : spcrng[1];
-    }
+  widest_int spcrng[2];
+  {
+    offset_int remrng[2];
+    remrng[1] = aref.size_remaining (remrng);
+    spcrng[0] = remrng[0] == -1 ? 0 : widest_int::from (remrng[0], UNSIGNED);
+    spcrng[1] = widest_int::from (remrng[1], UNSIGNED);
+  }
 
   if (wi::leu_p (lenrng[0], spcrng[0])
       && wi::leu_p (lenrng[1], spcrng[1]))
-    return;
-
-  if (lenrng[0] == spcrng[1]
-      && (len != destsize
-	  || !si || !is_strlen_related_p (si->ptr, len)))
     return;
 
   location_t loc = gimple_or_expr_nonartificial_location (stmt, dest);
@@ -2141,18 +2083,17 @@ maybe_warn_overflow (gimple *stmt, tree len,
   if (wi::leu_p (lenrng[0], spcrng[1]))
     {
       if (len != destsize
-	  && (!si || !is_strlen_related_p (si->ptr, len)))
+	  && (!si || rawmem || !is_strlen_related_p (si->ptr, len)))
 	return;
 
       warned = (writefn
 		? warning_at (loc, OPT_Wstringop_overflow_,
-			      "%G%qD writing one too many bytes into a region "
+			      "%qD writing one too many bytes into a region "
 			      "of a size that depends on %<strlen%>",
-			      stmt, writefn)
+			      writefn)
 		: warning_at (loc, OPT_Wstringop_overflow_,
-			      "%Gwriting one too many bytes into a region "
-			      "of a size that depends on %<strlen%>",
-			      stmt));
+			      "writing one too many bytes into a region "
+			      "of a size that depends on %<strlen%>"));
     }
   else if (lenrng[0] == lenrng[1])
     {
@@ -2160,200 +2101,95 @@ maybe_warn_overflow (gimple *stmt, tree len,
 	warned = (writefn
 		  ? warning_n (loc, OPT_Wstringop_overflow_,
 			       lenrng[0].to_uhwi (),
-			       "%G%qD writing %wu byte into a region "
+			       "%qD writing %wu byte into a region "
 			       "of size %wu",
-			       "%G%qD writing %wu bytes into a region "
+			       "%qD writing %wu bytes into a region "
 			       "of size %wu",
-			       stmt, writefn, lenrng[0].to_uhwi (),
+			       writefn, lenrng[0].to_uhwi (),
 			       spcrng[0].to_uhwi ())
 		  : warning_n (loc, OPT_Wstringop_overflow_,
 			       lenrng[0].to_uhwi (),
-			       "%Gwriting %wu byte into a region "
+			       "writing %wu byte into a region "
 			       "of size %wu",
-			       "%Gwriting %wu bytes into a region "
+			       "writing %wu bytes into a region "
 			       "of size %wu",
-			       stmt, lenrng[0].to_uhwi (),
+			       lenrng[0].to_uhwi (),
 			       spcrng[0].to_uhwi ()));
       else
 	warned = (writefn
 		  ? warning_n (loc, OPT_Wstringop_overflow_,
 			       lenrng[0].to_uhwi (),
-			       "%G%qD writing %wu byte into a region "
+			       "%qD writing %wu byte into a region "
 			       "of size between %wu and %wu",
-			       "%G%qD writing %wu bytes into a region "
+			       "%qD writing %wu bytes into a region "
 			       "of size between %wu and %wu",
-			       stmt, writefn, lenrng[0].to_uhwi (),
+			       writefn, lenrng[0].to_uhwi (),
 			       spcrng[0].to_uhwi (), spcrng[1].to_uhwi ())
 		  : warning_n (loc, OPT_Wstringop_overflow_,
 			       lenrng[0].to_uhwi (),
-			       "%Gwriting %wu byte into a region "
+			       "writing %wu byte into a region "
 			       "of size between %wu and %wu",
-			       "%Gwriting %wu bytes into a region "
+			       "writing %wu bytes into a region "
 			       "of size between %wu and %wu",
-			       stmt, lenrng[0].to_uhwi (),
+			       lenrng[0].to_uhwi (),
 			       spcrng[0].to_uhwi (), spcrng[1].to_uhwi ()));
     }
   else if (spcrng[0] == spcrng[1])
     warned = (writefn
 	      ? warning_at (loc, OPT_Wstringop_overflow_,
-			    "%G%qD writing between %wu and %wu bytes "
+			    "%qD writing between %wu and %wu bytes "
 			    "into a region of size %wu",
-			    stmt, writefn, lenrng[0].to_uhwi (),
+			    writefn, lenrng[0].to_uhwi (),
 			    lenrng[1].to_uhwi (),
 			    spcrng[0].to_uhwi ())
 	      : warning_at (loc, OPT_Wstringop_overflow_,
-			    "%Gwriting between %wu and %wu bytes "
+			    "writing between %wu and %wu bytes "
 			    "into a region of size %wu",
-			    stmt, lenrng[0].to_uhwi (),
+			    lenrng[0].to_uhwi (),
 			    lenrng[1].to_uhwi (),
 			    spcrng[0].to_uhwi ()));
   else
     warned = (writefn
 	      ? warning_at (loc, OPT_Wstringop_overflow_,
-			    "%G%qD writing between %wu and %wu bytes "
+			    "%qD writing between %wu and %wu bytes "
 			    "into a region of size between %wu and %wu",
-			    stmt, writefn, lenrng[0].to_uhwi (),
+			    writefn, lenrng[0].to_uhwi (),
 			    lenrng[1].to_uhwi (),
 			    spcrng[0].to_uhwi (), spcrng[1].to_uhwi ())
 	      : warning_at (loc, OPT_Wstringop_overflow_,
-			    "%Gwriting between %wu and %wu bytes "
+			    "writing between %wu and %wu bytes "
 			    "into a region of size between %wu and %wu",
-			    stmt, lenrng[0].to_uhwi (),
+			    lenrng[0].to_uhwi (),
 			    lenrng[1].to_uhwi (),
 			    spcrng[0].to_uhwi (), spcrng[1].to_uhwi ()));
 
   if (!warned)
     return;
 
-  gimple_set_no_warning (stmt, true);
+  suppress_warning (stmt, OPT_Wstringop_overflow_);
 
-  /* If DESTOFF is not null, use it to format the offset value/range.  */
-  if (destoff)
-    {
-      wide_int rng[2];
-      if (get_range (destoff, rng))
-	{
-	  offrng[0] = widest_int::from (rng[0], SIGNED);
-	  offrng[1] = widest_int::from (rng[1], SIGNED);
-	}
-      else
-	offrng[0] = offrng[1] = 0;
-    }
-
-  /* Format the offset to keep the number of inform calls from growing
-     out of control.  */
-  char offstr[64];
-  if (offrng[0] == offrng[1])
-    sprintf (offstr, "%lli", (long long) offrng[0].to_shwi ());
-  else
-    sprintf (offstr, "[%lli, %lli]",
-	     (long long) offrng[0].to_shwi (), (long long) offrng[1].to_shwi ());
-
-  if (destdecl)
-    {
-      if (tree size = DECL_SIZE_UNIT (destdecl))
-	inform (DECL_SOURCE_LOCATION (destdecl),
-		"at offset %s to object %qD with size %E declared here",
-		offstr, destdecl, size);
-      else
-	inform (DECL_SOURCE_LOCATION (destdecl),
-		"at offset %s to object %qD declared here",
-		offstr, destdecl);
-      return;
-    }
-
-  if (!alloc_call)
-    return;
-
-  tree allocfn = gimple_call_fndecl (alloc_call);
-  if (!allocfn)
-    {
-      /* For an ALLOC_CALL via a function pointer make a small effort
-	 to determine the destination of the pointer.  */
-      allocfn = gimple_call_fn (alloc_call);
-      if (TREE_CODE (allocfn) == SSA_NAME)
-	{
-	  gimple *def = SSA_NAME_DEF_STMT (allocfn);
-	  if (gimple_assign_single_p (def))
-	    {
-	      tree rhs = gimple_assign_rhs1 (def);
-	      if (DECL_P (rhs))
-		allocfn = rhs;
-	      else if (TREE_CODE (rhs) == COMPONENT_REF)
-		allocfn = TREE_OPERAND (rhs, 1);
-	    }
-	}
-    }
-
-  if (gimple_call_builtin_p (alloc_call, BUILT_IN_ALLOCA_WITH_ALIGN))
-    {
-      if (sizrng[0] == sizrng[1])
-	inform (gimple_location (alloc_call),
-		"at offset %s to an object with size %wu declared here",
-		offstr, sizrng[0].to_uhwi ());
-      else if (sizrng[0] == 0)
-	{
-	  /* Avoid printing impossible sizes.  */
-	  if (wi::ltu_p (sizrng[1], diff_max - 2))
-	    inform (gimple_location (alloc_call),
-		    "at offset %s to an object with size at most %wu "
-		    "declared here",
-		    offstr, sizrng[1].to_uhwi ());
-	  else
-	    inform (gimple_location (alloc_call),
-		    "at offset %s to an object declared here", offstr);
-	}
-      else
-	inform (gimple_location (alloc_call),
-		"at offset %s to an object with size between %wu and %wu "
-		"declared here",
-		offstr, sizrng[0].to_uhwi (), sizrng[1].to_uhwi ());
-      return;
-    }
-
-  if (sizrng[0] == sizrng[1])
-    inform (gimple_location (alloc_call),
-	    "at offset %s to an object with size %wu allocated by %qE here",
-	    offstr, sizrng[0].to_uhwi (), allocfn);
-  else if (sizrng[0] == 0)
-    {
-      /* Avoid printing impossible sizes.  */
-      if (wi::ltu_p (sizrng[1], diff_max - 2))
-	inform (gimple_location (alloc_call),
-		"at offset %s to an object with size at most %wu allocated "
-		"by %qD here",
-		offstr, sizrng[1].to_uhwi (), allocfn);
-      else
-	inform (gimple_location (alloc_call),
-		"at offset %s to an object allocated by %qE here",
-		offstr, allocfn);
-    }
-  else
-    inform (gimple_location (alloc_call),
-	    "at offset %s to an object with size between %wu and %wu "
-	    "allocated by %qE here",
-	    offstr, sizrng[0].to_uhwi (), sizrng[1].to_uhwi (), allocfn);
+  aref.inform_access (access_write_only);
 }
 
 /* Convenience wrapper for the above.  */
 
-static inline void
-maybe_warn_overflow (gimple *stmt, unsigned HOST_WIDE_INT len,
-		     const vr_values *rvals = NULL, strinfo *si = NULL,
-		     bool plus_one = false, bool rawmem = false)
+void
+strlen_pass::maybe_warn_overflow (gimple *stmt, bool call_lhs,
+				  unsigned HOST_WIDE_INT len,
+				  strinfo *si, bool plus_one, bool rawmem)
 {
-  maybe_warn_overflow (stmt, build_int_cst (size_type_node, len), rvals,
-		       si, plus_one, rawmem);
+  tree tlen = build_int_cst (size_type_node, len);
+  maybe_warn_overflow (stmt, call_lhs, tlen, si, plus_one, rawmem);
 }
 
 /* Handle a strlen call.  If strlen of the argument is known, replace
    the strlen call with the known value, otherwise remember that strlen
    of the argument is stored in the lhs SSA_NAME.  */
 
-static void
-handle_builtin_strlen (gimple_stmt_iterator *gsi)
+void
+strlen_pass::handle_builtin_strlen ()
 {
-  gimple *stmt = gsi_stmt (*gsi);
+  gimple *stmt = gsi_stmt (m_gsi);
   tree lhs = gimple_call_lhs (stmt);
 
   if (lhs == NULL_TREE)
@@ -2407,9 +2243,8 @@ handle_builtin_strlen (gimple_stmt_iterator *gsi)
 	  if (bound)
 	    rhs = fold_build2_loc (loc, MIN_EXPR, TREE_TYPE (rhs), rhs, bound);
 
-	  if (!update_call_from_tree (gsi, rhs))
-	    gimplify_and_update_call_from_tree (gsi, rhs);
-	  stmt = gsi_stmt (*gsi);
+	  gimplify_and_update_call_from_tree (&m_gsi, rhs);
+	  stmt = gsi_stmt (m_gsi);
 	  update_stmt (stmt);
 	  if (dump_file && (dump_flags & TDF_DETAILS) != 0)
 	    {
@@ -2507,9 +2342,8 @@ handle_builtin_strlen (gimple_stmt_iterator *gsi)
 	      }
 	    if (!useless_type_conversion_p (TREE_TYPE (lhs), TREE_TYPE (ret)))
 	      ret = fold_convert_loc (loc, TREE_TYPE (lhs), ret);
-	    if (!update_call_from_tree (gsi, ret))
-	      gimplify_and_update_call_from_tree (gsi, ret);
-	    stmt = gsi_stmt (*gsi);
+	    gimplify_and_update_call_from_tree (&m_gsi, ret);
+	    stmt = gsi_stmt (m_gsi);
 	    update_stmt (stmt);
 	    if (dump_file && (dump_flags & TDF_DETAILS) != 0)
 	      {
@@ -2527,10 +2361,10 @@ handle_builtin_strlen (gimple_stmt_iterator *gsi)
    the strchr (x, 0) call with the endptr or x + strlen, otherwise remember
    that lhs of the call is endptr and strlen of the argument is endptr - x.  */
 
-static void
-handle_builtin_strchr (gimple_stmt_iterator *gsi)
+void
+strlen_pass::handle_builtin_strchr ()
 {
-  gimple *stmt = gsi_stmt (*gsi);
+  gimple *stmt = gsi_stmt (m_gsi);
   tree lhs = gimple_call_lhs (stmt);
 
   if (lhs == NULL_TREE)
@@ -2586,9 +2420,8 @@ handle_builtin_strchr (gimple_stmt_iterator *gsi)
 					      TREE_TYPE (rhs)))
 		rhs = fold_convert_loc (loc, TREE_TYPE (lhs), rhs);
 	    }
-	  if (!update_call_from_tree (gsi, rhs))
-	    gimplify_and_update_call_from_tree (gsi, rhs);
-	  stmt = gsi_stmt (*gsi);
+	  gimplify_and_update_call_from_tree (&m_gsi, rhs);
+	  stmt = gsi_stmt (m_gsi);
 	  update_stmt (stmt);
 	  if (dump_file && (dump_flags & TDF_DETAILS) != 0)
 	    {
@@ -2640,14 +2473,13 @@ handle_builtin_strchr (gimple_stmt_iterator *gsi)
    is the same after this call.  Furthermore, attempt to convert it to
    memcpy.  Uses RVALS to determine range information.  */
 
-static void
-handle_builtin_strcpy (enum built_in_function bcode, gimple_stmt_iterator *gsi,
-		       const vr_values *rvals)
+void
+strlen_pass::handle_builtin_strcpy (built_in_function bcode)
 {
   int idx, didx;
   tree src, dst, srclen, len, lhs, type, fn, oldlen;
   bool success;
-  gimple *stmt = gsi_stmt (*gsi);
+  gimple *stmt = gsi_stmt (m_gsi);
   strinfo *si, *dsi, *olddsi, *zsi;
   location_t loc;
 
@@ -2676,7 +2508,7 @@ handle_builtin_strcpy (enum built_in_function bcode, gimple_stmt_iterator *gsi,
   else if (idx < 0)
     srclen = build_int_cst (size_type_node, ~idx);
 
-  maybe_warn_overflow (stmt, srclen, rvals, olddsi, true);
+  maybe_warn_overflow (stmt, false, srclen, olddsi, true);
 
   if (olddsi != NULL)
     adjust_last_stmt (olddsi, stmt, false);
@@ -2856,21 +2688,21 @@ handle_builtin_strcpy (enum built_in_function bcode, gimple_stmt_iterator *gsi,
   len = fold_convert_loc (loc, type, unshare_expr (srclen));
   len = fold_build2_loc (loc, PLUS_EXPR, type, len, build_int_cst (type, 1));
 
-  /* Set the no-warning bit on the transformed statement?  */
-  bool set_no_warning = false;
+  /* Disable warning for the transformed statement?  */
+  opt_code no_warning_opt = no_warning;
 
-  if (const strinfo *chksi = olddsi ? olddsi : dsi)
-    if (si
-	&& check_bounds_or_overlap (stmt, chksi->ptr, si->ptr, NULL_TREE, len))
-      {
-	gimple_set_no_warning (stmt, true);
-	set_no_warning = true;
-      }
+  if (const strinfo *chksi = si ? olddsi ? olddsi : dsi : NULL)
+    {
+      no_warning_opt = check_bounds_or_overlap (stmt, chksi->ptr, si->ptr,
+						NULL_TREE, len);
+      if (no_warning_opt)
+	suppress_warning (stmt, no_warning_opt);
+    }
 
   if (fn == NULL_TREE)
     return;
 
-  len = force_gimple_operand_gsi (gsi, len, true, NULL_TREE, true,
+  len = force_gimple_operand_gsi (&m_gsi, len, true, NULL_TREE, true,
 				  GSI_SAME_STMT);
   if (dump_file && (dump_flags & TDF_DETAILS) != 0)
     {
@@ -2878,13 +2710,13 @@ handle_builtin_strcpy (enum built_in_function bcode, gimple_stmt_iterator *gsi,
       print_gimple_stmt (dump_file, stmt, 0, TDF_SLIM);
     }
   if (gimple_call_num_args (stmt) == 2)
-    success = update_gimple_call (gsi, fn, 3, dst, src, len);
+    success = update_gimple_call (&m_gsi, fn, 3, dst, src, len);
   else
-    success = update_gimple_call (gsi, fn, 4, dst, src, len,
+    success = update_gimple_call (&m_gsi, fn, 4, dst, src, len,
 				  gimple_call_arg (stmt, 2));
   if (success)
     {
-      stmt = gsi_stmt (*gsi);
+      stmt = gsi_stmt (m_gsi);
       update_stmt (stmt);
       if (dump_file && (dump_flags & TDF_DETAILS) != 0)
 	{
@@ -2899,8 +2731,8 @@ handle_builtin_strcpy (enum built_in_function bcode, gimple_stmt_iterator *gsi,
   else if (dump_file && (dump_flags & TDF_DETAILS) != 0)
     fprintf (dump_file, "not possible.\n");
 
-  if (set_no_warning)
-    gimple_set_no_warning (stmt, true);
+  if (no_warning_opt)
+    suppress_warning (stmt, no_warning_opt);
 }
 
 /* Check the size argument to the built-in forms of stpncpy and strncpy
@@ -2908,11 +2740,11 @@ handle_builtin_strcpy (enum built_in_function bcode, gimple_stmt_iterator *gsi,
    size argument is derived from a call to strlen() on the source argument,
    and if so, issue an appropriate warning.  */
 
-static void
-handle_builtin_strncat (built_in_function, gimple_stmt_iterator *gsi)
+void
+strlen_pass::handle_builtin_strncat (built_in_function)
 {
   /* Same as stxncpy().  */
-  handle_builtin_stxncpy_strncat (true, gsi);
+  handle_builtin_stxncpy_strncat (true);
 }
 
 /* Return true if LEN depends on a call to strlen(SRC) in an interesting
@@ -3024,41 +2856,37 @@ is_strlen_related_p (tree src, tree len)
 */
 
 bool
-maybe_diag_stxncpy_trunc (gimple_stmt_iterator gsi, tree src, tree cnt)
+maybe_diag_stxncpy_trunc (gimple_stmt_iterator gsi, tree src, tree cnt,
+			  pointer_query *ptr_qry /* = NULL */)
 {
   gimple *stmt = gsi_stmt (gsi);
-  if (gimple_no_warning_p (stmt))
+  if (warning_suppressed_p (stmt, OPT_Wstringop_truncation))
     return false;
 
   wide_int cntrange[2];
+  value_range r;
+  if (!get_range_query (cfun)->range_of_expr (r, cnt)
+      || r.varying_p ()
+      || r.undefined_p ())
+    return false;
 
-  if (TREE_CODE (cnt) == INTEGER_CST)
-    cntrange[0] = cntrange[1] = wi::to_wide (cnt);
-  else if (TREE_CODE (cnt) == SSA_NAME)
+  cntrange[0] = wi::to_wide (r.min ());
+  cntrange[1] = wi::to_wide (r.max ());
+  if (r.kind () == VR_ANTI_RANGE)
     {
-      enum value_range_kind rng = get_range_info (cnt, cntrange, cntrange + 1);
-      if (rng == VR_RANGE)
-	;
-      else if (rng == VR_ANTI_RANGE)
-	{
-	  wide_int maxobjsize = wi::to_wide (TYPE_MAX_VALUE (ptrdiff_type_node));
+      wide_int maxobjsize = wi::to_wide (TYPE_MAX_VALUE (ptrdiff_type_node));
 
-	  if (wi::ltu_p (cntrange[1], maxobjsize))
-	    {
-	      cntrange[0] = cntrange[1] + 1;
-	      cntrange[1] = maxobjsize;
-	    }
-	  else
-	    {
-	      cntrange[1] = cntrange[0] - 1;
-	      cntrange[0] = wi::zero (TYPE_PRECISION (TREE_TYPE (cnt)));
-	    }
+      if (wi::ltu_p (cntrange[1], maxobjsize))
+	{
+	  cntrange[0] = cntrange[1] + 1;
+	  cntrange[1] = maxobjsize;
 	}
       else
-	return false;
+	{
+	  cntrange[1] = cntrange[0] - 1;
+	  cntrange[0] = wi::zero (TYPE_PRECISION (TREE_TYPE (cnt)));
+	}
     }
-  else
-    return false;
 
   /* Negative value is the constant string length.  If it's less than
      the lower bound there is no truncation.  Avoid calling get_stridx()
@@ -3221,13 +3049,13 @@ maybe_diag_stxncpy_trunc (gimple_stmt_iterator gsi, tree src, tree cnt)
       if (lenrange[0] == cntrange[1] && cntrange[0] == cntrange[1])
 	return warning_n (callloc, OPT_Wstringop_truncation,
 			  cntrange[0].to_uhwi (),
-			  "%G%qD output truncated before terminating "
+			  "%qD output truncated before terminating "
 			  "nul copying %E byte from a string of the "
 			  "same length",
-			  "%G%qD output truncated before terminating nul "
+			  "%qD output truncated before terminating nul "
 			  "copying %E bytes from a string of the same "
 			  "length",
-			  stmt, func, cnt);
+			  func, cnt);
       else if (!cat_dstlen_bounded)
 	{
 	  if (wi::geu_p (lenrange[0], cntrange[1]))
@@ -3237,16 +3065,16 @@ maybe_diag_stxncpy_trunc (gimple_stmt_iterator gsi, tree src, tree cnt)
 	      if (cntrange[0] == cntrange[1])
 		return warning_n (callloc, OPT_Wstringop_truncation,
 				  cntrange[0].to_uhwi (),
-				  "%G%qD output truncated copying %E byte "
+				  "%qD output truncated copying %E byte "
 				  "from a string of length %wu",
-				  "%G%qD output truncated copying %E bytes "
+				  "%qD output truncated copying %E bytes "
 				  "from a string of length %wu",
-				  stmt, func, cnt, lenrange[0].to_uhwi ());
+				  func, cnt, lenrange[0].to_uhwi ());
 
 	      return warning_at (callloc, OPT_Wstringop_truncation,
-				 "%G%qD output truncated copying between %wu "
+				 "%qD output truncated copying between %wu "
 				 "and %wu bytes from a string of length %wu",
-				 stmt, func, cntrange[0].to_uhwi (),
+				 func, cntrange[0].to_uhwi (),
 				 cntrange[1].to_uhwi (), lenrange[0].to_uhwi ());
 	    }
 	  else if (wi::geu_p (lenrange[1], cntrange[1]))
@@ -3256,16 +3084,16 @@ maybe_diag_stxncpy_trunc (gimple_stmt_iterator gsi, tree src, tree cnt)
 	      if (cntrange[0] == cntrange[1])
 		return warning_n (callloc, OPT_Wstringop_truncation,
 				  cntrange[0].to_uhwi (),
-				  "%G%qD output may be truncated copying %E "
+				  "%qD output may be truncated copying %E "
 				  "byte from a string of length %wu",
-				  "%G%qD output may be truncated copying %E "
+				  "%qD output may be truncated copying %E "
 				  "bytes from a string of length %wu",
-				  stmt, func, cnt, lenrange[1].to_uhwi ());
+				  func, cnt, lenrange[1].to_uhwi ());
 
 	      return warning_at (callloc, OPT_Wstringop_truncation,
-				 "%G%qD output may be truncated copying between "
+				 "%qD output may be truncated copying between "
 				 "%wu and %wu bytes from a string of length %wu",
-				 stmt, func, cntrange[0].to_uhwi (),
+				 func, cntrange[0].to_uhwi (),
 				 cntrange[1].to_uhwi (), lenrange[1].to_uhwi ());
 	    }
 	}
@@ -3279,14 +3107,15 @@ maybe_diag_stxncpy_trunc (gimple_stmt_iterator gsi, tree src, tree cnt)
 	     the lower bound of the specified count but shorter than the
 	     upper bound the copy may (but need not) be truncated.  */
 	  return warning_at (callloc, OPT_Wstringop_truncation,
-			     "%G%qD output may be truncated copying between "
+			     "%qD output may be truncated copying between "
 			     "%wu and %wu bytes from a string of length %wu",
-			     stmt, func, cntrange[0].to_uhwi (),
+			     func, cntrange[0].to_uhwi (),
 			     cntrange[1].to_uhwi (), lenrange[0].to_uhwi ());
 	}
     }
 
-  if (tree dstsize = compute_objsize (dst, 1))
+  access_ref aref;
+  if (tree dstsize = compute_objsize (dst, 1, &aref, ptr_qry))
     {
       /* The source length is unknown.  Try to determine the destination
 	 size and see if it matches the specified bound.  If not, bail.
@@ -3301,14 +3130,14 @@ maybe_diag_stxncpy_trunc (gimple_stmt_iterator gsi, tree src, tree cnt)
       /* Avoid warning for strncpy(a, b, N) calls where the following
 	 equalities hold:
 	   N == sizeof a && N == sizeof b */
-      if (tree srcsize = compute_objsize (src, 1))
+      if (tree srcsize = compute_objsize (src, 1, &aref, ptr_qry))
 	if (wi::to_wide (srcsize) == cntrange[1])
 	  return false;
 
       if (cntrange[0] == cntrange[1])
 	return warning_at (callloc, OPT_Wstringop_truncation,
-			   "%G%qD specified bound %E equals destination size",
-			   stmt, func, cnt);
+			   "%qD specified bound %E equals destination size",
+			   func, cnt);
     }
 
   return false;
@@ -3320,18 +3149,23 @@ maybe_diag_stxncpy_trunc (gimple_stmt_iterator gsi, tree src, tree cnt)
    and if so, issue the appropriate warning.
    APPEND_P is true for strncat.  */
 
-static void
-handle_builtin_stxncpy_strncat (bool append_p, gimple_stmt_iterator *gsi)
+void
+strlen_pass::handle_builtin_stxncpy_strncat (bool append_p)
 {
   if (!strlen_to_stridx)
     return;
 
-  gimple *stmt = gsi_stmt (*gsi);
+  gimple *stmt = gsi_stmt (m_gsi);
 
   tree dst = gimple_call_arg (stmt, 0);
   tree src = gimple_call_arg (stmt, 1);
   tree len = gimple_call_arg (stmt, 2);
-  tree dstsize = NULL_TREE, srcsize = NULL_TREE;
+  /* An upper bound of the size of the destination.  */
+  tree dstsize = NULL_TREE;
+  /* The length of the destination and source strings (plus 1 for those
+     whose FULL_STRING_P is set, i.e., whose length is exact rather than
+     a lower bound).  */
+  tree dstlenp1 = NULL_TREE, srclenp1 = NULL_TREE;;
 
   int didx = get_stridx (dst);
   if (strinfo *sidst = didx > 0 ? get_strinfo (didx) : NULL)
@@ -3344,11 +3178,16 @@ handle_builtin_stxncpy_strncat (bool append_p, gimple_stmt_iterator *gsi)
 	    {
 	      /* String is known to be nul-terminated.  */
 	      tree type = TREE_TYPE (sidst->nonzero_chars);
-	      dstsize = fold_build2 (PLUS_EXPR, type, sidst->nonzero_chars,
+	      dstlenp1 = fold_build2 (PLUS_EXPR, type, sidst->nonzero_chars,
 				     build_int_cst (type, 1));
 	    }
 	  else
-	    dstsize = sidst->nonzero_chars;
+	    dstlenp1 = sidst->nonzero_chars;
+	}
+      else if (TREE_CODE (sidst->ptr) == SSA_NAME)
+	{
+	  gimple *def_stmt = SSA_NAME_DEF_STMT (sidst->ptr);
+	  dstsize = gimple_call_alloc_size (def_stmt);
 	}
 
       dst = sidst->ptr;
@@ -3369,21 +3208,22 @@ handle_builtin_stxncpy_strncat (bool append_p, gimple_stmt_iterator *gsi)
 	  if (sisrc->full_string_p)
 	    {
 	      tree type = TREE_TYPE (sisrc->nonzero_chars);
-	      srcsize = fold_build2 (PLUS_EXPR, type, sisrc->nonzero_chars,
+	      srclenp1 = fold_build2 (PLUS_EXPR, type, sisrc->nonzero_chars,
 				     build_int_cst (type, 1));
 	    }
 	  else
-	    srcsize = sisrc->nonzero_chars;
+	    srclenp1 = sisrc->nonzero_chars;
 	}
 
 	src = sisrc->ptr;
     }
   else
-    srcsize = NULL_TREE;
+    srclenp1 = NULL_TREE;
 
-  if (check_bounds_or_overlap (stmt, dst, src, dstsize, srcsize))
+  opt_code opt = check_bounds_or_overlap (stmt, dst, src, dstlenp1, srclenp1);
+  if (opt != no_warning)
     {
-      gimple_set_no_warning (stmt, true);
+      suppress_warning (stmt, opt);
       return;
     }
 
@@ -3393,8 +3233,8 @@ handle_builtin_stxncpy_strncat (bool append_p, gimple_stmt_iterator *gsi)
   stridx_strlenloc *pss = strlen_to_stridx->get (len);
   if (!pss || pss->first <= 0)
     {
-      if (maybe_diag_stxncpy_trunc (*gsi, src, len))
-	gimple_set_no_warning (stmt, true);
+      if (maybe_diag_stxncpy_trunc (m_gsi, src, len))
+	suppress_warning (stmt, OPT_Wstringop_truncation);
 
       return;
     }
@@ -3413,22 +3253,31 @@ handle_builtin_stxncpy_strncat (bool append_p, gimple_stmt_iterator *gsi)
   /* When -Wstringop-truncation is set, try to determine truncation
      before diagnosing possible overflow.  Truncation is implied by
      the LEN argument being equal to strlen(SRC), regardless of
-     whether its value is known.  Otherwise, issue the more generic
-     -Wstringop-overflow which triggers for LEN arguments that in
-     any meaningful way depend on strlen(SRC).  */
+     whether its value is known.  Otherwise, when appending, or
+     when copying into a destination of known size, issue the more
+     generic -Wstringop-overflow which triggers for LEN arguments
+     that in any meaningful way depend on strlen(SRC).  */
   if (!append_p
       && sisrc == silen
       && is_strlen_related_p (src, len)
       && warning_at (callloc, OPT_Wstringop_truncation,
-		     "%G%qD output truncated before terminating nul "
+		     "%qD output truncated before terminating nul "
 		     "copying as many bytes from a string as its length",
-		     stmt, func))
+		     func))
     warned = true;
-  else if (silen && is_strlen_related_p (src, silen->ptr))
-    warned = warning_at (callloc, OPT_Wstringop_overflow_,
-			 "%G%qD specified bound depends on the length "
-			 "of the source argument",
-			 stmt, func);
+  else if ((append_p || !dstsize || len == dstlenp1)
+	   && silen && is_strlen_related_p (src, silen->ptr))
+    {
+      /* Issue -Wstringop-overflow when appending or when writing into
+	 a destination of a known size.  Otherwise, when copying into
+	 a destination of an unknown size, it's truncation.  */
+      opt_code opt = (append_p || dstsize
+		      ? OPT_Wstringop_overflow_ : OPT_Wstringop_truncation);
+      warned = warning_at (callloc, opt,
+			   "%qD specified bound depends on the length "
+			   "of the source argument",
+			   func);
+    }
   if (warned)
     {
       location_t strlenloc = pss->second;
@@ -3442,12 +3291,11 @@ handle_builtin_stxncpy_strncat (bool append_p, gimple_stmt_iterator *gsi)
    is that plus one, strlen of the first argument is the same after this
    call.  Uses RVALS to determine range information.  */
 
-static void
-handle_builtin_memcpy (enum built_in_function bcode, gimple_stmt_iterator *gsi,
-		       const vr_values *rvals)
+void
+strlen_pass::handle_builtin_memcpy (built_in_function bcode)
 {
   tree lhs, oldlen, newlen;
-  gimple *stmt = gsi_stmt (*gsi);
+  gimple *stmt = gsi_stmt (m_gsi);
   strinfo *si, *dsi;
 
   tree len = gimple_call_arg (stmt, 2);
@@ -3464,7 +3312,7 @@ handle_builtin_memcpy (enum built_in_function bcode, gimple_stmt_iterator *gsi,
   if (olddsi != NULL
       && !integer_zerop (len))
     {
-      maybe_warn_overflow (stmt, len, rvals, olddsi, false, true);
+      maybe_warn_overflow (stmt, false, len, olddsi, false, true);
       adjust_last_stmt (olddsi, stmt, false);
     }
 
@@ -3623,13 +3471,13 @@ handle_builtin_memcpy (enum built_in_function bcode, gimple_stmt_iterator *gsi,
    to convert it to memcpy/strcpy if the length of the first argument
    is known.  */
 
-static void
-handle_builtin_strcat (enum built_in_function bcode, gimple_stmt_iterator *gsi)
+void
+strlen_pass::handle_builtin_strcat (built_in_function bcode)
 {
   int idx, didx;
   tree srclen, args, type, fn, objsz, endptr;
   bool success;
-  gimple *stmt = gsi_stmt (*gsi);
+  gimple *stmt = gsi_stmt (m_gsi);
   strinfo *si, *dsi;
   location_t loc = gimple_location (stmt);
 
@@ -3663,8 +3511,8 @@ handle_builtin_strcat (enum built_in_function bcode, gimple_stmt_iterator *gsi)
 	srclen = get_string_length (si);
     }
 
-  /* Set the no-warning bit on the transformed statement?  */
-  bool set_no_warning = false;
+  /* Disable warning for the transformed statement?  */
+  opt_code no_warning_opt = no_warning;
 
   if (dsi == NULL || get_string_length (dsi) == NULL_TREE)
     {
@@ -3681,12 +3529,10 @@ handle_builtin_strcat (enum built_in_function bcode, gimple_stmt_iterator *gsi)
 	  }
 
 	tree sptr = si && si->ptr ? si->ptr : src;
-
-	if (check_bounds_or_overlap (stmt, dst, sptr, NULL_TREE, slen))
-	  {
-	    gimple_set_no_warning (stmt, true);
-	    set_no_warning = true;
-	  }
+	no_warning_opt = check_bounds_or_overlap (stmt, dst, sptr, NULL_TREE,
+						  slen);
+	if (no_warning_opt)
+	  suppress_warning (stmt, no_warning_opt);
       }
 
       /* strcat (p, q) can be transformed into
@@ -3793,11 +3639,10 @@ handle_builtin_strcat (enum built_in_function bcode, gimple_stmt_iterator *gsi)
       tree dstsize = fold_build2 (PLUS_EXPR, type, dstlen, one);
       tree sptr = si && si->ptr ? si->ptr : src;
 
-      if (check_bounds_or_overlap (stmt, dst, sptr, dstsize, srcsize))
-	{
-	  gimple_set_no_warning (stmt, true);
-	  set_no_warning = true;
-	}
+      no_warning_opt = check_bounds_or_overlap (stmt, dst, sptr, dstsize,
+						srcsize);
+      if (no_warning_opt)
+	suppress_warning (stmt, no_warning_opt);
     }
 
   tree len = NULL_TREE;
@@ -3809,7 +3654,7 @@ handle_builtin_strcat (enum built_in_function bcode, gimple_stmt_iterator *gsi)
       len = fold_convert_loc (loc, type, unshare_expr (srclen));
       len = fold_build2_loc (loc, PLUS_EXPR, type, len,
 			     build_int_cst (type, 1));
-      len = force_gimple_operand_gsi (gsi, len, true, NULL_TREE, true,
+      len = force_gimple_operand_gsi (&m_gsi, len, true, NULL_TREE, true,
 				      GSI_SAME_STMT);
     }
   if (endptr)
@@ -3818,14 +3663,14 @@ handle_builtin_strcat (enum built_in_function bcode, gimple_stmt_iterator *gsi)
     dst = fold_build2_loc (loc, POINTER_PLUS_EXPR, TREE_TYPE (dst), dst,
 			   fold_convert_loc (loc, sizetype,
 					     unshare_expr (dstlen)));
-  dst = force_gimple_operand_gsi (gsi, dst, true, NULL_TREE, true,
+  dst = force_gimple_operand_gsi (&m_gsi, dst, true, NULL_TREE, true,
 				  GSI_SAME_STMT);
   if (objsz)
     {
       objsz = fold_build2_loc (loc, MINUS_EXPR, TREE_TYPE (objsz), objsz,
 			       fold_convert_loc (loc, TREE_TYPE (objsz),
 						 unshare_expr (dstlen)));
-      objsz = force_gimple_operand_gsi (gsi, objsz, true, NULL_TREE, true,
+      objsz = force_gimple_operand_gsi (&m_gsi, objsz, true, NULL_TREE, true,
 					GSI_SAME_STMT);
     }
   if (dump_file && (dump_flags & TDF_DETAILS) != 0)
@@ -3834,14 +3679,14 @@ handle_builtin_strcat (enum built_in_function bcode, gimple_stmt_iterator *gsi)
       print_gimple_stmt (dump_file, stmt, 0, TDF_SLIM);
     }
   if (srclen != NULL_TREE)
-    success = update_gimple_call (gsi, fn, 3 + (objsz != NULL_TREE),
+    success = update_gimple_call (&m_gsi, fn, 3 + (objsz != NULL_TREE),
 				  dst, src, len, objsz);
   else
-    success = update_gimple_call (gsi, fn, 2 + (objsz != NULL_TREE),
+    success = update_gimple_call (&m_gsi, fn, 2 + (objsz != NULL_TREE),
 				  dst, src, objsz);
   if (success)
     {
-      stmt = gsi_stmt (*gsi);
+      stmt = gsi_stmt (m_gsi);
       update_stmt (stmt);
       if (dump_file && (dump_flags & TDF_DETAILS) != 0)
 	{
@@ -3863,17 +3708,17 @@ handle_builtin_strcat (enum built_in_function bcode, gimple_stmt_iterator *gsi)
   else if (dump_file && (dump_flags & TDF_DETAILS) != 0)
     fprintf (dump_file, "not possible.\n");
 
-  if (set_no_warning)
-    gimple_set_no_warning (stmt, true);
+  if (no_warning_opt)
+    suppress_warning (stmt, no_warning_opt);
 }
 
 /* Handle a call to an allocation function like alloca, malloc or calloc,
    or an ordinary allocation function declared with attribute alloc_size.  */
 
-static void
-handle_alloc_call (enum built_in_function bcode, gimple_stmt_iterator *gsi)
+void
+strlen_pass::handle_alloc_call (built_in_function bcode)
 {
-  gimple *stmt = gsi_stmt (*gsi);
+  gimple *stmt = gsi_stmt (m_gsi);
   tree lhs = gimple_call_lhs (stmt);
   if (lhs == NULL_TREE)
     return;
@@ -3907,15 +3752,14 @@ handle_alloc_call (enum built_in_function bcode, gimple_stmt_iterator *gsi)
    return true when the call is transformed, false otherwise.
    When nonnull uses RVALS to determine range information.  */
 
-static bool
-handle_builtin_memset (gimple_stmt_iterator *gsi, bool *zero_write,
-		       const vr_values *rvals)
+bool
+strlen_pass::handle_builtin_memset (bool *zero_write)
 {
-  gimple *memset_stmt = gsi_stmt (*gsi);
+  gimple *memset_stmt = gsi_stmt (m_gsi);
   tree ptr = gimple_call_arg (memset_stmt, 0);
   /* Set to the non-constant offset added to PTR.  */
   wide_int offrng[2];
-  int idx1 = get_stridx (ptr, offrng, rvals);
+  int idx1 = get_stridx (ptr, offrng, ptr_qry.rvals);
   if (idx1 <= 0)
     return false;
   strinfo *si1 = get_strinfo (idx1);
@@ -3931,7 +3775,7 @@ handle_builtin_memset (gimple_stmt_iterator *gsi, bool *zero_write,
   tree memset_size = gimple_call_arg (memset_stmt, 2);
 
   /* Check for overflow.  */
-  maybe_warn_overflow (memset_stmt, memset_size, rvals, NULL, false, true);
+  maybe_warn_overflow (memset_stmt, false, memset_size, NULL, false, true);
 
   /* Bail when there is no statement associated with the destination
      (the statement may be null even when SI1->ALLOC is not).  */
@@ -3971,22 +3815,24 @@ handle_builtin_memset (gimple_stmt_iterator *gsi, bool *zero_write,
   if (lhs)
     {
       gimple *assign = gimple_build_assign (lhs, ptr);
-      gsi_replace (gsi, assign, false);
+      gsi_replace (&m_gsi, assign, false);
     }
   else
     {
-      gsi_remove (gsi, true);
+      gsi_remove (&m_gsi, true);
       release_defs (memset_stmt);
     }
 
   return true;
 }
 
-/* Return a pointer to the first such equality expression if RES is used
-   only in expressions testing its equality to zero, and null otherwise.  */
+/* Return first such statement if RES is used in statements testing its
+   equality to zero, and null otherwise.  If EXCLUSIVE is true, return
+   nonnull if and only RES is used in such expressions exclusively and
+   in none other.  */
 
 static gimple *
-used_only_for_zero_equality (tree res)
+use_in_zero_equality (tree res, bool exclusive = true)
 {
   gimple *first_use = NULL;
 
@@ -3999,6 +3845,7 @@ used_only_for_zero_equality (tree res)
 
       if (is_gimple_debug (use_stmt))
         continue;
+
       if (gimple_code (use_stmt) == GIMPLE_ASSIGN)
 	{
 	  tree_code code = gimple_assign_rhs_code (use_stmt);
@@ -4008,25 +3855,41 @@ used_only_for_zero_equality (tree res)
 	      if ((TREE_CODE (cond_expr) != EQ_EXPR
 		   && (TREE_CODE (cond_expr) != NE_EXPR))
 		  || !integer_zerop (TREE_OPERAND (cond_expr, 1)))
-		return NULL;
+		{
+		  if (exclusive)
+		    return NULL;
+		  continue;
+		}
 	    }
 	  else if (code == EQ_EXPR || code == NE_EXPR)
 	    {
 	      if (!integer_zerop (gimple_assign_rhs2 (use_stmt)))
-		return NULL;
+		{
+		  if (exclusive)
+		    return NULL;
+		  continue;
+		}
             }
-	  else
+	  else if (exclusive)
 	    return NULL;
+	  else
+	    continue;
 	}
       else if (gimple_code (use_stmt) == GIMPLE_COND)
 	{
 	  tree_code code = gimple_cond_code (use_stmt);
 	  if ((code != EQ_EXPR && code != NE_EXPR)
 	      || !integer_zerop (gimple_cond_rhs (use_stmt)))
-	    return NULL;
+	    {
+	      if (exclusive)
+		return NULL;
+	      continue;
+	    }
 	}
+      else if (exclusive)
+	return NULL;
       else
-        return NULL;
+	continue;
 
       if (!first_use)
 	first_use = use_stmt;
@@ -4040,13 +3903,13 @@ used_only_for_zero_equality (tree res)
    with a __builtin_memcmp_eq call where possible.
    return true when call is transformed, return false otherwise.  */
 
-static bool
-handle_builtin_memcmp (gimple_stmt_iterator *gsi)
+bool
+strlen_pass::handle_builtin_memcmp ()
 {
-  gcall *stmt = as_a <gcall *> (gsi_stmt (*gsi));
+  gcall *stmt = as_a <gcall *> (gsi_stmt (m_gsi));
   tree res = gimple_call_lhs (stmt);
 
-  if (!res || !used_only_for_zero_equality (res))
+  if (!res || !use_in_zero_equality (res))
     return false;
 
   tree arg1 = gimple_call_arg (stmt, 0);
@@ -4085,7 +3948,7 @@ handle_builtin_memcmp (gimple_stmt_iterator *gsi)
 				  fold_build2_loc (loc, NE_EXPR,
 						   boolean_type_node,
 						   arg1, arg2));
-	  gimplify_and_update_call_from_tree (gsi, res);
+	  gimplify_and_update_call_from_tree (&m_gsi, res);
 	  return true;
 	}
     }
@@ -4102,10 +3965,10 @@ handle_builtin_memcmp (gimple_stmt_iterator *gsi)
    *NULTERM to true, otherwise to false.  When nonnull uses RVALS to
    determine range information. Returns true on success.  */
 
-static bool
-get_len_or_size (tree arg, int idx, unsigned HOST_WIDE_INT lenrng[2],
-		 unsigned HOST_WIDE_INT *size, bool *nulterm,
-		 const vr_values *rvals)
+bool
+strlen_pass::get_len_or_size (gimple *stmt, tree arg, int idx,
+			      unsigned HOST_WIDE_INT lenrng[2],
+			      unsigned HOST_WIDE_INT *size, bool *nulterm)
 {
   /* Invalidate.  */
   *size = HOST_WIDE_INT_M1U;
@@ -4139,12 +4002,12 @@ get_len_or_size (tree arg, int idx, unsigned HOST_WIDE_INT lenrng[2],
 	}
       else if (TREE_CODE (si->nonzero_chars) == SSA_NAME)
 	{
-	  wide_int min, max;
-	  value_range_kind rng = get_range_info (si->nonzero_chars, &min, &max);
-	  if (rng == VR_RANGE)
+	  value_range r;
+	  get_range_query (cfun)->range_of_expr (r, si->nonzero_chars);
+	  if (r.kind () == VR_RANGE)
 	    {
-	      lenrng[0] = min.to_uhwi ();
-	      lenrng[1] = max.to_uhwi ();
+	      lenrng[0] = r.lower_bound ().to_uhwi ();
+	      lenrng[1] = r.upper_bound ().to_uhwi ();
 	      *nulterm = si->full_string_p;
 	    }
 	}
@@ -4158,7 +4021,7 @@ get_len_or_size (tree arg, int idx, unsigned HOST_WIDE_INT lenrng[2],
   /* Set MAXBOUND to an arbitrary non-null non-integer node as a request
      to have it set to the length of the longest string in a PHI.  */
   lendata.maxbound = arg;
-  get_range_strlen_dynamic (arg, &lendata, rvals);
+  get_range_strlen_dynamic (arg, stmt, &lendata, ptr_qry.rvals);
 
   unsigned HOST_WIDE_INT maxbound = HOST_WIDE_INT_M1U;
   if (tree_fits_uhwi_p (lendata.maxbound)
@@ -4215,18 +4078,20 @@ get_len_or_size (tree arg, int idx, unsigned HOST_WIDE_INT lenrng[2],
    to be at least as long and need not be nul-terminated) and size.
    Otherwise return null.  */
 
-static tree
-strxcmp_eqz_result (tree arg1, int idx1, tree arg2, int idx2,
-		    unsigned HOST_WIDE_INT bound, unsigned HOST_WIDE_INT len[2],
-		    unsigned HOST_WIDE_INT *psize, const vr_values *rvals)
+tree
+strlen_pass::strxcmp_eqz_result (gimple *stmt, tree arg1, int idx1,
+				 tree arg2, int idx2,
+				 unsigned HOST_WIDE_INT bound,
+				 unsigned HOST_WIDE_INT len[2],
+				 unsigned HOST_WIDE_INT *psize)
 {
   /* Determine the range the length of each string is in and whether it's
      known to be nul-terminated, or the size of the array it's stored in.  */
   bool nul1, nul2;
   unsigned HOST_WIDE_INT siz1, siz2;
   unsigned HOST_WIDE_INT len1rng[2], len2rng[2];
-  if (!get_len_or_size (arg1, idx1, len1rng, &siz1, &nul1, rvals)
-      || !get_len_or_size (arg2, idx2, len2rng, &siz2, &nul2, rvals))
+  if (!get_len_or_size (stmt, arg1, idx1, len1rng, &siz1, &nul1)
+      || !get_len_or_size (stmt, arg2, idx2, len2rng, &siz2, &nul2))
     return NULL_TREE;
 
   /* BOUND is set to HWI_M1U for strcmp and less to strncmp, and LENiRNG
@@ -4308,7 +4173,7 @@ maybe_warn_pointless_strcmp (gimple *stmt, HOST_WIDE_INT bound,
 			     unsigned HOST_WIDE_INT siz)
 {
   tree lhs = gimple_call_lhs (stmt);
-  gimple *use = used_only_for_zero_equality (lhs);
+  gimple *use = use_in_zero_equality (lhs, /* exclusive = */ false);
   if (!use)
     return;
 
@@ -4338,32 +4203,32 @@ maybe_warn_pointless_strcmp (gimple *stmt, HOST_WIDE_INT bound,
   if (siz <= minlen && bound == -1)
     warned = warning_at (stmt_loc, OPT_Wstring_compare,
 			 (at_least
-			  ? G_("%G%qD of a string of length %wu or more and "
+			  ? G_("%qD of a string of length %wu or more and "
 			       "an array of size %wu evaluates to nonzero")
-			  : G_("%G%qD of a string of length %wu and an array "
+			  : G_("%qD of a string of length %wu and an array "
 			       "of size %wu evaluates to nonzero")),
-			 stmt, callee, minlen, siz);
+			 callee, minlen, siz);
   else if (!at_least && siz <= HOST_WIDE_INT_MAX)
     {
       if (len[0] != HOST_WIDE_INT_MAX && len[1] != HOST_WIDE_INT_MAX)
 	warned = warning_at (stmt_loc, OPT_Wstring_compare,
-			     "%G%qD of strings of length %wu and %wu "
+			     "%qD of strings of length %wu and %wu "
 			     "and bound of %wu evaluates to nonzero",
-			     stmt, callee, len[0], len[1], bound);
+			     callee, len[0], len[1], bound);
       else
 	warned = warning_at (stmt_loc, OPT_Wstring_compare,
-			     "%G%qD of a string of length %wu, an array "
+			     "%qD of a string of length %wu, an array "
 			     "of size %wu and bound of %wu evaluates to "
 			     "nonzero",
-			     stmt, callee, minlen, siz, bound);
+			     callee, minlen, siz, bound);
     }
 
-  if (warned)
-    {
-      location_t use_loc = gimple_location (use);
-      if (LOCATION_LINE (stmt_loc) != LOCATION_LINE (use_loc))
-	inform (use_loc, "in this expression");
-    }
+  if (!warned)
+    return;
+
+  location_t use_loc = gimple_location (use);
+  if (LOCATION_LINE (stmt_loc) != LOCATION_LINE (use_loc))
+    inform (use_loc, "in this expression");
 }
 
 
@@ -4374,10 +4239,10 @@ maybe_warn_pointless_strcmp (gimple *stmt, HOST_WIDE_INT bound,
    is not known.  Return true when the call has been transformed into
    another and false otherwise.  */
 
-static bool
-handle_builtin_string_cmp (gimple_stmt_iterator *gsi, const vr_values *rvals)
+bool
+strlen_pass::handle_builtin_string_cmp ()
 {
-  gcall *stmt = as_a <gcall *> (gsi_stmt (*gsi));
+  gcall *stmt = as_a <gcall *> (gsi_stmt (m_gsi));
   tree lhs = gimple_call_lhs (stmt);
 
   if (!lhs)
@@ -4420,8 +4285,8 @@ handle_builtin_string_cmp (gimple_stmt_iterator *gsi, const vr_values *rvals)
     /* Try to determine if the two strings are either definitely equal
        or definitely unequal and if so, either fold the result to zero
        (when equal) or set the range of the result to ~[0, 0] otherwise.  */
-    if (tree eqz = strxcmp_eqz_result (arg1, idx1, arg2, idx2, bound,
-				       len, &siz, rvals))
+    if (tree eqz = strxcmp_eqz_result (stmt, arg1, idx1, arg2, idx2, bound,
+				       len, &siz))
       {
 	if (integer_zerop (eqz))
 	  {
@@ -4437,7 +4302,7 @@ handle_builtin_string_cmp (gimple_stmt_iterator *gsi, const vr_values *rvals)
 	  }
 	/* When the two strings are definitely equal (such as when they
 	   are both empty) fold the call to the constant result.  */
-	replace_call_with_value (gsi, integer_zero_node);
+	replace_call_with_value (&m_gsi, integer_zero_node);
 	return true;
       }
   }
@@ -4457,8 +4322,8 @@ handle_builtin_string_cmp (gimple_stmt_iterator *gsi, const vr_values *rvals)
     unsigned HOST_WIDE_INT arsz1, arsz2;
     bool nulterm[2];
 
-    if (!get_len_or_size (arg1, idx1, len1rng, &arsz1, nulterm, rvals)
-	|| !get_len_or_size (arg2, idx2, len2rng, &arsz2, nulterm + 1, rvals))
+    if (!get_len_or_size (stmt, arg1, idx1, len1rng, &arsz1, nulterm)
+	|| !get_len_or_size (stmt, arg2, idx2, len2rng, &arsz2, nulterm + 1))
       return false;
 
     if (len1rng[0] == len1rng[1] && len1rng[0] < HOST_WIDE_INT_MAX)
@@ -4485,11 +4350,19 @@ handle_builtin_string_cmp (gimple_stmt_iterator *gsi, const vr_values *rvals)
     ++cstlen2;
 
   /* The exact number of characters to compare.  */
-  HOST_WIDE_INT cmpsiz = bound < 0 ? cstlen1 < 0 ? cstlen2 : cstlen1 : bound;
+  HOST_WIDE_INT cmpsiz;
+  if (cstlen1 >= 0 && cstlen2 >= 0)
+    cmpsiz = MIN (cstlen1, cstlen2);
+  else if (cstlen1 >= 0)
+    cmpsiz = cstlen1;
+  else
+    cmpsiz = cstlen2;
+  if (bound >= 0)
+    cmpsiz = MIN (cmpsiz, bound);
   /* The size of the array in which the unknown string is stored.  */
   HOST_WIDE_INT varsiz = arysiz1 < 0 ? arysiz2 : arysiz1;
 
-  if (cmpsiz < varsiz && used_only_for_zero_equality (lhs))
+  if ((varsiz < 0 || cmpsiz < varsiz) && use_in_zero_equality (lhs))
     {
       /* If the known length is less than the size of the other array
 	 and the strcmp result is only used to test equality to zero,
@@ -4498,7 +4371,7 @@ handle_builtin_string_cmp (gimple_stmt_iterator *gsi, const vr_values *rvals)
 					   : BUILT_IN_STRNCMP_EQ))
 	{
 	  tree n = build_int_cst (size_type_node, cmpsiz);
-	  update_gimple_call (gsi, fn, 3, arg1, arg2, n);
+	  update_gimple_call (&m_gsi, fn, 3, arg1, arg2, n);
 	  return true;
 	}
     }
@@ -4511,10 +4384,10 @@ handle_builtin_string_cmp (gimple_stmt_iterator *gsi, const vr_values *rvals)
    p = q + off is pointing to a '\0' character of a string, call
    zero_length_string on it.  */
 
-static void
-handle_pointer_plus (gimple_stmt_iterator *gsi)
+void
+strlen_pass::handle_pointer_plus ()
 {
-  gimple *stmt = gsi_stmt (*gsi);
+  gimple *stmt = gsi_stmt (m_gsi);
   tree lhs = gimple_assign_lhs (stmt), off;
   int idx = get_stridx (gimple_assign_rhs1 (stmt));
   strinfo *si, *zsi;
@@ -4557,74 +4430,50 @@ handle_pointer_plus (gimple_stmt_iterator *gsi)
       enum tree_code rhs_code
 	= useless_type_conversion_p (TREE_TYPE (lhs), TREE_TYPE (si->endptr))
 	  ? SSA_NAME : NOP_EXPR;
-      gimple_assign_set_rhs_with_ops (gsi, rhs_code, si->endptr);
-      gcc_assert (gsi_stmt (*gsi) == stmt);
+      gimple_assign_set_rhs_with_ops (&m_gsi, rhs_code, si->endptr);
+      gcc_assert (gsi_stmt (m_gsi) == stmt);
       update_stmt (stmt);
     }
 }
 
-/* Describes recursion limits used by count_nonzero_bytes.  */
-
-class ssa_name_limit_t
-{
-  bitmap visited;         /* Bitmap of visited SSA_NAMEs.  */
-  unsigned ssa_def_max;   /* Longest chain of SSA_NAMEs to follow.  */
-
-  /* Not copyable or assignable.  */
-  ssa_name_limit_t (ssa_name_limit_t&);
-  void operator= (ssa_name_limit_t&);
-
- public:
-
-  ssa_name_limit_t ()
-    : visited (NULL),
-    ssa_def_max (param_ssa_name_def_chain_limit) { }
-
-  int next_ssa_name (tree);
-
-  ~ssa_name_limit_t ()
-    {
-      if (visited)
-	BITMAP_FREE (visited);
-    }
-};
-
-/* If the SSA_NAME has already been "seen" return a positive value.
-   Otherwise add it to VISITED.  If the SSA_NAME limit has been
-   reached, return a negative value.  Otherwise return zero.  */
-
-int ssa_name_limit_t::next_ssa_name (tree ssa_name)
-{
-  if (!visited)
-    visited = BITMAP_ALLOC (NULL);
-
-  /* Return a positive value if SSA_NAME has already been visited.  */
-  if (!bitmap_set_bit (visited, SSA_NAME_VERSION (ssa_name)))
-    return 1;
-
-  /* Return a negative value to let caller avoid recursing beyond
-     the specified limit.  */
-  if (ssa_def_max == 0)
-    return -1;
-
-  --ssa_def_max;
-
-  return 0;
-}
+/* Set LENRANGE to the number of nonzero bytes for a store of TYPE and
+   clear all flags.  Return true on success and false on failure.  */
 
 static bool
-count_nonzero_bytes_addr (tree, unsigned HOST_WIDE_INT, unsigned HOST_WIDE_INT,
-			  unsigned [3], bool *, bool *, bool *,
-			  const vr_values *, ssa_name_limit_t &);
+nonzero_bytes_for_type (tree type, unsigned lenrange[3],
+			bool *nulterm, bool *allnul, bool *allnonnul)
+{
+  /* Use the size of the type of the expression as the size of the store,
+     and set the upper bound of the length range to that of the size.
+     Nothing is known about the contents so clear all flags.  */
+  tree typesize = TYPE_SIZE_UNIT (type);
+  if (!type)
+    return false;
 
-/* Determines the minimum and maximum number of leading non-zero bytes
-   in the representation of EXP and set LENRANGE[0] and LENRANGE[1]
+  if (!tree_fits_uhwi_p (typesize))
+    return false;
+
+  unsigned HOST_WIDE_INT sz = tree_to_uhwi (typesize);
+  if (sz > UINT_MAX)
+    return false;
+
+  lenrange[2] = sz;
+  lenrange[1] = lenrange[2] ? lenrange[2] - 1 : 0;
+  lenrange[0] = 0;
+  *nulterm = false;
+  *allnul = false;
+  *allnonnul = false;
+  return true;
+}
+
+/* Recursively determine the minimum and maximum number of leading nonzero
+   bytes in the representation of EXP and set LENRANGE[0] and LENRANGE[1]
    to each.
    Sets LENRANGE[2] to the total size of the access (which may be less
    than LENRANGE[1] when what's being referenced by EXP is a pointer
    rather than an array).
-   Sets *NULTERM if the representation contains a zero byte, and sets
-   *ALLNUL if all the bytes are zero.
+   Sets *NULTERM if the representation contains a zero byte, sets *ALLNUL
+   if all the bytes are zero, and *ALLNONNUL is all are nonzero.
    OFFSET and NBYTES are the offset into the representation and
    the size of the access to it determined from an ADDR_EXPR (i.e.,
    a pointer) or MEM_REF or zero for other expressions.
@@ -4632,12 +4481,13 @@ count_nonzero_bytes_addr (tree, unsigned HOST_WIDE_INT, unsigned HOST_WIDE_INT,
    Avoids recursing deeper than the limits in SNLIM allow.
    Returns true on success and false otherwise.  */
 
-static bool
-count_nonzero_bytes (tree exp, unsigned HOST_WIDE_INT offset,
-		     unsigned HOST_WIDE_INT nbytes,
-		     unsigned lenrange[3], bool *nulterm,
-		     bool *allnul, bool *allnonnul, const vr_values *rvals,
-		     ssa_name_limit_t &snlim)
+bool
+strlen_pass::count_nonzero_bytes (tree exp,
+				  unsigned HOST_WIDE_INT offset,
+				  unsigned HOST_WIDE_INT nbytes,
+				  unsigned lenrange[3], bool *nulterm,
+				  bool *allnul, bool *allnonnul,
+				  ssa_name_limit_t &snlim)
 {
   if (TREE_CODE (exp) == SSA_NAME)
     {
@@ -4653,23 +4503,25 @@ count_nonzero_bytes (tree exp, unsigned HOST_WIDE_INT offset,
 	     for an arbitrary constant.  */
 	  exp = build_int_cst (type, 1);
 	  return count_nonzero_bytes (exp, offset, 1, lenrange,
-				      nulterm, allnul, allnonnul, rvals, snlim);
+				      nulterm, allnul, allnonnul, snlim);
 	}
 
       gimple *stmt = SSA_NAME_DEF_STMT (exp);
       if (gimple_assign_single_p (stmt))
 	{
 	  exp = gimple_assign_rhs1 (stmt);
-	  if (TREE_CODE (exp) != MEM_REF)
+	  if (!DECL_P (exp)
+	      && TREE_CODE (exp) != CONSTRUCTOR
+	      && TREE_CODE (exp) != MEM_REF)
 	    return false;
-	  /* Handle MEM_REF below.  */
+	  /* Handle DECLs, CONSTRUCTOR and MEM_REF below.  */
 	}
       else if (gimple_code (stmt) == GIMPLE_PHI)
 	{
 	  /* Avoid processing an SSA_NAME that has already been visited
 	     or if an SSA_NAME limit has been reached.  Indicate success
 	     if the former and failure if the latter.  */
-	  if (int res = snlim.next_ssa_name (exp))
+	  if (int res = snlim.next_phi (exp))
 	    return res > 0;
 
 	  /* Determine the minimum and maximum from the PHI arguments.  */
@@ -4678,12 +4530,31 @@ count_nonzero_bytes (tree exp, unsigned HOST_WIDE_INT offset,
 	    {
 	      tree def = gimple_phi_arg_def (stmt, i);
 	      if (!count_nonzero_bytes (def, offset, nbytes, lenrange, nulterm,
-					allnul, allnonnul, rvals, snlim))
+					allnul, allnonnul, snlim))
 		return false;
 	    }
 
 	  return true;
 	}
+    }
+
+  if (TREE_CODE (exp) == CONSTRUCTOR)
+    {
+      if (nbytes)
+	/* If NBYTES has already been determined by an outer MEM_REF
+	   fail rather than overwriting it (this shouldn't happen).  */
+	return false;
+
+      tree type = TREE_TYPE (exp);
+      tree size = TYPE_SIZE_UNIT (type);
+      if (!size || !tree_fits_uhwi_p (size))
+	return false;
+
+      unsigned HOST_WIDE_INT byte_size = tree_to_uhwi (size);
+      if (byte_size < offset)
+	return false;
+
+      nbytes = byte_size - offset;
     }
 
   if (TREE_CODE (exp) == MEM_REF)
@@ -4716,14 +4587,16 @@ count_nonzero_bytes (tree exp, unsigned HOST_WIDE_INT offset,
 
       /* Handle MEM_REF = SSA_NAME types of assignments.  */
       return count_nonzero_bytes_addr (arg, offset, nbytes, lenrange, nulterm,
-				       allnul, allnonnul, rvals, snlim);
+				       allnul, allnonnul, snlim);
     }
 
   if (VAR_P (exp) || TREE_CODE (exp) == CONST_DECL)
     {
-      exp = ctor_for_folding (exp);
-      if (!exp)
-	return false;
+      /* If EXP can be folded into a constant use the result.  Otherwise
+	 proceed to use EXP to determine a range of the result.  */
+      if (tree fold_exp = ctor_for_folding (exp))
+	if (fold_exp != error_mark_node)
+	  exp = fold_exp;
     }
 
   const char *prep = NULL;
@@ -4771,7 +4644,8 @@ count_nonzero_bytes (tree exp, unsigned HOST_WIDE_INT offset,
     }
 
   if (!nbytes)
-    return false;
+    return nonzero_bytes_for_type (TREE_TYPE (exp), lenrange,
+				   nulterm, allnul, allnonnul);
 
   /* Compute the number of leading nonzero bytes in the representation
      and update the minimum and maximum.  */
@@ -4823,12 +4697,13 @@ count_nonzero_bytes (tree exp, unsigned HOST_WIDE_INT offset,
 /* Like count_nonzero_bytes, but instead of counting bytes in EXP, count
    bytes that are pointed to by EXP, which should be a pointer.  */
 
-static bool
-count_nonzero_bytes_addr (tree exp, unsigned HOST_WIDE_INT offset,
-			  unsigned HOST_WIDE_INT nbytes,
-			  unsigned lenrange[3], bool *nulterm,
-			  bool *allnul, bool *allnonnul,
-			  const vr_values *rvals, ssa_name_limit_t &snlim)
+bool
+strlen_pass::count_nonzero_bytes_addr (tree exp,
+				       unsigned HOST_WIDE_INT offset,
+				       unsigned HOST_WIDE_INT nbytes,
+				       unsigned lenrange[3], bool *nulterm,
+				       bool *allnul, bool *allnonnul,
+				       ssa_name_limit_t &snlim)
 {
   int idx = get_stridx (exp);
   if (idx > 0)
@@ -4845,13 +4720,13 @@ count_nonzero_bytes_addr (tree exp, unsigned HOST_WIDE_INT offset,
       else if (si->nonzero_chars
 	       && TREE_CODE (si->nonzero_chars) == SSA_NAME)
 	{
-	  vr_values *v = CONST_CAST (vr_values *, rvals);
-	  const value_range_equiv *vr = v->get_value_range (si->nonzero_chars);
-	  if (vr->kind () != VR_RANGE || !range_int_cst_p (vr))
+	  value_range vr;
+	  ptr_qry.rvals->range_of_expr (vr, si->nonzero_chars, si->stmt);
+	  if (vr.kind () != VR_RANGE)
 	    return false;
 
-	  minlen = tree_to_uhwi (vr->min ());
-	  maxlen = tree_to_uhwi (vr->max ());
+	  minlen = tree_to_uhwi (vr.min ());
+	  maxlen = tree_to_uhwi (vr.max ());
 	}
       else
 	return false;
@@ -4893,8 +4768,7 @@ count_nonzero_bytes_addr (tree exp, unsigned HOST_WIDE_INT offset,
 
   if (TREE_CODE (exp) == ADDR_EXPR)
     return count_nonzero_bytes (TREE_OPERAND (exp, 0), offset, nbytes,
-				lenrange, nulterm, allnul, allnonnul, rvals,
-				snlim);
+				lenrange, nulterm, allnul, allnonnul, snlim);
 
   if (TREE_CODE (exp) == SSA_NAME)
     {
@@ -4904,7 +4778,7 @@ count_nonzero_bytes_addr (tree exp, unsigned HOST_WIDE_INT offset,
 	  /* Avoid processing an SSA_NAME that has already been visited
 	     or if an SSA_NAME limit has been reached.  Indicate success
 	     if the former and failure if the latter.  */
-	  if (int res = snlim.next_ssa_name (exp))
+	  if (int res = snlim.next_phi (exp))
 	    return res > 0;
 
 	  /* Determine the minimum and maximum from the PHI arguments.  */
@@ -4913,7 +4787,7 @@ count_nonzero_bytes_addr (tree exp, unsigned HOST_WIDE_INT offset,
 	    {
 	      tree def = gimple_phi_arg_def (stmt, i);
 	      if (!count_nonzero_bytes_addr (def, offset, nbytes, lenrange,
-					     nulterm, allnul, allnonnul, rvals,
+					     nulterm, allnul, allnonnul,
 					     snlim))
 		return false;
 	    }
@@ -4934,14 +4808,20 @@ count_nonzero_bytes_addr (tree exp, unsigned HOST_WIDE_INT offset,
   return true;
 }
 
-/* Same as above except with an implicit SSA_NAME limit.  RVALS is used
-   to determine ranges of dynamically computed string lengths (the results
-   of strlen).  */
+/* Same as above except with an implicit SSA_NAME limit.  When EXPR_OR_TYPE
+   is a type rather than an expression use its size to compute the range.
+   RVALS is used to determine ranges of dynamically computed string lengths
+   (the results of strlen).  */
 
-static bool
-count_nonzero_bytes (tree exp, unsigned lenrange[3], bool *nulterm,
-		     bool *allnul, bool *allnonnul, const vr_values *rvals)
+bool
+strlen_pass::count_nonzero_bytes (tree expr_or_type,
+				  unsigned lenrange[3], bool *nulterm,
+				  bool *allnul, bool *allnonnul)
 {
+  if (TYPE_P (expr_or_type))
+    return nonzero_bytes_for_type (expr_or_type, lenrange,
+				   nulterm, allnul, allnonnul);
+
   /* Set to optimistic values so the caller doesn't have to worry about
      initializing these and to what.  On success, the function will clear
      these if it determines their values are different but being recursive
@@ -4952,8 +4832,9 @@ count_nonzero_bytes (tree exp, unsigned lenrange[3], bool *nulterm,
   *allnonnul = true;
 
   ssa_name_limit_t snlim;
-  return count_nonzero_bytes (exp, 0, 0, lenrange, nulterm, allnul, allnonnul,
-			      rvals, snlim);
+  tree expr = expr_or_type;
+  return count_nonzero_bytes (expr, 0, 0, lenrange, nulterm, allnul, allnonnul,
+			      snlim);
 }
 
 /* Handle a single or multibyte store other than by a built-in function,
@@ -4962,15 +4843,34 @@ count_nonzero_bytes (tree exp, unsigned lenrange[3], bool *nulterm,
    '*(int*)a = 12345').  Return true to let the caller advance *GSI to
    the next statement in the basic block and false otherwise.  */
 
-static bool
-handle_store (gimple_stmt_iterator *gsi, bool *zero_write,
-	      const vr_values *rvals)
+bool
+strlen_pass::handle_store (bool *zero_write)
 {
-  int idx = -1;
+  gimple *stmt = gsi_stmt (m_gsi);
+  /* The LHS and RHS of the store.  The RHS is null if STMT is a function
+     call.  STORETYPE is the type of the store (determined from either
+     the RHS of the assignment statement or the LHS of a function call.  */
+  tree lhs, rhs, storetype;
+  if (is_gimple_assign (stmt))
+    {
+      lhs = gimple_assign_lhs (stmt);
+      rhs = gimple_assign_rhs1 (stmt);
+      storetype = TREE_TYPE (rhs);
+    }
+  else if (is_gimple_call (stmt))
+    {
+      lhs = gimple_call_lhs (stmt);
+      rhs = NULL_TREE;
+      storetype = TREE_TYPE (lhs);
+    }
+  else
+    return true;
+
+  tree ssaname = NULL_TREE;
   strinfo *si = NULL;
-  gimple *stmt = gsi_stmt (*gsi);
-  tree ssaname = NULL_TREE, lhs = gimple_assign_lhs (stmt);
-  tree rhs = gimple_assign_rhs1 (stmt);
+  int idx = -1;
+
+  range_query *const rvals = ptr_qry.rvals;
 
   /* The offset of the first byte in LHS modified by the store.  */
   unsigned HOST_WIDE_INT offset = 0;
@@ -4992,13 +4892,13 @@ handle_store (gimple_stmt_iterator *gsi, bool *zero_write,
 	    ssaname = TREE_OPERAND (lhs, 0);
 	  else if (si == NULL || compare_nonzero_chars (si, offset, rvals) < 0)
 	    {
-	      *zero_write = initializer_zerop (rhs);
+	      *zero_write = rhs ? initializer_zerop (rhs) : false;
 
 	      bool dummy;
 	      unsigned lenrange[] = { UINT_MAX, 0, 0 };
-	      if (count_nonzero_bytes (rhs, lenrange, &dummy, &dummy, &dummy,
-				       rvals))
-		maybe_warn_overflow (stmt, lenrange[2], rvals);
+	      if (count_nonzero_bytes (rhs ? rhs : storetype, lenrange,
+				       &dummy, &dummy, &dummy))
+		maybe_warn_overflow (stmt, true, lenrange[2]);
 
 	      return true;
 	    }
@@ -5029,16 +4929,16 @@ handle_store (gimple_stmt_iterator *gsi, bool *zero_write,
   bool full_string_p;
 
   const bool ranges_valid
-    = count_nonzero_bytes (rhs, lenrange, &full_string_p,
-			   &storing_all_zeros_p, &storing_all_nonzero_p,
-			   rvals);
+    = count_nonzero_bytes (rhs ? rhs : storetype, lenrange, &full_string_p,
+			   &storing_all_zeros_p, &storing_all_nonzero_p);
+
   if (ranges_valid)
     {
       rhs_minlen = lenrange[0];
       storing_nonzero_p = lenrange[1] > 0;
       *zero_write = storing_all_zeros_p;
 
-      maybe_warn_overflow (stmt, lenrange[2], rvals);
+      maybe_warn_overflow (stmt, true, lenrange[2]);
     }
   else
     {
@@ -5085,13 +4985,13 @@ handle_store (gimple_stmt_iterator *gsi, bool *zero_write,
 	    {
 	      unlink_stmt_vdef (stmt);
 	      release_defs (stmt);
-	      gsi_remove (gsi, true);
+	      gsi_remove (&m_gsi, true);
 	      return false;
 	    }
 	  else
 	    {
 	      si->writable = true;
-	      gsi_next (gsi);
+	      gsi_next (&m_gsi);
 	      return false;
 	    }
 	}
@@ -5100,7 +5000,7 @@ handle_store (gimple_stmt_iterator *gsi, bool *zero_write,
 	  && storing_nonzero_p
 	  && lenrange[0] == lenrange[1]
 	  && lenrange[0] == lenrange[2]
-	  && TREE_CODE (TREE_TYPE (rhs)) == INTEGER_TYPE)
+	  && TREE_CODE (storetype) == INTEGER_TYPE)
 	{
 	  /* Handle a store of one or more non-nul characters that ends
 	     before the terminating nul of the destination and so does
@@ -5125,7 +5025,7 @@ handle_store (gimple_stmt_iterator *gsi, bool *zero_write,
 	       size_t len4 = strlen (q);    // can be folded to len2
 	       bar (len, len2, len3, len4);
 	       } */
-	  gsi_next (gsi);
+	  gsi_next (&m_gsi);
 	  return false;
 	}
 
@@ -5372,17 +5272,27 @@ is_char_type (tree type)
    Return true to let the caller advance *GSI to the next statement
    in the basic block and false otherwise.  */
 
-static bool
-strlen_check_and_optimize_call (gimple_stmt_iterator *gsi, bool *zero_write,
-				const vr_values *rvals)
+bool
+strlen_pass::check_and_optimize_call (bool *zero_write)
 {
-  gimple *stmt = gsi_stmt (*gsi);
+  gimple *stmt = gsi_stmt (m_gsi);
 
   if (!gimple_call_builtin_p (stmt, BUILT_IN_NORMAL))
     {
       tree fntype = gimple_call_fntype (stmt);
-      if (fntype && lookup_attribute ("alloc_size", TYPE_ATTRIBUTES (fntype)))
-	handle_alloc_call (BUILT_IN_NONE, gsi);
+      if (!fntype)
+	return true;
+
+      if (lookup_attribute ("alloc_size", TYPE_ATTRIBUTES (fntype)))
+	{
+	  handle_alloc_call (BUILT_IN_NONE);
+	  return true;
+	}
+
+      if (tree lhs = gimple_call_lhs (stmt))
+	handle_assign (lhs, zero_write);
+
+      /* Proceed to handle user-defined formatting functions.  */
     }
 
   /* When not optimizing we must be checking printf calls which
@@ -5391,68 +5301,68 @@ strlen_check_and_optimize_call (gimple_stmt_iterator *gsi, bool *zero_write,
   if (!flag_optimize_strlen
       || !strlen_optimize
       || !valid_builtin_call (stmt))
-    return !handle_printf_call (gsi, rvals);
+    return !handle_printf_call (&m_gsi, ptr_qry);
 
   tree callee = gimple_call_fndecl (stmt);
   switch (DECL_FUNCTION_CODE (callee))
     {
     case BUILT_IN_STRLEN:
     case BUILT_IN_STRNLEN:
-      handle_builtin_strlen (gsi);
+      handle_builtin_strlen ();
       break;
     case BUILT_IN_STRCHR:
-      handle_builtin_strchr (gsi);
+      handle_builtin_strchr ();
       break;
     case BUILT_IN_STRCPY:
     case BUILT_IN_STRCPY_CHK:
     case BUILT_IN_STPCPY:
     case BUILT_IN_STPCPY_CHK:
-      handle_builtin_strcpy (DECL_FUNCTION_CODE (callee), gsi, rvals);
+      handle_builtin_strcpy (DECL_FUNCTION_CODE (callee));
       break;
 
     case BUILT_IN_STRNCAT:
     case BUILT_IN_STRNCAT_CHK:
-      handle_builtin_strncat (DECL_FUNCTION_CODE (callee), gsi);
+      handle_builtin_strncat (DECL_FUNCTION_CODE (callee));
       break;
 
     case BUILT_IN_STPNCPY:
     case BUILT_IN_STPNCPY_CHK:
     case BUILT_IN_STRNCPY:
     case BUILT_IN_STRNCPY_CHK:
-      handle_builtin_stxncpy_strncat (false, gsi);
+      handle_builtin_stxncpy_strncat (false);
       break;
 
     case BUILT_IN_MEMCPY:
     case BUILT_IN_MEMCPY_CHK:
     case BUILT_IN_MEMPCPY:
     case BUILT_IN_MEMPCPY_CHK:
-      handle_builtin_memcpy (DECL_FUNCTION_CODE (callee), gsi, rvals);
+      handle_builtin_memcpy (DECL_FUNCTION_CODE (callee));
       break;
     case BUILT_IN_STRCAT:
     case BUILT_IN_STRCAT_CHK:
-      handle_builtin_strcat (DECL_FUNCTION_CODE (callee), gsi);
+      handle_builtin_strcat (DECL_FUNCTION_CODE (callee));
       break;
     case BUILT_IN_ALLOCA:
     case BUILT_IN_ALLOCA_WITH_ALIGN:
     case BUILT_IN_MALLOC:
     case BUILT_IN_CALLOC:
-      handle_alloc_call (DECL_FUNCTION_CODE (callee), gsi);
+      handle_alloc_call (DECL_FUNCTION_CODE (callee));
       break;
     case BUILT_IN_MEMSET:
-      if (handle_builtin_memset (gsi, zero_write, rvals))
+      if (handle_builtin_memset (zero_write))
 	return false;
       break;
     case BUILT_IN_MEMCMP:
-      if (handle_builtin_memcmp (gsi))
+      if (handle_builtin_memcmp ())
 	return false;
       break;
     case BUILT_IN_STRCMP:
     case BUILT_IN_STRNCMP:
-      if (handle_builtin_string_cmp (gsi, rvals))
+      if (handle_builtin_string_cmp ())
 	return false;
       break;
     default:
-      if (handle_printf_call (gsi, rvals))
+      if (handle_printf_call (&m_gsi, ptr_qry))
 	return false;
       break;
     }
@@ -5463,11 +5373,10 @@ strlen_check_and_optimize_call (gimple_stmt_iterator *gsi, bool *zero_write,
 /* Handle an assignment statement at *GSI to a LHS of integral type.
    If GSI's basic block needs clean-up of EH, set *CLEANUP_EH to true.  */
 
-static void
-handle_integral_assign (gimple_stmt_iterator *gsi, bool *cleanup_eh,
-			const vr_values *rvals)
+void
+strlen_pass::handle_integral_assign (bool *cleanup_eh)
 {
-  gimple *stmt = gsi_stmt (*gsi);
+  gimple *stmt = gsi_stmt (m_gsi);
   tree lhs = gimple_assign_lhs (stmt);
   tree lhs_type = TREE_TYPE (lhs);
 
@@ -5536,11 +5445,11 @@ handle_integral_assign (gimple_stmt_iterator *gsi, bool *cleanup_eh,
 		  /* Reading the final '\0' character.  */
 		  tree zero = build_int_cst (lhs_type, 0);
 		  gimple_set_vuse (stmt, NULL_TREE);
-		  gimple_assign_set_rhs_from_tree (gsi, zero);
+		  gimple_assign_set_rhs_from_tree (&m_gsi, zero);
 		  *cleanup_eh
 		    |= maybe_clean_or_replace_eh_stmt (stmt,
-						       gsi_stmt (*gsi));
-		  stmt = gsi_stmt (*gsi);
+						       gsi_stmt (m_gsi));
+		  stmt = gsi_stmt (m_gsi);
 		  update_stmt (stmt);
 
 		  if (dump_file && (dump_flags & TDF_DETAILS) != 0)
@@ -5554,16 +5463,13 @@ handle_integral_assign (gimple_stmt_iterator *gsi, bool *cleanup_eh,
 		  /* Reading a character before the final '\0'
 		     character.  Just set the value range to ~[0, 0]
 		     if we don't have anything better.  */
-		  wide_int min, max;
-		  signop sign = TYPE_SIGN (lhs_type);
-		  int prec = TYPE_PRECISION (lhs_type);
-		  value_range_kind vr = get_range_info (lhs, &min, &max);
-		  if (vr == VR_VARYING
-		      || (vr == VR_RANGE
-			  && min == wi::min_value (prec, sign)
-			  && max == wi::max_value (prec, sign)))
-		    set_range_info (lhs, VR_ANTI_RANGE,
-				    wi::zero (prec), wi::zero (prec));
+		  value_range r;
+		  if (!get_range_query (cfun)->range_of_expr (r, lhs)
+		      || r.varying_p ())
+		    {
+		      r.set_nonzero (lhs_type);
+		      set_range_info (lhs, r);
+		    }
 		}
 	    }
 	}
@@ -5580,8 +5486,8 @@ handle_integral_assign (gimple_stmt_iterator *gsi, bool *cleanup_eh,
 	  tree rhs = gimple_assign_rhs1 (stmt);
 	  const bool ranges_valid
 	    = count_nonzero_bytes (rhs, lenrange, &full_string_p,
-				   &storing_all_zeros_p, &storing_all_nonzero_p,
-				   rvals);
+				   &storing_all_zeros_p,
+				   &storing_all_nonzero_p);
 	  if (ranges_valid)
 	    {
 	      tree length = build_int_cst (sizetype, lenrange[0]);
@@ -5601,17 +5507,57 @@ handle_integral_assign (gimple_stmt_iterator *gsi, bool *cleanup_eh,
     }
 }
 
+/* Handle assignment statement at *GSI to LHS.  Set *ZERO_WRITE if
+   the assignent stores all zero bytes..  */
+
+bool
+strlen_pass::handle_assign (tree lhs, bool *zero_write)
+{
+  tree type = TREE_TYPE (lhs);
+  if (TREE_CODE (type) == ARRAY_TYPE)
+    type = TREE_TYPE (type);
+
+  bool is_char_store = is_char_type (type);
+  if (!is_char_store && TREE_CODE (lhs) == MEM_REF)
+    {
+      /* To consider stores into char objects via integer types other
+	 than char but not those to non-character objects, determine
+	 the type of the destination rather than just the type of
+	 the access.  */
+      for (int i = 0; i != 2; ++i)
+	{
+	  tree ref = TREE_OPERAND (lhs, i);
+	  type = TREE_TYPE (ref);
+	  if (TREE_CODE (type) == POINTER_TYPE)
+	    type = TREE_TYPE (type);
+	  if (TREE_CODE (type) == ARRAY_TYPE)
+	    type = TREE_TYPE (type);
+	  if (is_char_type (type))
+	    {
+	      is_char_store = true;
+	      break;
+	    }
+	}
+    }
+
+  /* Handle a single or multibyte assignment.  */
+  if (is_char_store && !handle_store (zero_write))
+    return false;
+
+  return true;
+}
+
+
 /* Attempt to check for validity of the performed access a single statement
    at *GSI using string length knowledge, and to optimize it.
    If the given basic block needs clean-up of EH, CLEANUP_EH is set to
    true.  Return true to let the caller advance *GSI to the next statement
    in the basic block and false otherwise.  */
 
-static bool
-check_and_optimize_stmt (gimple_stmt_iterator *gsi, bool *cleanup_eh,
-			 const vr_values *rvals)
+bool
+strlen_pass::check_and_optimize_stmt (bool *cleanup_eh)
 {
-  gimple *stmt = gsi_stmt (*gsi);
+  gimple *stmt = gsi_stmt (m_gsi);
 
   /* For statements that modify a string, set to true if the write
      is only zeros.  */
@@ -5619,7 +5565,7 @@ check_and_optimize_stmt (gimple_stmt_iterator *gsi, bool *cleanup_eh,
 
   if (is_gimple_call (stmt))
     {
-      if (!strlen_check_and_optimize_call (gsi, &zero_write, rvals))
+      if (!check_and_optimize_call (&zero_write))
 	return false;
     }
   else if (!flag_optimize_strlen || !strlen_optimize)
@@ -5640,44 +5586,14 @@ check_and_optimize_stmt (gimple_stmt_iterator *gsi, bool *cleanup_eh,
 	      ssa_ver_to_stridx[SSA_NAME_VERSION (lhs)] = idx;
 	    }
 	  else if (gimple_assign_rhs_code (stmt) == POINTER_PLUS_EXPR)
-	    handle_pointer_plus (gsi);
+	    handle_pointer_plus ();
 	}
       else if (TREE_CODE (lhs) == SSA_NAME && INTEGRAL_TYPE_P (lhs_type))
 	/* Handle assignment to a character.  */
-	handle_integral_assign (gsi, cleanup_eh, rvals);
+	handle_integral_assign (cleanup_eh);
       else if (TREE_CODE (lhs) != SSA_NAME && !TREE_SIDE_EFFECTS (lhs))
-	{
-	  tree type = TREE_TYPE (lhs);
-	  if (TREE_CODE (type) == ARRAY_TYPE)
-	    type = TREE_TYPE (type);
-
-	bool is_char_store = is_char_type (type);
-	if (!is_char_store && TREE_CODE (lhs) == MEM_REF)
-	  {
-	    /* To consider stores into char objects via integer types
-	       other than char but not those to non-character objects,
-	       determine the type of the destination rather than just
-	       the type of the access.  */
-	    for (int i = 0; i != 2; ++i)
-	      {
-		tree ref = TREE_OPERAND (lhs, i);
-		type = TREE_TYPE (ref);
-		if (TREE_CODE (type) == POINTER_TYPE)
-		  type = TREE_TYPE (type);
-		if (TREE_CODE (type) == ARRAY_TYPE)
-		  type = TREE_TYPE (type);
-		if (is_char_type (type))
-		  {
-		    is_char_store = true;
-		    break;
-		  }
-	      }
-	  }
-
-	  /* Handle a single or multibyte assignment.  */
-	  if (is_char_store && !handle_store (gsi, &zero_write, rvals))
-	    return false;
-	}
+	if (!handle_assign (lhs, &zero_write))
+	  return false;
     }
   else if (gcond *cond = dyn_cast<gcond *> (stmt))
     {
@@ -5743,32 +5659,18 @@ do_invalidate (basic_block dombb, gimple *phi, bitmap visited, int *count)
     }
 }
 
-class strlen_dom_walker : public dom_walker
+/* Release pointer_query cache.  */
+
+strlen_pass::~strlen_pass ()
 {
-public:
-  strlen_dom_walker (cdi_direction direction)
-    : dom_walker (direction),
-    evrp (false),
-    m_cleanup_cfg (false)
-  {}
-
-  virtual edge before_dom_children (basic_block);
-  virtual void after_dom_children (basic_block);
-
-  /* EVRP analyzer used for printf argument range processing, and
-     to track strlen results across integer variable assignments.  */
-  evrp_range_analyzer evrp;
-
-  /* Flag that will trigger TODO_cleanup_cfg to be returned in strlen
-     execute function.  */
-  bool m_cleanup_cfg;
-};
+  ptr_qry.flush_cache ();
+}
 
 /* Callback for walk_dominator_tree.  Attempt to optimize various
    string ops by remembering string lengths pointed by pointer SSA_NAMEs.  */
 
 edge
-strlen_dom_walker::before_dom_children (basic_block bb)
+strlen_pass::before_dom_children (basic_block bb)
 {
   evrp.enter (bb);
 
@@ -5844,16 +5746,19 @@ strlen_dom_walker::before_dom_children (basic_block bb)
   bool cleanup_eh = false;
 
   /* Attempt to optimize individual statements.  */
-  for (gimple_stmt_iterator gsi = gsi_start_bb (bb); !gsi_end_p (gsi); )
+  for (m_gsi = gsi_start_bb (bb); !gsi_end_p (m_gsi); )
     {
-      gimple *stmt = gsi_stmt (gsi);
+      gimple *stmt = gsi_stmt (m_gsi);
 
       /* First record ranges generated by this statement so they
 	 can be used by printf argument processing.  */
       evrp.record_ranges_from_stmt (stmt, false);
 
-      if (check_and_optimize_stmt (&gsi, &cleanup_eh, evrp.get_vr_values ()))
-	gsi_next (&gsi);
+      /* Reset search depth preformance counter.  */
+      ptr_qry.depth = 0;
+
+      if (check_and_optimize_stmt (&cleanup_eh))
+	gsi_next (&m_gsi);
     }
 
   if (cleanup_eh && gimple_purge_dead_eh_edges (bb))
@@ -5869,7 +5774,7 @@ strlen_dom_walker::before_dom_children (basic_block bb)
    owned by the current bb, clear bb->aux.  */
 
 void
-strlen_dom_walker::after_dom_children (basic_block bb)
+strlen_pass::after_dom_children (basic_block bb)
 {
   evrp.leave (bb);
 
@@ -5912,13 +5817,16 @@ printf_strlen_execute (function *fun, bool warn_only)
 
   /* This has to happen after initializing the loop optimizer
      and initializing SCEV as they create new SSA_NAMEs.  */
-  ssa_ver_to_stridx.safe_grow_cleared (num_ssa_names);
+  ssa_ver_to_stridx.safe_grow_cleared (num_ssa_names, true);
   max_stridx = 1;
 
   /* String length optimization is implemented as a walk of the dominator
      tree and a forward walk of statements within each block.  */
-  strlen_dom_walker walker (CDI_DOMINATORS);
+  strlen_pass walker (CDI_DOMINATORS);
   walker.walk (ENTRY_BLOCK_PTR_FOR_FN (fun));
+
+  if (dump_file && (dump_flags & TDF_DETAILS))
+    walker.ptr_qry.dump (dump_file);
 
   ssa_ver_to_stridx.release ();
   strinfo_pool.release ();
@@ -5944,9 +5852,6 @@ printf_strlen_execute (function *fun, bool warn_only)
       scev_finalize ();
       loop_optimizer_finalize ();
     }
-
-  /* Clean up object size info.  */
-  fini_object_sizes ();
 
   return walker.m_cleanup_cfg ? TODO_cleanup_cfg : 0;
 }

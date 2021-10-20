@@ -1,6 +1,6 @@
 /* Gimple folding definitions.
 
-   Copyright (C) 2011-2020 Free Software Foundation, Inc.
+   Copyright (C) 2011-2021 Free Software Foundation, Inc.
    Contributed by Richard Guenther <rguenther@suse.de>
 
 This file is part of GCC.
@@ -28,6 +28,7 @@ extern tree get_symbol_constant_value (tree);
 struct c_strlen_data;
 extern bool get_range_strlen (tree, c_strlen_data *, unsigned eltsize);
 extern void gimplify_and_update_call_from_tree (gimple_stmt_iterator *, tree);
+extern bool update_gimple_call (gimple_stmt_iterator *, tree, int, ...);
 extern bool fold_stmt (gimple_stmt_iterator *);
 extern bool fold_stmt (gimple_stmt_iterator *, tree (*) (tree));
 extern bool fold_stmt_inplace (gimple_stmt_iterator *);
@@ -35,6 +36,8 @@ extern tree maybe_fold_and_comparisons (tree, enum tree_code, tree, tree,
 					enum tree_code, tree, tree);
 extern tree maybe_fold_or_comparisons (tree, enum tree_code, tree, tree,
 				       enum tree_code, tree, tree);
+extern bool clear_padding_type_may_have_padding_p (tree);
+extern void clear_type_padding_in_mask (tree, unsigned char *);
 extern bool optimize_atomic_compare_exchange_p (gimple *);
 extern void fold_builtin_atomic_compare_exchange (gimple_stmt_iterator *);
 extern bool arith_overflowed_p (enum tree_code, const_tree, const_tree,
@@ -90,6 +93,12 @@ gimple_build (gimple_seq *seq,
 {
   return gimple_build (seq, UNKNOWN_LOCATION, code, type, op0, op1, op2);
 }
+extern tree gimple_build (gimple_seq *, location_t, combined_fn, tree);
+inline tree
+gimple_build (gimple_seq *seq, combined_fn fn, tree type)
+{
+  return gimple_build (seq, UNKNOWN_LOCATION, fn, type);
+}
 extern tree gimple_build (gimple_seq *, location_t, combined_fn, tree, tree);
 inline tree
 gimple_build (gimple_seq *seq, combined_fn fn, tree type, tree arg0)
@@ -142,6 +151,15 @@ inline tree
 gimple_build_vector (gimple_seq *seq, tree_vector_builder *builder)
 {
   return gimple_build_vector (seq, UNKNOWN_LOCATION, builder);
+}
+
+extern tree gimple_build_round_up (gimple_seq *, location_t, tree, tree,
+				   unsigned HOST_WIDE_INT);
+inline tree
+gimple_build_round_up (gimple_seq *seq, tree type, tree old_size,
+		       unsigned HOST_WIDE_INT align)
+{
+  return gimple_build_round_up (seq, UNKNOWN_LOCATION, type, old_size, align);
 }
 
 extern bool gimple_stmt_nonnegative_warnv_p (gimple *, bool *, int = 0);

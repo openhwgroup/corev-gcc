@@ -6,23 +6,17 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2020, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2021, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
 -- ware  Foundation;  either version 3,  or (at your option) any later ver- --
 -- sion.  GNAT is distributed in the hope that it will be useful, but WITH- --
 -- OUT ANY WARRANTY;  without even the  implied warranty of MERCHANTABILITY --
--- or FITNESS FOR A PARTICULAR PURPOSE.                                     --
---                                                                          --
--- As a special exception under Section 7 of GPL version 3, you are granted --
--- additional permissions described in the GCC Runtime Library Exception,   --
--- version 3.1, as published by the Free Software Foundation.               --
---                                                                          --
--- You should have received a copy of the GNU General Public License and    --
--- a copy of the GCC Runtime Library Exception along with this program;     --
--- see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see    --
--- <http://www.gnu.org/licenses/>.                                          --
+-- or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License --
+-- for  more details.  You should have  received  a copy of the GNU General --
+-- Public License  distributed with GNAT; see file COPYING3.  If not, go to --
+-- http://www.gnu.org/licenses for a complete copy of the license.          --
 --                                                                          --
 -- GNAT was originally developed  by the GNAT team at  New York University. --
 -- Extensive contributions were provided by Ada Core Technologies Inc.      --
@@ -33,18 +27,20 @@ pragma Style_Checks (All_Checks);
 --  Subprogram ordering not enforced in this unit
 --  (because of some logical groupings).
 
-with Atree;    use Atree;
-with Csets;    use Csets;
-with Einfo;    use Einfo;
-with Nlists;   use Nlists;
-with Opt;      use Opt;
-with Output;   use Output;
-with Sinfo;    use Sinfo;
-with Sinput;   use Sinput;
-with Stand;    use Stand;
-with Stringt;  use Stringt;
-with Uname;    use Uname;
-with Widechar; use Widechar;
+with Atree;          use Atree;
+with Csets;          use Csets;
+with Einfo;          use Einfo;
+with Einfo.Entities; use Einfo.Entities;
+with Nlists;         use Nlists;
+with Opt;            use Opt;
+with Output;         use Output;
+with Sinfo;          use Sinfo;
+with Sinfo.Nodes;    use Sinfo.Nodes;
+with Sinput;         use Sinput;
+with Stand;          use Stand;
+with Stringt;        use Stringt;
+with Uname;          use Uname;
+with Widechar;       use Widechar;
 
 package body Lib is
 
@@ -132,12 +128,12 @@ package body Lib is
       return Units.Table (U).Is_Predefined_Renaming;
    end Is_Predefined_Renaming;
 
-   function Is_Internal_Unit       (U : Unit_Number_Type) return Boolean is
+   function Is_Internal_Unit (U : Unit_Number_Type) return Boolean is
    begin
       return Units.Table (U).Is_Internal_Unit;
    end Is_Internal_Unit;
 
-   function Is_Predefined_Unit     (U : Unit_Number_Type) return Boolean is
+   function Is_Predefined_Unit (U : Unit_Number_Type) return Boolean is
    begin
       return Units.Table (U).Is_Predefined_Unit;
    end Is_Predefined_Unit;
@@ -281,7 +277,7 @@ package body Lib is
    begin
       --  First unregister the old name, if any
 
-      if Old_N /= No_Unit_Name and then Unit_Names.Get (Old_N) = U then
+      if Present (Old_N) and then Unit_Names.Get (Old_N) = U then
          Unit_Names.Set (Old_N, No_Unit);
       end if;
 
@@ -486,18 +482,12 @@ package body Lib is
          --  body of the same unit. The location in the spec is considered
          --  earlier.
 
-         if Nkind (Unit1) = N_Subprogram_Body
-              or else
-            Nkind (Unit1) = N_Package_Body
-         then
+         if Nkind (Unit1) in N_Subprogram_Body | N_Package_Body then
             if Library_Unit (Cunit (Unum1)) = Cunit (Unum2) then
                return Yes_After;
             end if;
 
-         elsif Nkind (Unit2) = N_Subprogram_Body
-                 or else
-               Nkind (Unit2) = N_Package_Body
-         then
+         elsif Nkind (Unit2) in N_Subprogram_Body | N_Package_Body then
             if Library_Unit (Cunit (Unum2)) = Cunit (Unum1) then
                return Yes_Before;
             end if;
@@ -515,8 +505,8 @@ package body Lib is
 
          if Counter > Max_Iterations then
 
-            --  ??? Not quite right, but return a value to be able to generate
-            --  SCIL files and hope for the best.
+            --  In CodePeer_Mode, return a value to be able to generate SCIL
+            --  files and hope for the best.
 
             if CodePeer_Mode then
                return No;
@@ -1184,10 +1174,9 @@ package body Lib is
 
    procedure Remove_Unit (U : Unit_Number_Type) is
    begin
-      if U = Units.Last then
-         Unit_Names.Set (Unit_Name (U), No_Unit);
-         Units.Decrement_Last;
-      end if;
+      pragma Assert (U = Units.Last);
+      Unit_Names.Set (Unit_Name (U), No_Unit);
+      Units.Decrement_Last;
    end Remove_Unit;
 
    ----------------------------------
@@ -1272,10 +1261,16 @@ package body Lib is
    -- Synchronize_Serial_Number --
    -------------------------------
 
-   procedure Synchronize_Serial_Number is
+   procedure Synchronize_Serial_Number (SN : Nat) is
       TSN : Int renames Units.Table (Current_Sem_Unit).Serial_Number;
    begin
-      TSN := TSN + 1;
+      --  We should not be trying to synchronize downward
+
+      pragma Assert (TSN <= SN);
+
+      if TSN < SN then
+         TSN := SN;
+      end if;
    end Synchronize_Serial_Number;
 
    --------------------

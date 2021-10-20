@@ -553,24 +553,44 @@ fix = {
   hackname  = aix_externcpp1;
   mach      = "*-*-aix*";
   files     = "sys/socket.h";
-  select    = "#ifdef __cplusplus";
+  select    = "#ifndef _KERNEL\n"
+	      "#ifdef __cplusplus\n"
+	      "extern \"C\" int naccept\\(int, struct sockaddr \\*, socklen_t \\*\\);";
   c_fix     = format;
-  c_fix_arg = "#ifdef __cplusplus\n"
-              "extern \"C++\" {";
-  test_text = "#ifdef __cplusplus";
-
+  c_fix_arg = "#ifndef _KERNEL\n"
+	      "#ifdef __cplusplus\n"
+	      "extern \"C++\" {\n"
+	      "extern \"C\" int naccept(int, struct sockaddr *, socklen_t *);";
+  test_text = "#ifndef _KERNEL\n"
+	      "#ifdef __cplusplus\n"
+	      "extern \"C\" int naccept(int, struct sockaddr *, socklen_t *);";
 };
 
 fix = {
   hackname  = aix_externcpp2;
   mach      = "*-*-aix*";
   files     = "sys/socket.h";
-  select    = "#else  /\\* __cplusplus \\*/";
+  select    = "#endif /\\* COMPAT_43 \\*/\n"
+	      "#else  /\\* __cplusplus \\*/";
   c_fix     = format;
-  c_fix_arg = "} /* extern \"C++\" */\n"
+  c_fix_arg = "#endif /* COMPAT_43 */\n"
+	      "} /* extern \"C++\" */\n"
               "#else  /* __cplusplus */";
-  test_text = "#else  /* __cplusplus */";
+  test_text = "#endif /* COMPAT_43 */\n"
+	      "#else  /* __cplusplus */";
+};
 
+/*
+ *  inttypes.h STDC_FORMAT_MACROS
+ */
+fix = {
+    hackname  = aix_inttypes;
+    mach      = "*-*-aix*";
+    files     = "sys/inttypes.h";
+    select    = "#if !defined\\(__cplusplus\\) \\|\\| defined\\(__STDC_FORMAT_MACROS\\)";
+    c_fix     = format;
+    c_fix_arg = "#if 1";
+    test_text = "#if !defined(__cplusplus) || defined(__STDC_FORMAT_MACROS)";
 };
 
 /*
@@ -580,10 +600,16 @@ fix = {
     hackname  = aix_malloc;
     mach      = "*-*-aix*";
     files     = "malloc.h";
-    select    = "#ifdef __cplusplus";
+    select    = "#ifdef __cplusplus\n"
+                "extern \"C\" \\{\n"
+                "[ \t]extern \"builtin\" char \\*__alloca \\(size_t\\);";
     c_fix     = format;
-    c_fix_arg = "#if (defined(__cplusplus) && defined(__IBMCPP__))";
-    test_text = "#ifdef __cplusplus";
+    c_fix_arg = "#if (defined(__cplusplus) && defined(__IBMCPP__))\n"
+                "extern \"C\" {\n"
+	"\textern \"builtin\" char *__alloca (size_t);";
+    test_text = "#ifdef __cplusplus\n"
+                "extern \"C\" {\n"
+	"\textern \"builtin\" char *__alloca (size_t);";
 };
 
 /*
@@ -695,6 +721,20 @@ fix = {
 		"{{ \\\n";
     test_text = "#define PTHREAD_RWLOCK_INITIALIZER \\\\\n"
 		"{ \\\\\n";
+};
+
+
+/* On AIX 'typedef struct {<stuff>} * physadr_t;' needs to give the struct a
+   name for linkage purposes.  Fortunately it is on exactly one
+   line.  */
+fix = {
+    hackname  = aix_physadr_t;
+    mach      = "*-*-aix*";
+    files     = sys/types.h;
+    select    = "typedef[ \t]*struct[ \t]*([{][^}]*[}][ \t]*\\*[ \t]*physadr_t;)";
+    c_fix     = format;
+    c_fix_arg = "typedef struct __physadr_s %1";
+    test_text = "typedef	struct { random stuff } *	physadr_t;";
 };
 
 /*
@@ -2629,6 +2669,34 @@ fix = {
 };
 
 /*
+ * Fix missing PRIdPTR defines in inttypes.h
+ */
+fix = {
+    hackname  = hpux_c99_inttypes5;
+    mach      = "hppa*-hp-hpux11.[01]*";
+    files     = inttypes.h;
+    select    = "#ifndef[ \t]_KERNEL[ \t]*\n";
+    c_fix     = format;
+    c_fix_arg = "#ifndef __LP64__\n"
+		"#define PRIdPTR\t\tPRId32\n"
+		"#define PRIiPTR\t\tPRIi32\n"
+		"#define PRIoPTR\t\tPRIo32\n"
+		"#define PRIuPTR\t\tPRIu32\n"
+		"#define PRIxPTR\t\tPRIx32\n"
+		"#define PRIXPTR\t\tPRIX32\n"
+		"#else\n"
+		"#define PRIdPTR\t\tPRId64\n"
+		"#define PRIiPTR\t\tPRIi64\n"
+		"#define PRIoPTR\t\tPRIo64\n"
+		"#define PRIuPTR\t\tPRIu64\n"
+		"#define PRIxPTR\t\tPRIx64\n"
+		"#define PRIXPTR\t\tPRIX64\n"
+		"#endif\n\n"
+		"#ifndef _KERNEL\n";
+    test_text = "#ifndef _KERNEL\n";
+};
+
+/*
  *  Fix hpux broken ctype macros
  */
 fix = {
@@ -3114,7 +3182,8 @@ fix = {
     c_fix     = machine_name;
 
     test_text = "/* MACH_DIFF: */\n"
-    "#if defined( i386 ) || defined( sparc ) || defined( vax )"
+    "#if defined( i386 ) || defined( sparc ) || defined( vax ) || "
+    "defined( linux ) || __has_include ( <linux.h> )"
     "\n/* no uniform test, so be careful  :-) */";
 };
 

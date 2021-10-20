@@ -1,5 +1,5 @@
 /* Hooks for cfg representation specific functions.
-   Copyright (C) 2003-2020 Free Software Foundation, Inc.
+   Copyright (C) 2003-2021 Free Software Foundation, Inc.
    Contributed by Sebastian Pop <s.pop@laposte.net>
 
 This file is part of GCC.
@@ -161,6 +161,12 @@ verify_flow_info (void)
 	  err = 1;
 	}
 
+      if (bb->flags & ~cfun->cfg->bb_flags_allocated)
+	{
+	  error ("verify_flow_info: unallocated flag set on BB %d", bb->index);
+	  err = 1;
+	}
+
       FOR_EACH_EDGE (e, ei, bb->succs)
 	{
 	  if (last_visited [e->dest->index] == bb)
@@ -199,6 +205,13 @@ verify_flow_info (void)
 	      fprintf (stderr, "\nSuccessor: ");
 	      dump_edge_info (stderr, e, TDF_DETAILS, 1);
 	      fprintf (stderr, "\n");
+	      err = 1;
+	    }
+
+	  if (e->flags & ~cfun->cfg->edge_flags_allocated)
+	    {
+	      error ("verify_flow_info: unallocated edge flag set on %d -> %d",
+		     e->src->index, e->dest->index);
 	      err = 1;
 	    }
 
@@ -1391,8 +1404,6 @@ copy_bbs (basic_block *bbs, unsigned n, basic_block *new_bbs,
     }
 
   /* Redirect edges.  */
-  for (j = 0; j < num_edges; j++)
-    new_edges[j] = NULL;
   for (i = 0; i < n; i++)
     {
       edge_iterator ei;
@@ -1401,13 +1412,24 @@ copy_bbs (basic_block *bbs, unsigned n, basic_block *new_bbs,
 
       FOR_EACH_EDGE (e, ei, new_bb->succs)
 	{
-	  for (j = 0; j < num_edges; j++)
-	    if (edges[j] && edges[j]->src == bb && edges[j]->dest == e->dest)
-	      new_edges[j] = e;
-
 	  if (!(e->dest->flags & BB_DUPLICATED))
 	    continue;
 	  redirect_edge_and_branch_force (e, get_bb_copy (e->dest));
+	}
+    }
+  for (j = 0; j < num_edges; j++)
+    {
+      if (!edges[j])
+	new_edges[j] = NULL;
+      else
+	{
+	  basic_block src = edges[j]->src;
+	  basic_block dest = edges[j]->dest;
+	  if (src->flags & BB_DUPLICATED)
+	    src = get_bb_copy (src);
+	  if (dest->flags & BB_DUPLICATED)
+	    dest = get_bb_copy (dest);
+	  new_edges[j] = find_edge (src, dest);
 	}
     }
 

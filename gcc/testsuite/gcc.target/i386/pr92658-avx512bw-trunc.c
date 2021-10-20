@@ -1,6 +1,6 @@
 /* PR target/92658 */
 /* { dg-do compile } */
-/* { dg-options "-O2 -ftree-vectorize -mavx512bw -mavx512vl" } */
+/* { dg-options "-O2 -ftree-vectorize -mavx512bw -mavx512vl -mprefer-vector-width=512" } */
 
 typedef unsigned char v8qi __attribute__((vector_size (8)));
 typedef unsigned char v16qi __attribute__((vector_size (16)));
@@ -13,7 +13,7 @@ typedef unsigned short v32hi __attribute__((vector_size (64)));
 void
 truncwb_512 (v32qi * dst, v32hi * __restrict src)
 {
-  unsigned char tem[8];
+  unsigned char tem[32];
   tem[0] = (*src)[0];
   tem[1] = (*src)[1];
   tem[2] = (*src)[2];
@@ -52,7 +52,7 @@ truncwb_512 (v32qi * dst, v32hi * __restrict src)
 void
 truncwb_256 (v16qi * dst, v16hi * __restrict src)
 {
-  unsigned char tem[8];
+  unsigned char tem[16];
   tem[0] = (*src)[0];
   tem[1] = (*src)[1];
   tem[2] = (*src)[2];

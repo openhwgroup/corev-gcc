@@ -1,5 +1,5 @@
 /* Handle #pragma, system V.4 style.  Supports #pragma weak and #pragma pack.
-   Copyright (C) 1992-2020 Free Software Foundation, Inc.
+   Copyright (C) 1992-2021 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -809,16 +809,15 @@ handle_pragma_diagnostic(cpp_reader *ARG_UNUSED(dummy))
   unsigned int option_index = find_opt (option_string + 1, lang_mask);
   if (option_index == OPT_SPECIAL_unknown)
     {
-      option_proposer op;
-      const char *hint = op.suggest_option (option_string + 1);
-      if (hint)
-	warning_at (loc, OPT_Wpragmas,
-		    "unknown option after %<#pragma GCC diagnostic%> kind;"
-		    " did you mean %<-%s%>?", hint);
-      else
-	warning_at (loc, OPT_Wpragmas,
-		    "unknown option after %<#pragma GCC diagnostic%> kind");
-
+      auto_diagnostic_group d;
+      if (warning_at (loc, OPT_Wpragmas,
+		      "unknown option after %<#pragma GCC diagnostic%> kind"))
+	{
+	  option_proposer op;
+	  const char *hint = op.suggest_option (option_string + 1);
+	  if (hint)
+	    inform (loc, "did you mean %<-%s%>?", hint);
+	}
       return;
     }
   else if (!(cl_options[option_index].flags & CL_WARNING))
@@ -919,6 +918,12 @@ handle_pragma_target(cpp_reader *ARG_UNUSED(dummy))
 
       if (targetm.target_option.pragma_parse (args, NULL_TREE))
 	current_target_pragma = chainon (current_target_pragma, args);
+
+      /* A target pragma can also influence optimization options. */
+      tree current_optimize
+	= build_optimization_node (&global_options, &global_options_set);
+      if (current_optimize != optimization_current_node)
+	optimization_current_node = current_optimize;
     }
 }
 
@@ -987,7 +992,8 @@ handle_pragma_optimize (cpp_reader *ARG_UNUSED(dummy))
 
       parse_optimize_options (args, false);
       current_optimize_pragma = chainon (current_optimize_pragma, args);
-      optimization_current_node = build_optimization_node (&global_options);
+      optimization_current_node
+	= build_optimization_node (&global_options, &global_options_set);
       c_cpp_builtins_optimize_pragma (parse_in,
 				      optimization_previous_node,
 				      optimization_current_node);
@@ -1034,8 +1040,10 @@ handle_pragma_push_options (cpp_reader *ARG_UNUSED(dummy))
       p->saved_global_options = XNEW (gcc_options);
       *p->saved_global_options = global_options;
     }
-  p->optimize_binary = build_optimization_node (&global_options);
-  p->target_binary = build_target_option_node (&global_options);
+  p->optimize_binary = build_optimization_node (&global_options,
+						&global_options_set);
+  p->target_binary = build_target_option_node (&global_options,
+					       &global_options_set);
 
   /* Save optimization and target flags in string list format.  */
   p->optimize_strings = copy_list (current_optimize_pragma);
@@ -1076,12 +1084,16 @@ handle_pragma_pop_options (cpp_reader *ARG_UNUSED(dummy))
       target_option_current_node = p->target_binary;
     }
 
+  /* Always restore optimization options as optimization_current_node is
+   * overwritten by invoke_set_current_function_hook.  */
+  cl_optimization_restore (&global_options, &global_options_set,
+			   TREE_OPTIMIZATION (p->optimize_binary));
+  cl_target_option_restore (&global_options, &global_options_set,
+			    TREE_TARGET_OPTION (p->target_binary));
+
   if (p->optimize_binary != optimization_current_node)
     {
-      tree old_optimize = optimization_current_node;
-      cl_optimization_restore (&global_options,
-			       TREE_OPTIMIZATION (p->optimize_binary));
-      c_cpp_builtins_optimize_pragma (parse_in, old_optimize,
+      c_cpp_builtins_optimize_pragma (parse_in, optimization_current_node,
 				      p->optimize_binary);
       optimization_current_node = p->optimize_binary;
     }
@@ -1122,7 +1134,7 @@ handle_pragma_reset_options (cpp_reader *ARG_UNUSED(dummy))
   if (new_optimize != optimization_current_node)
     {
       tree old_optimize = optimization_current_node;
-      cl_optimization_restore (&global_options,
+      cl_optimization_restore (&global_options, &global_options_set,
 			       TREE_OPTIMIZATION (new_optimize));
       c_cpp_builtins_optimize_pragma (parse_in, old_optimize, new_optimize);
       optimization_current_node = new_optimize;
@@ -1307,16 +1319,19 @@ static const struct omp_pragma_def oacc_pragmas[] = {
   { "wait", PRAGMA_OACC_WAIT }
 };
 static const struct omp_pragma_def omp_pragmas[] = {
+  { "allocate", PRAGMA_OMP_ALLOCATE },
   { "atomic", PRAGMA_OMP_ATOMIC },
   { "barrier", PRAGMA_OMP_BARRIER },
   { "cancel", PRAGMA_OMP_CANCEL },
   { "cancellation", PRAGMA_OMP_CANCELLATION_POINT },
   { "critical", PRAGMA_OMP_CRITICAL },
   { "depobj", PRAGMA_OMP_DEPOBJ },
+  { "error", PRAGMA_OMP_ERROR },
   { "end", PRAGMA_OMP_END_DECLARE_TARGET },
   { "flush", PRAGMA_OMP_FLUSH },
-  { "master", PRAGMA_OMP_MASTER },
+  { "nothing", PRAGMA_OMP_NOTHING },
   { "requires", PRAGMA_OMP_REQUIRES },
+  { "scope", PRAGMA_OMP_SCOPE },
   { "section", PRAGMA_OMP_SECTION },
   { "sections", PRAGMA_OMP_SECTIONS },
   { "single", PRAGMA_OMP_SINGLE },
@@ -1331,6 +1346,8 @@ static const struct omp_pragma_def omp_pragmas_simd[] = {
   { "distribute", PRAGMA_OMP_DISTRIBUTE },
   { "for", PRAGMA_OMP_FOR },
   { "loop", PRAGMA_OMP_LOOP },
+  { "masked", PRAGMA_OMP_MASKED },
+  { "master", PRAGMA_OMP_MASTER },
   { "ordered", PRAGMA_OMP_ORDERED },
   { "parallel", PRAGMA_OMP_PARALLEL },
   { "scan", PRAGMA_OMP_SCAN },

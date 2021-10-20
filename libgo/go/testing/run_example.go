@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+//go:build !js
 // +build !js
 
 // TODO(@musiol, @odeke-em): re-unify this entire file back into
@@ -43,6 +44,7 @@ func runExample(eg InternalExample) (ok bool) {
 		outC <- buf.String()
 	}()
 
+	finished := false
 	start := time.Now()
 
 	// Clean up in a deferred call so we can recover if the example panics.
@@ -55,10 +57,11 @@ func runExample(eg InternalExample) (ok bool) {
 		out := <-outC
 
 		err := recover()
-		ok = eg.processRunResult(out, timeSpent, err)
+		ok = eg.processRunResult(out, timeSpent, finished, err)
 	}()
 
 	// Run example.
 	eg.F()
+	finished = true
 	return
 }

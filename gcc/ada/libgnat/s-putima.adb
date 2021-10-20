@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---            Copyright (C) 2020, Free Software Foundation, Inc.            --
+--            Copyright (C) 2020-2021, Free Software Foundation, Inc.       --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -29,10 +29,10 @@
 --                                                                          --
 ------------------------------------------------------------------------------
 
+with Ada.Strings.Text_Buffers.Utils;
+use Ada.Strings.Text_Buffers;
+use Ada.Strings.Text_Buffers.Utils;
 with Unchecked_Conversion;
-with Ada.Strings.Text_Output.Utils;
-use Ada.Strings.Text_Output;
-use Ada.Strings.Text_Output.Utils;
 
 package body System.Put_Images is
 
@@ -93,21 +93,30 @@ package body System.Put_Images is
 
    end Generic_Integer_Images;
 
-   package Small is new Generic_Integer_Images (Integer, Unsigned, Base => 10);
-   package Large is new Generic_Integer_Images
+   package Integer_Images is new Generic_Integer_Images
+     (Integer, Unsigned, Base => 10);
+   package LL_Integer_Images is new Generic_Integer_Images
      (Long_Long_Integer, Long_Long_Unsigned, Base => 10);
+   package LLL_Integer_Images is new Generic_Integer_Images
+     (Long_Long_Long_Integer, Long_Long_Long_Unsigned, Base => 10);
 
    procedure Put_Image_Integer (S : in out Sink'Class; X : Integer)
-     renames Small.Put_Image;
+     renames Integer_Images.Put_Image;
    procedure Put_Image_Long_Long_Integer
      (S : in out Sink'Class; X : Long_Long_Integer)
-     renames Large.Put_Image;
+     renames LL_Integer_Images.Put_Image;
+   procedure Put_Image_Long_Long_Long_Integer
+     (S : in out Sink'Class; X : Long_Long_Long_Integer)
+     renames LLL_Integer_Images.Put_Image;
 
    procedure Put_Image_Unsigned (S : in out Sink'Class; X : Unsigned)
-     renames Small.Put_Image;
+     renames Integer_Images.Put_Image;
    procedure Put_Image_Long_Long_Unsigned
      (S : in out Sink'Class; X : Long_Long_Unsigned)
-     renames Large.Put_Image;
+     renames LL_Integer_Images.Put_Image;
+   procedure Put_Image_Long_Long_Long_Unsigned
+     (S : in out Sink'Class; X : Long_Long_Long_Unsigned)
+     renames LLL_Integer_Images.Put_Image;
 
    type Signed_Address is range
      -2**(Standard'Address_Size - 1) .. 2**(Standard'Address_Size - 1) - 1;
@@ -206,7 +215,7 @@ package body System.Put_Images is
    begin
       New_Line (S);
       Put_7bit (S, '[');
-      Indent (S, 1);
+      Increase_Indent (S, 1);
    end Array_Before;
 
    procedure Array_Between (S : in out Sink'Class) is
@@ -217,7 +226,7 @@ package body System.Put_Images is
 
    procedure Array_After (S : in out Sink'Class) is
    begin
-      Outdent (S, 1);
+      Decrease_Indent (S, 1);
       Put_7bit (S, ']');
    end Array_After;
 
@@ -235,7 +244,7 @@ package body System.Put_Images is
    begin
       New_Line (S);
       Put_7bit (S, '(');
-      Indent (S, 1);
+      Increase_Indent (S, 1);
    end Record_Before;
 
    procedure Record_Between (S : in out Sink'Class) is
@@ -246,14 +255,19 @@ package body System.Put_Images is
 
    procedure Record_After (S : in out Sink'Class) is
    begin
-      Outdent (S, 1);
+      Decrease_Indent (S, 1);
       Put_7bit (S, ')');
    end Record_After;
+
+   procedure Put_Arrow (S : in out Sink'Class) is
+   begin
+      Put_UTF_8 (S, " => ");
+   end Put_Arrow;
 
    procedure Put_Image_Unknown (S : in out Sink'Class; Type_Name : String) is
    begin
       Put_UTF_8 (S, "{");
-      Put_String (S, Type_Name);
+      Put (S, Type_Name);
       Put_UTF_8 (S, " object}");
    end Put_Image_Unknown;
 

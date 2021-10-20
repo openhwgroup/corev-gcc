@@ -1,5 +1,5 @@
 /* Search an insn for pseudo regs that must be in hard regs and are not.
-   Copyright (C) 1987-2020 Free Software Foundation, Inc.
+   Copyright (C) 1987-2021 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -262,8 +262,8 @@ static bool alternative_allows_const_pool_ref (rtx, const char *, int);
 static rtx find_reloads_toplev (rtx, int, enum reload_type, int, int,
 				rtx_insn *, int *);
 static rtx make_memloc (rtx, int);
-static int maybe_memory_address_addr_space_p (machine_mode, rtx,
-					      addr_space_t, rtx *);
+static bool maybe_memory_address_addr_space_p (machine_mode, rtx,
+					       addr_space_t, rtx *);
 static int find_reloads_address (machine_mode, rtx *, rtx, rtx *,
 				 int, enum reload_type, int, rtx_insn *);
 static rtx subst_reg_equivs (rtx, rtx_insn *);
@@ -1043,53 +1043,72 @@ push_reload (rtx in, rtx out, rtx *inloc, rtx *outloc,
      Also reload the inner expression if it does not require a secondary
      reload but the SUBREG does.
 
-     Finally, reload the inner expression if it is a register that is in
+     Also reload the inner expression if it is a register that is in
      the class whose registers cannot be referenced in a different size
      and M1 is not the same size as M2.  If subreg_lowpart_p is false, we
      cannot reload just the inside since we might end up with the wrong
      register class.  But if it is inside a STRICT_LOW_PART, we have
-     no choice, so we hope we do get the right register class there.  */
+     no choice, so we hope we do get the right register class there.
+
+     Finally, reload the inner expression if it is a pseudo that will
+     become a MEM and the MEM has a mode-dependent address, as in that
+     case we obviously cannot change the mode of the MEM to that of the
+     containing SUBREG as that would change the interpretation of the
+     address.  */
 
   scalar_int_mode inner_mode;
   if (in != 0 && GET_CODE (in) == SUBREG
-      && (subreg_lowpart_p (in) || strict_low)
       && targetm.can_change_mode_class (GET_MODE (SUBREG_REG (in)),
 					inmode, rclass)
       && contains_allocatable_reg_of_mode[rclass][GET_MODE (SUBREG_REG (in))]
-      && (CONSTANT_P (SUBREG_REG (in))
-	  || GET_CODE (SUBREG_REG (in)) == PLUS
-	  || strict_low
-	  || (((REG_P (SUBREG_REG (in))
-		&& REGNO (SUBREG_REG (in)) >= FIRST_PSEUDO_REGISTER)
-	       || MEM_P (SUBREG_REG (in)))
-	      && (paradoxical_subreg_p (inmode, GET_MODE (SUBREG_REG (in)))
-		  || (known_le (GET_MODE_SIZE (inmode), UNITS_PER_WORD)
-		      && is_a <scalar_int_mode> (GET_MODE (SUBREG_REG (in)),
-						 &inner_mode)
-		      && GET_MODE_SIZE (inner_mode) <= UNITS_PER_WORD
-		      && paradoxical_subreg_p (inmode, inner_mode)
-		      && LOAD_EXTEND_OP (inner_mode) != UNKNOWN)
-		  || (WORD_REGISTER_OPERATIONS
-		      && partial_subreg_p (inmode, GET_MODE (SUBREG_REG (in)))
-		      && (known_equal_after_align_down
-			  (GET_MODE_SIZE (inmode) - 1,
-			   GET_MODE_SIZE (GET_MODE (SUBREG_REG (in))) - 1,
-			   UNITS_PER_WORD)))))
+      && (strict_low
+	  || (subreg_lowpart_p (in)
+	      && (CONSTANT_P (SUBREG_REG (in))
+		  || GET_CODE (SUBREG_REG (in)) == PLUS
+		  || (((REG_P (SUBREG_REG (in))
+			&& REGNO (SUBREG_REG (in)) >= FIRST_PSEUDO_REGISTER)
+		       || MEM_P (SUBREG_REG (in)))
+		      && (paradoxical_subreg_p (inmode,
+						GET_MODE (SUBREG_REG (in)))
+			  || (known_le (GET_MODE_SIZE (inmode), UNITS_PER_WORD)
+			      && is_a <scalar_int_mode> (GET_MODE (SUBREG_REG
+								   (in)),
+							 &inner_mode)
+			      && GET_MODE_SIZE (inner_mode) <= UNITS_PER_WORD
+			      && paradoxical_subreg_p (inmode, inner_mode)
+			      && LOAD_EXTEND_OP (inner_mode) != UNKNOWN)
+			  || (WORD_REGISTER_OPERATIONS
+			      && partial_subreg_p (inmode,
+						   GET_MODE (SUBREG_REG (in)))
+			      && (known_equal_after_align_down
+				  (GET_MODE_SIZE (inmode) - 1,
+				   GET_MODE_SIZE (GET_MODE (SUBREG_REG
+							    (in))) - 1,
+				   UNITS_PER_WORD)))))
+		  || (REG_P (SUBREG_REG (in))
+		      && REGNO (SUBREG_REG (in)) < FIRST_PSEUDO_REGISTER
+		      /* The case where out is nonzero
+			 is handled differently in the following statement.  */
+		      && (out == 0 || subreg_lowpart_p (in))
+		      && (complex_word_subreg_p (inmode, SUBREG_REG (in))
+			  || !targetm.hard_regno_mode_ok (subreg_regno (in),
+							  inmode)))
+		  || (secondary_reload_class (1, rclass, inmode, in) != NO_REGS
+		      && (secondary_reload_class (1, rclass,
+						  GET_MODE (SUBREG_REG (in)),
+						  SUBREG_REG (in))
+			  == NO_REGS))
+		  || (REG_P (SUBREG_REG (in))
+		      && REGNO (SUBREG_REG (in)) < FIRST_PSEUDO_REGISTER
+		      && !REG_CAN_CHANGE_MODE_P (REGNO (SUBREG_REG (in)),
+						 GET_MODE (SUBREG_REG (in)),
+						 inmode))))
 	  || (REG_P (SUBREG_REG (in))
-	      && REGNO (SUBREG_REG (in)) < FIRST_PSEUDO_REGISTER
-	      /* The case where out is nonzero
-		 is handled differently in the following statement.  */
-	      && (out == 0 || subreg_lowpart_p (in))
-	      && (complex_word_subreg_p (inmode, SUBREG_REG (in))
-		  || !targetm.hard_regno_mode_ok (subreg_regno (in), inmode)))
-	  || (secondary_reload_class (1, rclass, inmode, in) != NO_REGS
-	      && (secondary_reload_class (1, rclass, GET_MODE (SUBREG_REG (in)),
-					  SUBREG_REG (in))
-		  == NO_REGS))
-	  || (REG_P (SUBREG_REG (in))
-	      && REGNO (SUBREG_REG (in)) < FIRST_PSEUDO_REGISTER
-	      && !REG_CAN_CHANGE_MODE_P (REGNO (SUBREG_REG (in)),
-					 GET_MODE (SUBREG_REG (in)), inmode))))
+	      && REGNO (SUBREG_REG (in)) >= FIRST_PSEUDO_REGISTER
+	      && reg_equiv_mem (REGNO (SUBREG_REG (in)))
+	      && (mode_dependent_address_p
+		  (XEXP (reg_equiv_mem (REGNO (SUBREG_REG (in))), 0),
+		   MEM_ADDR_SPACE (reg_equiv_mem (REGNO (SUBREG_REG (in)))))))))
     {
 #ifdef LIMIT_RELOAD_CLASS
       in_subreg_loc = inloc;
@@ -1480,27 +1499,6 @@ push_reload (rtx in, rtx out, rtx *inloc, rtx *outloc,
 
   if (in != 0 && in != *inloc)
     rld[i].nocombine = 1;
-
-#if 0
-  /* This was replaced by changes in find_reloads_address_1 and the new
-     function inc_for_reload, which go with a new meaning of reload_inc.  */
-
-  /* If this is an IN/OUT reload in an insn that sets the CC,
-     it must be for an autoincrement.  It doesn't work to store
-     the incremented value after the insn because that would clobber the CC.
-     So we must do the increment of the value reloaded from,
-     increment it, store it back, then decrement again.  */
-  if (out != 0 && sets_cc0_p (PATTERN (this_insn)))
-    {
-      out = 0;
-      rld[i].out = 0;
-      rld[i].inc = find_inc_amount (PATTERN (this_insn), in);
-      /* If we did not find a nonzero amount-to-increment-by,
-	 that contradicts the belief that IN is being incremented
-	 in an address in this insn.  */
-      gcc_assert (rld[i].inc != 0);
-    }
-#endif
 
   /* If we will replace IN and OUT with the reload-reg,
      record where they are located so that substitution need
@@ -2158,21 +2156,21 @@ hard_reg_set_here_p (unsigned int beg_regno, unsigned int end_regno, rtx x)
   return 0;
 }
 
-/* Return 1 if ADDR is a valid memory address for mode MODE
+/* Return true if ADDR is a valid memory address for mode MODE
    in address space AS, and check that each pseudo reg has the
    proper kind of hard reg.  */
 
-int
+bool
 strict_memory_address_addr_space_p (machine_mode mode ATTRIBUTE_UNUSED,
 				    rtx addr, addr_space_t as)
 {
 #ifdef GO_IF_LEGITIMATE_ADDRESS
   gcc_assert (ADDR_SPACE_GENERIC_P (as));
   GO_IF_LEGITIMATE_ADDRESS (mode, addr, win);
-  return 0;
+  return false;
 
  win:
-  return 1;
+  return true;
 #else
   return targetm.addr_space.legitimate_address_p (mode, addr, 1, as);
 #endif
@@ -2290,6 +2288,11 @@ operands_match_p (rtx x, rtx y)
     {
     CASE_CONST_UNIQUE:
       return 0;
+
+    case CONST_VECTOR:
+      if (!same_vector_encodings_p (x, y))
+	return false;
+      break;
 
     case LABEL_REF:
       return label_ref_label (x) == label_ref_label (y);
@@ -2656,15 +2659,24 @@ find_reloads (rtx_insn *insn, int replace, int ind_levels, int live_known,
   hard_regs_live_known = live_known;
   static_reload_reg_p = reload_reg_p;
 
-  /* JUMP_INSNs and CALL_INSNs are not allowed to have any output reloads;
-     neither are insns that SET cc0.  Insns that use CC0 are not allowed
-     to have any input reloads.  */
-  if (JUMP_P (insn) || CALL_P (insn))
-    no_output_reloads = 1;
+  if (JUMP_P (insn) && INSN_CODE (insn) < 0)
+    {
+      extract_insn (insn);
+      for (i = 0; i < recog_data.n_operands; i++)
+	if (recog_data.operand_type[i] != OP_IN)
+	  break;
+      if (i < recog_data.n_operands)
+	{
+	  error_for_asm (insn,
+			 "the target does not support %<asm goto%> "
+			 "with outputs in %<asm%>");
+	  ira_nullify_asm_goto (insn);
+	  return 0;
+	}
+    }
 
-  if (HAVE_cc0 && reg_referenced_p (cc0_rtx, PATTERN (insn)))
-    no_input_reloads = 1;
-  if (HAVE_cc0 && reg_set_p (cc0_rtx, PATTERN (insn)))
+  /* JUMP_INSNs and CALL_INSNs are not allowed to have any output reloads.  */
+  if (JUMP_P (insn) || CALL_P (insn))
     no_output_reloads = 1;
 
   /* The eliminated forms of any secondary memory locations are per-insn, so
@@ -3141,6 +3153,19 @@ find_reloads (rtx_insn *insn, int replace, int ind_levels, int live_known,
 				  && paradoxical_subreg_p (operand_mode[i],
 							   inner_mode)
 				  && LOAD_EXTEND_OP (inner_mode) != UNKNOWN)))
+		      /* We must force a reload of a SUBREG's inner expression
+			 if it is a pseudo that will become a MEM and the MEM
+			 has a mode-dependent address, as in that case we
+			 obviously cannot change the mode of the MEM to that
+			 of the containing SUBREG as that would change the
+			 interpretation of the address.  */
+		      || (REG_P (operand)
+			  && REGNO (operand) >= FIRST_PSEUDO_REGISTER
+			  && reg_equiv_mem (REGNO (operand))
+			  && (mode_dependent_address_p
+			      (XEXP (reg_equiv_mem (REGNO (operand)), 0),
+			       (MEM_ADDR_SPACE
+				(reg_equiv_mem (REGNO (operand)))))))
 		      )
 		    force_reload = 1;
 		}
@@ -3423,6 +3448,7 @@ find_reloads (rtx_insn *insn, int replace, int ind_levels, int live_known,
 			break;
 
 		      case CT_MEMORY:
+		      case CT_RELAXED_MEMORY:
 			if (force_reload)
 			  break;
 			if (constraint_satisfied_p (operand, cn))
@@ -4531,15 +4557,6 @@ find_reloads (rtx_insn *insn, int replace, int ind_levels, int live_known,
 	    rld[j].in = 0;
 	  }
 
-  /* If we made any reloads for addresses, see if they violate a
-     "no input reloads" requirement for this insn.  But loads that we
-     do after the insn (such as for output addresses) are fine.  */
-  if (HAVE_cc0 && no_input_reloads)
-    for (i = 0; i < n_reloads; i++)
-      gcc_assert (rld[i].in == 0
-		  || rld[i].when_needed == RELOAD_FOR_OUTADDR_ADDRESS
-		  || rld[i].when_needed == RELOAD_FOR_OUTPUT_ADDRESS);
-
   /* Compute reload_mode and reload_nregs.  */
   for (i = 0; i < n_reloads; i++)
     {
@@ -4812,11 +4829,11 @@ make_memloc (rtx ad, int regno)
    to mode MODE in address space AS by reloading the part pointed to
    by PART into a register.  */
 
-static int
+static bool
 maybe_memory_address_addr_space_p (machine_mode mode, rtx ad,
 				   addr_space_t as, rtx *part)
 {
-  int retv;
+  bool retv;
   rtx tem = *part;
   rtx reg = gen_rtx_REG (GET_MODE (tem), max_reg_num ());
 
@@ -5269,7 +5286,6 @@ subst_reg_equivs (rtx ad, rtx_insn *insn)
     case SYMBOL_REF:
     case LABEL_REF:
     case PC:
-    case CC0:
       return ad;
 
     case REG:
@@ -5808,7 +5824,7 @@ find_reloads_address_1 (machine_mode mode, addr_space_t as,
 	      /* If we can output the register afterwards, do so, this
 		 saves the extra update.
 		 We can do so if we have an INSN - i.e. no JUMP_INSN nor
-		 CALL_INSN - and it does not set CC0.
+		 CALL_INSN.
 		 But don't do this if we cannot directly address the
 		 memory location, since this will make it harder to
 		 reuse address reloads, and increases register pressure.
@@ -5818,9 +5834,6 @@ find_reloads_address_1 (machine_mode mode, addr_space_t as,
 			   : reg_equiv_mem (regno));
 	      enum insn_code icode = optab_handler (add_optab, GET_MODE (x));
 	      if (insn && NONJUMP_INSN_P (insn)
-#if HAVE_cc0
-		  && ! sets_cc0_p (PATTERN (insn))
-#endif
 		  && (regno < FIRST_PSEUDO_REGISTER
 		      || (equiv
 			  && memory_operand (equiv, GET_MODE (equiv))
@@ -6567,8 +6580,7 @@ reg_overlap_mentioned_for_reload_p (rtx x, rtx in)
     }
   else if (MEM_P (x))
     return refers_to_mem_for_reload_p (in);
-  else if (GET_CODE (x) == SCRATCH || GET_CODE (x) == PC
-	   || GET_CODE (x) == CC0)
+  else if (GET_CODE (x) == SCRATCH || GET_CODE (x) == PC)
     return reg_mentioned_p (x, in);
   else
     {

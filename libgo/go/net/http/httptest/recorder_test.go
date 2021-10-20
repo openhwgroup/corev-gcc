@@ -7,7 +7,6 @@ package httptest
 import (
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"testing"
 )
@@ -42,7 +41,7 @@ func TestRecorder(t *testing.T) {
 	}
 	hasResultContents := func(want string) checkFunc {
 		return func(rec *ResponseRecorder) error {
-			contentBytes, err := ioutil.ReadAll(rec.Result().Body)
+			contentBytes, err := io.ReadAll(rec.Result().Body)
 			if err != nil {
 				return err
 			}
@@ -344,5 +343,30 @@ func TestParseContentLength(t *testing.T) {
 		if got := parseContentLength(tt.cl); got != tt.want {
 			t.Errorf("%q:\n\tgot=%d\n\twant=%d", tt.cl, got, tt.want)
 		}
+	}
+}
+
+// Ensure that httptest.Recorder panics when given a non-3 digit (XXX)
+// status HTTP code. See https://golang.org/issues/45353
+func TestRecorderPanicsOnNonXXXStatusCode(t *testing.T) {
+	badCodes := []int{
+		-100, 0, 99, 1000, 20000,
+	}
+	for _, badCode := range badCodes {
+		badCode := badCode
+		t.Run(fmt.Sprintf("Code=%d", badCode), func(t *testing.T) {
+			defer func() {
+				if r := recover(); r == nil {
+					t.Fatal("Expected a panic")
+				}
+			}()
+
+			handler := func(rw http.ResponseWriter, _ *http.Request) {
+				rw.WriteHeader(badCode)
+			}
+			r, _ := http.NewRequest("GET", "http://example.org/", nil)
+			rw := NewRecorder()
+			handler(rw, r)
+		})
 	}
 }

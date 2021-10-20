@@ -10,12 +10,13 @@ import (
 	"encoding/hex"
 	"internal/obscuretestdata"
 	"io"
-	"io/ioutil"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 )
 
@@ -30,7 +31,7 @@ type ZipTest struct {
 
 type ZipTestFile struct {
 	Name     string
-	Mode     os.FileMode
+	Mode     fs.FileMode
 	NonUTF8  bool
 	ModTime  time.Time
 	Modified time.Time
@@ -107,7 +108,7 @@ var tests = []ZipTest{
 				Name:     "symlink",
 				Content:  []byte("../target"),
 				Modified: time.Date(2012, 2, 3, 19, 56, 48, 0, timeZone(-2*time.Hour)),
-				Mode:     0777 | os.ModeSymlink,
+				Mode:     0777 | fs.ModeSymlink,
 			},
 		},
 	},
@@ -149,7 +150,7 @@ var tests = []ZipTest{
 				Name:     "dir/empty/",
 				Content:  []byte{},
 				Modified: time.Date(2011, 12, 8, 10, 8, 6, 0, time.UTC),
-				Mode:     os.ModeDir | 0777,
+				Mode:     fs.ModeDir | 0777,
 			},
 			{
 				Name:     "readonly",
@@ -179,7 +180,7 @@ var tests = []ZipTest{
 				Name:     "dir/empty/",
 				Content:  []byte{},
 				Modified: time.Date(2011, 12, 8, 10, 8, 6, 0, timeZone(0)),
-				Mode:     os.ModeDir | 0777,
+				Mode:     fs.ModeDir | 0777,
 			},
 			{
 				Name:     "readonly",
@@ -498,9 +499,15 @@ func TestReader(t *testing.T) {
 func readTestZip(t *testing.T, zt ZipTest) {
 	var z *Reader
 	var err error
+	var raw []byte
 	if zt.Source != nil {
 		rat, size := zt.Source()
 		z, err = NewReader(rat, size)
+		raw = make([]byte, size)
+		if _, err := rat.ReadAt(raw, 0); err != nil {
+			t.Errorf("ReadAt error=%v", err)
+			return
+		}
 	} else {
 		path := filepath.Join("testdata", zt.Name)
 		if zt.Obscured {
@@ -517,6 +524,12 @@ func readTestZip(t *testing.T, zt ZipTest) {
 		if err == nil {
 			defer rc.Close()
 			z = &rc.Reader
+		}
+		var err2 error
+		raw, err2 = os.ReadFile(path)
+		if err2 != nil {
+			t.Errorf("ReadFile(%s) error=%v", path, err2)
+			return
 		}
 	}
 	if err != zt.Error {
@@ -544,7 +557,7 @@ func readTestZip(t *testing.T, zt ZipTest) {
 
 	// test read of each file
 	for i, ft := range zt.File {
-		readTestFile(t, zt, ft, z.File[i])
+		readTestFile(t, zt, ft, z.File[i], raw)
 	}
 	if t.Failed() {
 		return
@@ -556,7 +569,7 @@ func readTestZip(t *testing.T, zt ZipTest) {
 	for i := 0; i < 5; i++ {
 		for j, ft := range zt.File {
 			go func(j int, ft ZipTestFile) {
-				readTestFile(t, zt, ft, z.File[j])
+				readTestFile(t, zt, ft, z.File[j], raw)
 				done <- true
 			}(j, ft)
 			n++
@@ -573,7 +586,7 @@ func equalTimeAndZone(t1, t2 time.Time) bool {
 	return t1.Equal(t2) && name1 == name2 && offset1 == offset2
 }
 
-func readTestFile(t *testing.T, zt ZipTest, ft ZipTestFile, f *File) {
+func readTestFile(t *testing.T, zt ZipTest, ft ZipTestFile, f *File, raw []byte) {
 	if f.Name != ft.Name {
 		t.Errorf("name=%q, want %q", f.Name, ft.Name)
 	}
@@ -591,6 +604,31 @@ func readTestFile(t *testing.T, zt ZipTest, ft ZipTestFile, f *File) {
 		size = f.UncompressedSize64
 	} else if size != f.UncompressedSize64 {
 		t.Errorf("%v: UncompressedSize=%#x does not match UncompressedSize64=%#x", f.Name, size, f.UncompressedSize64)
+	}
+
+	// Check that OpenRaw returns the correct byte segment
+	rw, err := f.OpenRaw()
+	if err != nil {
+		t.Errorf("%v: OpenRaw error=%v", f.Name, err)
+		return
+	}
+	start, err := f.DataOffset()
+	if err != nil {
+		t.Errorf("%v: DataOffset error=%v", f.Name, err)
+		return
+	}
+	got, err := io.ReadAll(rw)
+	if err != nil {
+		t.Errorf("%v: OpenRaw ReadAll error=%v", f.Name, err)
+		return
+	}
+	end := uint64(start) + f.CompressedSize64
+	want := raw[start:end]
+	if !bytes.Equal(got, want) {
+		t.Logf("got %q", got)
+		t.Logf("want %q", want)
+		t.Errorf("%v: OpenRaw returned unexpected bytes", f.Name)
+		return
 	}
 
 	r, err := f.Open()
@@ -627,7 +665,7 @@ func readTestFile(t *testing.T, zt ZipTest, ft ZipTestFile, f *File) {
 	var c []byte
 	if ft.Content != nil {
 		c = ft.Content
-	} else if c, err = ioutil.ReadFile("testdata/" + ft.File); err != nil {
+	} else if c, err = os.ReadFile("testdata/" + ft.File); err != nil {
 		t.Error(err)
 		return
 	}
@@ -645,7 +683,7 @@ func readTestFile(t *testing.T, zt ZipTest, ft ZipTestFile, f *File) {
 	}
 }
 
-func testFileMode(t *testing.T, f *File, want os.FileMode) {
+func testFileMode(t *testing.T, f *File, want fs.FileMode) {
 	mode := f.Mode()
 	if want == 0 {
 		t.Errorf("%s mode: got %v, want none", f.Name, mode)
@@ -683,7 +721,7 @@ func TestInvalidFiles(t *testing.T) {
 }
 
 func messWith(fileName string, corrupter func(b []byte)) (r io.ReaderAt, size int64) {
-	data, err := ioutil.ReadFile(filepath.Join("testdata", fileName))
+	data, err := os.ReadFile(filepath.Join("testdata", fileName))
 	if err != nil {
 		panic("Error reading " + fileName + ": " + err.Error())
 	}
@@ -775,8 +813,8 @@ func returnRecursiveZip() (r io.ReaderAt, size int64) {
 //		"archive/zip"
 //		"bytes"
 //		"io"
-//		"io/ioutil"
 //		"log"
+//		"os"
 //	)
 //
 //	type zeros struct{}
@@ -790,17 +828,17 @@ func returnRecursiveZip() (r io.ReaderAt, size int64) {
 //
 //	func main() {
 //		bigZip := makeZip("big.file", io.LimitReader(zeros{}, 1<<32-1))
-//		if err := ioutil.WriteFile("/tmp/big.zip", bigZip, 0666); err != nil {
+//		if err := os.WriteFile("/tmp/big.zip", bigZip, 0666); err != nil {
 //			log.Fatal(err)
 //		}
 //
 //		biggerZip := makeZip("big.zip", bytes.NewReader(bigZip))
-//		if err := ioutil.WriteFile("/tmp/bigger.zip", biggerZip, 0666); err != nil {
+//		if err := os.WriteFile("/tmp/bigger.zip", biggerZip, 0666); err != nil {
 //			log.Fatal(err)
 //		}
 //
 //		biggestZip := makeZip("bigger.zip", bytes.NewReader(biggerZip))
-//		if err := ioutil.WriteFile("/tmp/biggest.zip", biggestZip, 0666); err != nil {
+//		if err := os.WriteFile("/tmp/biggest.zip", biggestZip, 0666); err != nil {
 //			log.Fatal(err)
 //		}
 //	}
@@ -928,7 +966,7 @@ func returnBigZipBytes() (r io.ReaderAt, size int64) {
 		if err != nil {
 			panic(err)
 		}
-		b, err = ioutil.ReadAll(f)
+		b, err = io.ReadAll(f)
 		if err != nil {
 			panic(err)
 		}
@@ -985,7 +1023,7 @@ func TestIssue10957(t *testing.T) {
 			continue
 		}
 		if f.UncompressedSize64 < 1e6 {
-			n, err := io.Copy(ioutil.Discard, r)
+			n, err := io.Copy(io.Discard, r)
 			if i == 3 && err != io.ErrUnexpectedEOF {
 				t.Errorf("File[3] error = %v; want io.ErrUnexpectedEOF", err)
 			}
@@ -1027,7 +1065,7 @@ func TestIssue11146(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = ioutil.ReadAll(r)
+	_, err = io.ReadAll(r)
 	if err != io.ErrUnexpectedEOF {
 		t.Errorf("File[0] error = %v; want io.ErrUnexpectedEOF", err)
 	}
@@ -1068,5 +1106,299 @@ func TestIssue12449(t *testing.T) {
 	_, err := NewReader(bytes.NewReader([]byte(data)), int64(len(data)))
 	if err != nil {
 		t.Errorf("Error reading the archive: %v", err)
+	}
+}
+
+func TestFS(t *testing.T) {
+	for _, test := range []struct {
+		file string
+		want []string
+	}{
+		{
+			"testdata/unix.zip",
+			[]string{"hello", "dir/bar", "readonly"},
+		},
+		{
+			"testdata/subdir.zip",
+			[]string{"a/b/c"},
+		},
+	} {
+		t.Run(test.file, func(t *testing.T) {
+			t.Parallel()
+			z, err := OpenReader(test.file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer z.Close()
+			if err := fstest.TestFS(z, test.want...); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+}
+
+func TestFSModTime(t *testing.T) {
+	t.Parallel()
+	z, err := OpenReader("testdata/subdir.zip")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer z.Close()
+
+	for _, test := range []struct {
+		name string
+		want time.Time
+	}{
+		{
+			"a",
+			time.Date(2021, 4, 19, 12, 29, 56, 0, timeZone(-7*time.Hour)).UTC(),
+		},
+		{
+			"a/b/c",
+			time.Date(2021, 4, 19, 12, 29, 59, 0, timeZone(-7*time.Hour)).UTC(),
+		},
+	} {
+		fi, err := fs.Stat(z, test.name)
+		if err != nil {
+			t.Errorf("%s: %v", test.name, err)
+			continue
+		}
+		if got := fi.ModTime(); !got.Equal(test.want) {
+			t.Errorf("%s: got modtime %v, want %v", test.name, got, test.want)
+		}
+	}
+}
+
+func TestCVE202127919(t *testing.T) {
+	// Archive containing only the file "../test.txt"
+	data := []byte{
+		0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x08, 0x00,
+		0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x0b, 0x00, 0x00, 0x00, 0x2e, 0x2e,
+		0x2f, 0x74, 0x65, 0x73, 0x74, 0x2e, 0x74, 0x78,
+		0x74, 0x0a, 0xc9, 0xc8, 0x2c, 0x56, 0xc8, 0x2c,
+		0x56, 0x48, 0x54, 0x28, 0x49, 0x2d, 0x2e, 0x51,
+		0x28, 0x49, 0xad, 0x28, 0x51, 0x48, 0xcb, 0xcc,
+		0x49, 0xd5, 0xe3, 0x02, 0x04, 0x00, 0x00, 0xff,
+		0xff, 0x50, 0x4b, 0x07, 0x08, 0xc0, 0xd7, 0xed,
+		0xc3, 0x20, 0x00, 0x00, 0x00, 0x1a, 0x00, 0x00,
+		0x00, 0x50, 0x4b, 0x01, 0x02, 0x14, 0x00, 0x14,
+		0x00, 0x08, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0xc0, 0xd7, 0xed, 0xc3, 0x20, 0x00, 0x00,
+		0x00, 0x1a, 0x00, 0x00, 0x00, 0x0b, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2e,
+		0x2e, 0x2f, 0x74, 0x65, 0x73, 0x74, 0x2e, 0x74,
+		0x78, 0x74, 0x50, 0x4b, 0x05, 0x06, 0x00, 0x00,
+		0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x39, 0x00,
+		0x00, 0x00, 0x59, 0x00, 0x00, 0x00, 0x00, 0x00,
+	}
+	r, err := NewReader(bytes.NewReader([]byte(data)), int64(len(data)))
+	if err != nil {
+		t.Fatalf("Error reading the archive: %v", err)
+	}
+	_, err = r.Open("test.txt")
+	if err != nil {
+		t.Errorf("Error reading file: %v", err)
+	}
+}
+
+func TestReadDataDescriptor(t *testing.T) {
+	tests := []struct {
+		desc    string
+		in      []byte
+		zip64   bool
+		want    *dataDescriptor
+		wantErr error
+	}{{
+		desc: "valid 32 bit with signature",
+		in: []byte{
+			0x50, 0x4b, 0x07, 0x08, // signature
+			0x00, 0x01, 0x02, 0x03, // crc32
+			0x04, 0x05, 0x06, 0x07, // compressed size
+			0x08, 0x09, 0x0a, 0x0b, // uncompressed size
+		},
+		want: &dataDescriptor{
+			crc32:            0x03020100,
+			compressedSize:   0x07060504,
+			uncompressedSize: 0x0b0a0908,
+		},
+	}, {
+		desc: "valid 32 bit without signature",
+		in: []byte{
+			0x00, 0x01, 0x02, 0x03, // crc32
+			0x04, 0x05, 0x06, 0x07, // compressed size
+			0x08, 0x09, 0x0a, 0x0b, // uncompressed size
+		},
+		want: &dataDescriptor{
+			crc32:            0x03020100,
+			compressedSize:   0x07060504,
+			uncompressedSize: 0x0b0a0908,
+		},
+	}, {
+		desc: "valid 64 bit with signature",
+		in: []byte{
+			0x50, 0x4b, 0x07, 0x08, // signature
+			0x00, 0x01, 0x02, 0x03, // crc32
+			0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, // compressed size
+			0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, // uncompressed size
+		},
+		zip64: true,
+		want: &dataDescriptor{
+			crc32:            0x03020100,
+			compressedSize:   0x0b0a090807060504,
+			uncompressedSize: 0x131211100f0e0d0c,
+		},
+	}, {
+		desc: "valid 64 bit without signature",
+		in: []byte{
+			0x00, 0x01, 0x02, 0x03, // crc32
+			0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, // compressed size
+			0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, // uncompressed size
+		},
+		zip64: true,
+		want: &dataDescriptor{
+			crc32:            0x03020100,
+			compressedSize:   0x0b0a090807060504,
+			uncompressedSize: 0x131211100f0e0d0c,
+		},
+	}, {
+		desc: "invalid 32 bit with signature",
+		in: []byte{
+			0x50, 0x4b, 0x07, 0x08, // signature
+			0x00, 0x01, 0x02, 0x03, // crc32
+			0x04, 0x05, // unexpected end
+		},
+		wantErr: io.ErrUnexpectedEOF,
+	}, {
+		desc: "invalid 32 bit without signature",
+		in: []byte{
+			0x00, 0x01, 0x02, 0x03, // crc32
+			0x04, 0x05, // unexpected end
+		},
+		wantErr: io.ErrUnexpectedEOF,
+	}, {
+		desc: "invalid 64 bit with signature",
+		in: []byte{
+			0x50, 0x4b, 0x07, 0x08, // signature
+			0x00, 0x01, 0x02, 0x03, // crc32
+			0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, // compressed size
+			0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, // unexpected end
+		},
+		zip64:   true,
+		wantErr: io.ErrUnexpectedEOF,
+	}, {
+		desc: "invalid 64 bit without signature",
+		in: []byte{
+			0x00, 0x01, 0x02, 0x03, // crc32
+			0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, // compressed size
+			0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, // unexpected end
+		},
+		zip64:   true,
+		wantErr: io.ErrUnexpectedEOF,
+	}}
+
+	for _, test := range tests {
+		t.Run(test.desc, func(t *testing.T) {
+			r := bytes.NewReader(test.in)
+
+			desc, err := readDataDescriptor(r, test.zip64)
+			if err != test.wantErr {
+				t.Fatalf("got err %v; want nil", err)
+			}
+			if test.want == nil {
+				return
+			}
+			if desc == nil {
+				t.Fatalf("got nil DataDescriptor; want non-nil")
+			}
+			if desc.crc32 != test.want.crc32 {
+				t.Errorf("got CRC32 %#x; want %#x", desc.crc32, test.want.crc32)
+			}
+			if desc.compressedSize != test.want.compressedSize {
+				t.Errorf("got CompressedSize %#x; want %#x", desc.compressedSize, test.want.compressedSize)
+			}
+			if desc.uncompressedSize != test.want.uncompressedSize {
+				t.Errorf("got UncompressedSize %#x; want %#x", desc.uncompressedSize, test.want.uncompressedSize)
+			}
+		})
+	}
+}
+
+func TestCVE202133196(t *testing.T) {
+	// Archive that indicates it has 1 << 128 -1 files,
+	// this would previously cause a panic due to attempting
+	// to allocate a slice with 1 << 128 -1 elements.
+	data := []byte{
+		0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x08, 0x08,
+		0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x01, 0x02,
+		0x03, 0x62, 0x61, 0x65, 0x03, 0x04, 0x00, 0x00,
+		0xff, 0xff, 0x50, 0x4b, 0x07, 0x08, 0xbe, 0x20,
+		0x5c, 0x6c, 0x09, 0x00, 0x00, 0x00, 0x03, 0x00,
+		0x00, 0x00, 0x50, 0x4b, 0x01, 0x02, 0x14, 0x00,
+		0x14, 0x00, 0x08, 0x08, 0x08, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0xbe, 0x20, 0x5c, 0x6c, 0x09, 0x00,
+		0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x03, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x01, 0x02, 0x03, 0x50, 0x4b, 0x06, 0x06, 0x2c,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2d,
+		0x00, 0x2d, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff,
+		0xff, 0xff, 0xff, 0x31, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x3a, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x50, 0x4b, 0x06, 0x07, 0x00,
+		0x00, 0x00, 0x00, 0x6b, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x50,
+		0x4b, 0x05, 0x06, 0x00, 0x00, 0x00, 0x00, 0xff,
+		0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+		0xff, 0xff, 0xff, 0x00, 0x00,
+	}
+	_, err := NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != ErrFormat {
+		t.Fatalf("unexpected error, got: %v, want: %v", err, ErrFormat)
+	}
+
+	// Also check that an archive containing a handful of empty
+	// files doesn't cause an issue
+	b := bytes.NewBuffer(nil)
+	w := NewWriter(b)
+	for i := 0; i < 5; i++ {
+		_, err := w.Create("")
+		if err != nil {
+			t.Fatalf("Writer.Create failed: %s", err)
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("Writer.Close failed: %s", err)
+	}
+	r, err := NewReader(bytes.NewReader(b.Bytes()), int64(b.Len()))
+	if err != nil {
+		t.Fatalf("NewReader failed: %s", err)
+	}
+	if len(r.File) != 5 {
+		t.Errorf("Archive has unexpected number of files, got %d, want 5", len(r.File))
+	}
+}
+
+func TestCVE202139293(t *testing.T) {
+	// directory size is so large, that the check in Reader.init
+	// overflows when subtracting from the archive size, causing
+	// the pre-allocation check to be bypassed.
+	data := []byte{
+		0x50, 0x4b, 0x06, 0x06, 0x05, 0x06, 0x31, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x50, 0x4b,
+		0x06, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+		0x00, 0x00, 0x50, 0x4b, 0x05, 0x06, 0x00, 0x1a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x50, 0x4b,
+		0x06, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+		0x00, 0x00, 0x00, 0x50, 0x4b, 0x05, 0x06, 0x00, 0x31, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff,
+		0xff, 0x50, 0xfe, 0x00, 0xff, 0x00, 0x3a, 0x00, 0x00, 0x00, 0xff,
+	}
+	_, err := NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != ErrFormat {
+		t.Fatalf("unexpected error, got: %v, want: %v", err, ErrFormat)
 	}
 }

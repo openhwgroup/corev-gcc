@@ -17,10 +17,10 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"mime"
 	"mime/quotedprintable"
 	"net/textproto"
+	"path/filepath"
 	"strings"
 )
 
@@ -68,13 +68,20 @@ func (p *Part) FormName() string {
 	return p.dispositionParams["name"]
 }
 
-// FileName returns the filename parameter of the Part's
-// Content-Disposition header.
+// FileName returns the filename parameter of the Part's Content-Disposition
+// header. If not empty, the filename is passed through filepath.Base (which is
+// platform dependent) before being returned.
 func (p *Part) FileName() string {
 	if p.dispositionParams == nil {
 		p.parseContentDisposition()
 	}
-	return p.dispositionParams["filename"]
+	filename := p.dispositionParams["filename"]
+	if filename == "" {
+		return ""
+	}
+	// RFC 7578, Section 4.2 requires that if a filename is provided, the
+	// directory path information must not be used.
+	return filepath.Base(filename)
 }
 
 func (p *Part) parseContentDisposition() {
@@ -278,7 +285,7 @@ func matchAfterPrefix(buf, prefix []byte, readErr error) int {
 }
 
 func (p *Part) Close() error {
-	io.Copy(ioutil.Discard, p)
+	io.Copy(io.Discard, p)
 	return nil
 }
 

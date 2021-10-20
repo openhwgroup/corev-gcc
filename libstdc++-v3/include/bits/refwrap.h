@@ -1,6 +1,6 @@
 // Implementation of std::reference_wrapper -*- C++ -*-
 
-// Copyright (C) 2004-2020 Free Software Foundation, Inc.
+// Copyright (C) 2004-2021 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -32,9 +32,7 @@
 
 #pragma GCC system_header
 
-#if __cplusplus < 201103L
-# include <bits/c++0x_warning.h>
-#else
+#if __cplusplus >= 201103L
 
 #include <bits/move.h>
 #include <bits/invoke.h>
@@ -391,7 +389,7 @@ _GLIBCXX_MEM_FN_TRAITS(&& noexcept, false_type, true_type)
     cref(reference_wrapper<_Tp> __t) noexcept
     { return { __t.get() }; }
 
-  // @}
+  /// @}
 
 _GLIBCXX_END_NAMESPACE_VERSION
 } // namespace std

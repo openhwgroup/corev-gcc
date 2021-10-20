@@ -2,17 +2,16 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+//go:build windows
 // +build windows
 
 package modload
 
-import (
-	"os"
-)
+import "io/fs"
 
 // hasWritePerm reports whether the current user has permission to write to the
 // file with the given info.
-func hasWritePerm(_ string, fi os.FileInfo) bool {
+func hasWritePerm(_ string, fi fs.FileInfo) bool {
 	// Windows has a read-only attribute independent of ACLs, so use that to
 	// determine whether the file is intended to be overwritten.
 	//

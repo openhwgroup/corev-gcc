@@ -9,9 +9,10 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -902,6 +903,28 @@ func TestExecError(t *testing.T) {
 	}
 }
 
+type CustomError struct{}
+
+func (*CustomError) Error() string { return "heyo !" }
+
+// Check that a custom error can be returned.
+func TestExecError_CustomError(t *testing.T) {
+	failingFunc := func() (string, error) {
+		return "", &CustomError{}
+	}
+	tmpl := Must(New("top").Funcs(FuncMap{
+		"err": failingFunc,
+	}).Parse("{{ err }}"))
+
+	var b bytes.Buffer
+	err := tmpl.Execute(&b, nil)
+
+	var e *CustomError
+	if !errors.As(err, &e) {
+		t.Fatalf("expected custom error; got %s", err)
+	}
+}
+
 func TestJSEscaping(t *testing.T) {
 	testCases := []struct {
 		in, exp string
@@ -1178,8 +1201,11 @@ var cmpTests = []cmpTest{
 	{"eq .Ptr .NilPtr", "false", true},
 	{"eq .NilPtr .NilPtr", "true", true},
 	{"eq .Iface1 .Iface1", "true", true},
-	{"eq .Iface1 .Iface2", "false", true},
-	{"eq .Iface2 .Iface2", "true", true},
+	{"eq .Iface1 .NilIface", "false", true},
+	{"eq .NilIface .NilIface", "true", true},
+	{"eq .NilIface .Iface1", "false", true},
+	{"eq .NilIface 0", "false", true},
+	{"eq 0 .NilIface", "false", true},
 	// Errors
 	{"eq `xy` 1", "", false},       // Different types.
 	{"eq 2 2.0", "", false},        // Different types.
@@ -1194,12 +1220,12 @@ var cmpTests = []cmpTest{
 func TestComparison(t *testing.T) {
 	b := new(bytes.Buffer)
 	var cmpStruct = struct {
-		Uthree, Ufour  uint
-		NegOne, Three  int
-		Ptr, NilPtr    *int
-		Map            map[int]int
-		V1, V2         V
-		Iface1, Iface2 fmt.Stringer
+		Uthree, Ufour    uint
+		NegOne, Three    int
+		Ptr, NilPtr      *int
+		Map              map[int]int
+		V1, V2           V
+		Iface1, NilIface fmt.Stringer
 	}{
 		Uthree: 3,
 		Ufour:  4,
@@ -1295,7 +1321,7 @@ func TestUnterminatedStringError(t *testing.T) {
 		t.Fatal("expected error")
 	}
 	str := err.Error()
-	if !strings.Contains(str, "X:3: unexpected unterminated raw quoted string") {
+	if !strings.Contains(str, "X:3: unterminated raw quoted string") {
 		t.Fatalf("unexpected error: %s", str)
 	}
 }
@@ -1328,7 +1354,7 @@ func TestExecuteGivesExecError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = tmpl.Execute(ioutil.Discard, 0)
+	err = tmpl.Execute(io.Discard, 0)
 	if err == nil {
 		t.Fatal("expected error; got none")
 	}
@@ -1474,7 +1500,7 @@ func TestEvalFieldErrors(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			tmpl := Must(New("tmpl").Parse(tc.src))
-			err := tmpl.Execute(ioutil.Discard, tc.value)
+			err := tmpl.Execute(io.Discard, tc.value)
 			got := "<nil>"
 			if err != nil {
 				got = err.Error()
@@ -1491,7 +1517,7 @@ func TestMaxExecDepth(t *testing.T) {
 		t.Skip("skipping in -short mode")
 	}
 	tmpl := Must(New("tmpl").Parse(`{{template "tmpl" .}}`))
-	err := tmpl.Execute(ioutil.Discard, nil)
+	err := tmpl.Execute(io.Discard, nil)
 	got := "<nil>"
 	if err != nil {
 		got = err.Error()
@@ -1696,4 +1722,54 @@ func TestIssue31810(t *testing.T) {
 	if b.String() != "result" {
 		t.Errorf("%s got %q, expected %q", textCall, b.String(), "result")
 	}
+}
+
+// Issue 43065, range over send only channel
+func TestIssue43065(t *testing.T) {
+	var b bytes.Buffer
+	tmp := Must(New("").Parse(`{{range .}}{{end}}`))
+	ch := make(chan<- int)
+	err := tmp.Execute(&b, ch)
+	if err == nil {
+		t.Error("expected err got nil")
+	} else if !strings.Contains(err.Error(), "range over send-only channel") {
+		t.Errorf("%s", err)
+	}
+}
+
+// Issue 39807: data race in html/template & text/template
+func TestIssue39807(t *testing.T) {
+	var wg sync.WaitGroup
+
+	tplFoo, err := New("foo").Parse(`{{ template "bar" . }}`)
+	if err != nil {
+		t.Error(err)
+	}
+
+	tplBar, err := New("bar").Parse("bar")
+	if err != nil {
+		t.Error(err)
+	}
+
+	gofuncs := 10
+	numTemplates := 10
+
+	for i := 1; i <= gofuncs; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < numTemplates; j++ {
+				_, err := tplFoo.AddParseTree(tplBar.Name(), tplBar.Tree)
+				if err != nil {
+					t.Error(err)
+				}
+				err = tplFoo.Execute(io.Discard, nil)
+				if err != nil {
+					t.Error(err)
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
 }

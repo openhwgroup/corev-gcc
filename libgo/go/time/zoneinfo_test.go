@@ -25,8 +25,7 @@ func TestEnvVarUsage(t *testing.T) {
 	const testZoneinfo = "foo.zip"
 	const env = "ZONEINFO"
 
-	defer os.Setenv(env, os.Getenv(env))
-	os.Setenv(env, testZoneinfo)
+	t.Setenv(env, testZoneinfo)
 
 	// Result isn't important, we're testing the side effect of this command
 	time.LoadLocation("Asia/Jerusalem")
@@ -50,8 +49,7 @@ func TestBadLocationErrMsg(t *testing.T) {
 func TestLoadLocationValidatesNames(t *testing.T) {
 	time.ResetZoneinfoForTesting()
 	const env = "ZONEINFO"
-	defer os.Setenv(env, os.Getenv(env))
-	os.Setenv(env, "")
+	t.Setenv(env, "")
 
 	bad := []string{
 		"/usr/foo/Foo",
@@ -189,6 +187,71 @@ func TestMalformedTZData(t *testing.T) {
 	}
 }
 
+var slimTests = []struct {
+	zoneName   string
+	fileName   string
+	date       func(*time.Location) time.Time
+	wantName   string
+	wantOffset int
+}{
+	{
+		// 2020b slim tzdata for Europe/Berlin.
+		zoneName:   "Europe/Berlin",
+		fileName:   "2020b_Europe_Berlin",
+		date:       func(loc *time.Location) time.Time { return time.Date(2020, time.October, 29, 15, 30, 0, 0, loc) },
+		wantName:   "CET",
+		wantOffset: 3600,
+	},
+	{
+		// 2021a slim tzdata for America/Nuuk.
+		zoneName:   "America/Nuuk",
+		fileName:   "2021a_America_Nuuk",
+		date:       func(loc *time.Location) time.Time { return time.Date(2020, time.October, 29, 15, 30, 0, 0, loc) },
+		wantName:   "-03",
+		wantOffset: -10800,
+	},
+	{
+		// 2021a slim tzdata for Asia/Gaza.
+		zoneName:   "Asia/Gaza",
+		fileName:   "2021a_Asia_Gaza",
+		date:       func(loc *time.Location) time.Time { return time.Date(2020, time.October, 29, 15, 30, 0, 0, loc) },
+		wantName:   "EET",
+		wantOffset: 7200,
+	},
+	{
+		// 2021a slim tzdata for Europe/Dublin.
+		zoneName:   "Europe/Dublin",
+		fileName:   "2021a_Europe_Dublin",
+		date:       func(loc *time.Location) time.Time { return time.Date(2021, time.April, 2, 11, 12, 13, 0, loc) },
+		wantName:   "IST",
+		wantOffset: 3600,
+	},
+}
+
+func TestLoadLocationFromTZDataSlim(t *testing.T) {
+	for _, test := range slimTests {
+		tzData, err := os.ReadFile("testdata/" + test.fileName)
+		if err != nil {
+			t.Error(err)
+			continue
+		}
+		reference, err := time.LoadLocationFromTZData(test.zoneName, tzData)
+		if err != nil {
+			t.Error(err)
+			continue
+		}
+
+		d := test.date(reference)
+		tzName, tzOffset := d.Zone()
+		if tzName != test.wantName {
+			t.Errorf("Zone name == %s, want %s", tzName, test.wantName)
+		}
+		if tzOffset != test.wantOffset {
+			t.Errorf("Zone offset == %d, want %d", tzOffset, test.wantOffset)
+		}
+	}
+}
+
 func TestTzset(t *testing.T) {
 	for _, test := range []struct {
 		inStr string
@@ -198,20 +261,21 @@ func TestTzset(t *testing.T) {
 		off   int
 		start int64
 		end   int64
+		isDST bool
 		ok    bool
 	}{
-		{"", 0, 0, "", 0, 0, 0, false},
-		{"PST8PDT,M3.2.0,M11.1.0", 0, 2159200800, "PDT", -7 * 60 * 60, 2152173600, 2172733200, true},
-		{"PST8PDT,M3.2.0,M11.1.0", 0, 2152173599, "PST", -8 * 60 * 60, 2145916800, 2152173600, true},
-		{"PST8PDT,M3.2.0,M11.1.0", 0, 2152173600, "PDT", -7 * 60 * 60, 2152173600, 2172733200, true},
-		{"PST8PDT,M3.2.0,M11.1.0", 0, 2152173601, "PDT", -7 * 60 * 60, 2152173600, 2172733200, true},
-		{"PST8PDT,M3.2.0,M11.1.0", 0, 2172733199, "PDT", -7 * 60 * 60, 2152173600, 2172733200, true},
-		{"PST8PDT,M3.2.0,M11.1.0", 0, 2172733200, "PST", -8 * 60 * 60, 2172733200, 2177452800, true},
-		{"PST8PDT,M3.2.0,M11.1.0", 0, 2172733201, "PST", -8 * 60 * 60, 2172733200, 2177452800, true},
+		{"", 0, 0, "", 0, 0, 0, false, false},
+		{"PST8PDT,M3.2.0,M11.1.0", 0, 2159200800, "PDT", -7 * 60 * 60, 2152173600, 2172733200, true, true},
+		{"PST8PDT,M3.2.0,M11.1.0", 0, 2152173599, "PST", -8 * 60 * 60, 2145916800, 2152173600, false, true},
+		{"PST8PDT,M3.2.0,M11.1.0", 0, 2152173600, "PDT", -7 * 60 * 60, 2152173600, 2172733200, true, true},
+		{"PST8PDT,M3.2.0,M11.1.0", 0, 2152173601, "PDT", -7 * 60 * 60, 2152173600, 2172733200, true, true},
+		{"PST8PDT,M3.2.0,M11.1.0", 0, 2172733199, "PDT", -7 * 60 * 60, 2152173600, 2172733200, true, true},
+		{"PST8PDT,M3.2.0,M11.1.0", 0, 2172733200, "PST", -8 * 60 * 60, 2172733200, 2177452800, false, true},
+		{"PST8PDT,M3.2.0,M11.1.0", 0, 2172733201, "PST", -8 * 60 * 60, 2172733200, 2177452800, false, true},
 	} {
-		name, off, start, end, ok := time.Tzset(test.inStr, test.inEnd, test.inSec)
-		if name != test.name || off != test.off || start != test.start || end != test.end || ok != test.ok {
-			t.Errorf("tzset(%q, %d, %d) = %q, %d, %d, %d, %t, want %q, %d, %d, %d, %t", test.inStr, test.inEnd, test.inSec, name, off, start, end, ok, test.name, test.off, test.start, test.end, test.ok)
+		name, off, start, end, isDST, ok := time.Tzset(test.inStr, test.inEnd, test.inSec)
+		if name != test.name || off != test.off || start != test.start || end != test.end || isDST != test.isDST || ok != test.ok {
+			t.Errorf("tzset(%q, %d, %d) = %q, %d, %d, %d, %t, %t, want %q, %d, %d, %d, %t, %t", test.inStr, test.inEnd, test.inSec, name, off, start, end, isDST, ok, test.name, test.off, test.start, test.end, test.isDST, test.ok)
 		}
 	}
 }
@@ -250,7 +314,8 @@ func TestTzsetOffset(t *testing.T) {
 		{"+08", 8 * 60 * 60, "", true},
 		{"-01:02:03", -1*60*60 - 2*60 - 3, "", true},
 		{"01", 1 * 60 * 60, "", true},
-		{"100", 0, "", false},
+		{"100", 100 * 60 * 60, "", true},
+		{"1000", 0, "", false},
 		{"8PDT", 8 * 60 * 60, "PDT", true},
 	} {
 		off, out, ok := time.TzsetOffset(test.in)
@@ -275,6 +340,7 @@ func TestTzsetRule(t *testing.T) {
 		{"30/03:00:00", time.Rule{Kind: time.RuleDOY, Day: 30, Time: 3 * 60 * 60}, "", true},
 		{"M4.5.6/03:00:00", time.Rule{Kind: time.RuleMonthWeekDay, Mon: 4, Week: 5, Day: 6, Time: 3 * 60 * 60}, "", true},
 		{"M4.5.7/03:00:00", time.Rule{}, "", false},
+		{"M4.5.6/-04", time.Rule{Kind: time.RuleMonthWeekDay, Mon: 4, Week: 5, Day: 6, Time: -4 * 60 * 60}, "", true},
 	} {
 		r, out, ok := time.TzsetRule(test.in)
 		if r != test.r || out != test.out || ok != test.ok {

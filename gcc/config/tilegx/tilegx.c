@@ -1,5 +1,5 @@
 /* Subroutines used for code generation on the Tilera TILE-Gx.
-   Copyright (C) 2011-2020 Free Software Foundation, Inc.
+   Copyright (C) 2011-2021 Free Software Foundation, Inc.
    Contributed by Walter Lee (walt@tilera.com)
 
    This file is part of GCC.
@@ -56,6 +56,7 @@
 #include "tilegx-builtins.h"
 #include "tilegx-multiply.h"
 #include "builtins.h"
+#include "opts.h"
 
 /* This file should be included last.  */
 #include "target-def.h"
@@ -76,7 +77,7 @@ static bool output_memory_autoinc_first;
 static void
 tilegx_option_override (void)
 {
-  if (global_options_set.x_tilegx_cmodel)
+  if (OPTION_SET_P (tilegx_cmodel))
     {
       switch (tilegx_cmodel)
 	{
@@ -5049,9 +5050,7 @@ tilegx_trampoline_init (rtx m_tramp, tree fndecl, rtx static_chain)
   end_addr = force_reg (Pmode, plus_constant (Pmode, XEXP (m_tramp, 0),
 					      TRAMPOLINE_SIZE));
 
-  emit_library_call (gen_rtx_SYMBOL_REF (Pmode, "__clear_cache"),
-		     LCT_NORMAL, VOIDmode, begin_addr, Pmode,
-		     end_addr, Pmode);
+  maybe_emit_call_builtin___clear_cache (begin_addr, end_addr);
 }
 
 

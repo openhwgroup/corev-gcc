@@ -2,9 +2,8 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// +build !plan9
-// +build !windows
-// +build !js
+//go:build !js && !plan9 && !windows
+// +build !js,!plan9,!windows
 
 package runtime
 
@@ -17,9 +16,14 @@ func read(fd int32, p unsafe.Pointer, n int32) int32
 
 func closefd(fd int32) int32
 
-//extern exit
+//extern-sysinfo exit
 func exit(code int32)
 func usleep(usec uint32)
+
+//go:nosplit
+func usleep_no_g(usec uint32) {
+	usleep(usec)
+}
 
 // write calls the write system call.
 // It returns a non-negative number of bytes written or a negative errno value.

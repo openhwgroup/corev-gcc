@@ -306,7 +306,7 @@ func TestIssue11130(t *testing.T) {
 		return
 	}
 	if !reflect.DeepEqual(v, v1) {
-		t.Errorf("got: %#v data=%q , want : %#v data=%q\n ", v1, data1, v, data)
+		t.Errorf("got: %#v data=%q, want : %#v data=%q\n ", v1, data1, v, data)
 	}
 }
 
@@ -374,5 +374,33 @@ func TestSetEncoderSETSliceSuffix(t *testing.T) {
 	}
 	if !reflect.DeepEqual(expectedOrder, resultSet) {
 		t.Errorf("Unexpected SET content. got: %s, want: %s", resultSet, expectedOrder)
+	}
+}
+
+func BenchmarkUnmarshal(b *testing.B) {
+	b.ReportAllocs()
+
+	type testCase struct {
+		in  []byte
+		out interface{}
+	}
+	var testData []testCase
+	for _, test := range unmarshalTestData {
+		pv := reflect.New(reflect.TypeOf(test.out).Elem())
+		inCopy := make([]byte, len(test.in))
+		copy(inCopy, test.in)
+		outCopy := pv.Interface()
+
+		testData = append(testData, testCase{
+			in:  inCopy,
+			out: outCopy,
+		})
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for _, testCase := range testData {
+			_, _ = Unmarshal(testCase.in, testCase.out)
+		}
 	}
 }

@@ -2,10 +2,11 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// This file implements sysSocket and accept for platforms that do not
-// provide a fast path for setting SetNonblock and CloseOnExec.
+// This file implements accept for platforms that do not provide a fast path for
+// setting SetNonblock and CloseOnExec.
 
-// +build aix darwin js,wasm solaris
+//go:build aix || darwin || (js && wasm) || (solaris && !illumos)
+// +build aix darwin js,wasm solaris,!illumos
 
 package poll
 

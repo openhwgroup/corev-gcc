@@ -7,11 +7,13 @@ package net
 import (
 	"context"
 	"internal/bytealg"
+	"internal/itoa"
+	"io/fs"
 	"os"
 	"syscall"
 )
 
-// Probe probes IPv4, IPv6 and IPv4-mapped IPv6 communication
+// probe probes IPv4, IPv6 and IPv4-mapped IPv6 communication
 // capabilities.
 //
 // Plan 9 uses IPv6 natively, see ip(3).
@@ -164,7 +166,7 @@ func fixErr(err error) {
 	if nonNilInterface(oe.Addr) {
 		oe.Addr = nil
 	}
-	if pe, ok := oe.Err.(*os.PathError); ok {
+	if pe, ok := oe.Err.(*fs.PathError); ok {
 		if _, ok = pe.Err.(syscall.ErrorString); ok {
 			oe.Err = pe.Err
 		}
@@ -335,9 +337,9 @@ func plan9LocalAddr(addr Addr) string {
 		if port == 0 {
 			return ""
 		}
-		return itoa(port)
+		return itoa.Itoa(port)
 	}
-	return ip.String() + "!" + itoa(port)
+	return ip.String() + "!" + itoa.Itoa(port)
 }
 
 func hangupCtlWrite(ctx context.Context, proto string, ctl *os.File, msg string) error {

@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2020, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2021, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -23,35 +23,39 @@
 --                                                                          --
 ------------------------------------------------------------------------------
 
-with ALI;      use ALI;
-with Atree;    use Atree;
-with Casing;   use Casing;
-with Debug;    use Debug;
-with Einfo;    use Einfo;
-with Errout;   use Errout;
-with Fname;    use Fname;
-with Fname.UF; use Fname.UF;
-with Lib.Util; use Lib.Util;
-with Lib.Xref; use Lib.Xref;
-with Nlists;   use Nlists;
-with Gnatvsn;  use Gnatvsn;
-with Opt;      use Opt;
-with Osint;    use Osint;
-with Osint.C;  use Osint.C;
-with Output;   use Output;
+with ALI;            use ALI;
+with Atree;          use Atree;
+with Casing;         use Casing;
+with Debug;          use Debug;
+with Einfo;          use Einfo;
+with Einfo.Entities; use Einfo.Entities;
+with Einfo.Utils;    use Einfo.Utils;
+with Errout;         use Errout;
+with Fname;          use Fname;
+with Fname.UF;       use Fname.UF;
+with Lib.Util;       use Lib.Util;
+with Lib.Xref;       use Lib.Xref;
+with Nlists;         use Nlists;
+with Gnatvsn;        use Gnatvsn;
+with Opt;            use Opt;
+with Osint;          use Osint;
+with Osint.C;        use Osint.C;
+with Output;         use Output;
 with Par;
-with Par_SCO;  use Par_SCO;
-with Restrict; use Restrict;
-with Rident;   use Rident;
-with Stand;    use Stand;
-with Scn;      use Scn;
-with Sem_Eval; use Sem_Eval;
-with Sinfo;    use Sinfo;
-with Sinput;   use Sinput;
-with Snames;   use Snames;
-with Stringt;  use Stringt;
-with Tbuild;   use Tbuild;
-with Uname;    use Uname;
+with Par_SCO;        use Par_SCO;
+with Restrict;       use Restrict;
+with Rident;         use Rident;
+with Stand;          use Stand;
+with Scn;            use Scn;
+with Sem_Eval;       use Sem_Eval;
+with Sinfo;          use Sinfo;
+with Sinfo.Nodes;    use Sinfo.Nodes;
+with Sinfo.Utils;    use Sinfo.Utils;
+with Sinput;         use Sinput;
+with Snames;         use Snames;
+with Stringt;        use Stringt;
+with Tbuild;         use Tbuild;
+with Uname;          use Uname;
 
 with System.Case_Util; use System.Case_Util;
 with System.WCh_Con;   use System.WCh_Con;
@@ -133,7 +137,8 @@ package body Lib.Writ is
    ------------------------------
 
    procedure Ensure_System_Dependency is
-      System_Uname : Unit_Name_Type;
+      System_Uname : constant Unit_Name_Type :=
+        Name_To_Unit_Name (Name_System);
       --  Unit name for system spec if needed for dummy entry
 
       System_Fname : File_Name_Type;
@@ -142,11 +147,9 @@ package body Lib.Writ is
    begin
       --  Nothing to do if we already compiled System
 
-      for Unum in Units.First .. Last_Unit loop
-         if Source_Index (Unum) = System_Source_File_Index then
-            return;
-         end if;
-      end loop;
+      if Is_Loaded (System_Uname) then
+         return;
+      end if;
 
       --  If no entry for system.ads in the units table, then add a entry
       --  to the units table for system.ads, which will be referenced when
@@ -154,9 +157,6 @@ package body Lib.Writ is
       --  on system as a result of Targparm scanning the system.ads file to
       --  determine the target dependent parameters for the compilation.
 
-      Name_Len := 6;
-      Name_Buffer (1 .. 6) := "system";
-      System_Uname := Name_To_Unit_Name (Name_Enter);
       System_Fname := File_Name (System_Source_File_Index);
 
       Units.Increment_Last;
@@ -203,7 +203,7 @@ package body Lib.Writ is
          Style_Check := False;
          Initialize_Scanner (Units.Last, System_Source_File_Index);
          Discard_List (Par (Configuration_Pragmas => False));
-         Set_Ekind (Cunit_Entity (Units.Last), E_Package);
+         Mutate_Ekind (Cunit_Entity (Units.Last), E_Package);
          Set_Scope (Cunit_Entity (Units.Last), Standard_Standard);
          Style_Check := Save_Style;
          Multiple_Unit_Index := Save_Mindex;
@@ -267,17 +267,6 @@ package body Lib.Writ is
       procedure Collect_Withs (Cunit : Node_Id);
       --  Collect with lines for entries in the context clause of the given
       --  compilation unit, Cunit.
-
-      procedure Update_Tables_From_ALI_File;
-      --  Given an up to date ALI file (see Up_To_Date_ALI_file_Exists
-      --  function), update tables from the ALI information, including
-      --  specifically the Compilation_Switches table.
-
-      function Up_To_Date_ALI_File_Exists return Boolean;
-      --  If there exists an ALI file that is up to date, then this function
-      --  initializes the tables in the ALI spec to contain information on
-      --  this file (using Scan_ALI) and returns True. If no file exists,
-      --  or the file is not up to date, then False is returned.
 
       procedure Write_Unit_Information (Unit_Num : Unit_Number_Type);
       --  Write out the library information for one unit for which code is
@@ -396,76 +385,6 @@ package body Lib.Writ is
             Next (Item);
          end loop;
       end Collect_Withs;
-
-      --------------------------------
-      -- Up_To_Date_ALI_File_Exists --
-      --------------------------------
-
-      function Up_To_Date_ALI_File_Exists return Boolean is
-         Name : File_Name_Type;
-         Text : Text_Buffer_Ptr;
-         Id   : Sdep_Id;
-         Sind : Source_File_Index;
-
-      begin
-         Opt.Check_Object_Consistency := True;
-         Read_Library_Info (Name, Text);
-
-         --  Return if we could not find an ALI file
-
-         if Text = null then
-            return False;
-         end if;
-
-         --  Return if ALI file has bad format
-
-         Initialize_ALI;
-
-         if Scan_ALI (Name, Text, False, Err => True) = No_ALI_Id then
-            return False;
-         end if;
-
-         --  If we have an OK ALI file, check if it is up to date
-         --  Note that we assume that the ALI read has all the entries
-         --  we have in our table, plus some additional ones (that can
-         --  come from expansion).
-
-         Id := First_Sdep_Entry;
-         for J in 1 .. Num_Sdep loop
-            Sind := Source_Index (Sdep_Table (J));
-
-            while Sdep.Table (Id).Sfile /= File_Name (Sind) loop
-               if Id = Sdep.Last then
-                  return False;
-               else
-                  Id := Id + 1;
-               end if;
-            end loop;
-
-            if Sdep.Table (Id).Stamp /= Time_Stamp (Sind) then
-               return False;
-            end if;
-         end loop;
-
-         return True;
-      end Up_To_Date_ALI_File_Exists;
-
-      ---------------------------------
-      -- Update_Tables_From_ALI_File --
-      ---------------------------------
-
-      procedure Update_Tables_From_ALI_File is
-      begin
-         --  Build Compilation_Switches table
-
-         Compilation_Switches.Init;
-
-         for J in First_Arg_Entry .. Args.Last loop
-            Compilation_Switches.Increment_Last;
-            Compilation_Switches.Table (Compilation_Switches.Last) :=
-              Args.Table (J);
-         end loop;
-      end Update_Tables_From_ALI_File;
 
       ----------------------------
       -- Write_Unit_Information --
@@ -786,7 +705,7 @@ package body Lib.Writ is
                   Write_Info_Char (' ');
 
                   case Pragma_Name (N) is
-                     when Name_Annotate =>
+                     when Name_Annotate | Name_GNAT_Annotate =>
                         C := 'A';
                      when Name_Comment =>
                         C := 'C';
@@ -918,7 +837,7 @@ package body Lib.Writ is
             --  preprocessing data and definition files, there is no Unit_Name,
             --  check for that first.
 
-            if Unit_Name (J) /= No_Unit_Name
+            if Present (Unit_Name (J))
               and then (With_Flags (J) or else Unit_Name (J) = Pname)
             then
                Num_Withs := Num_Withs + 1;
@@ -1095,8 +1014,7 @@ package body Lib.Writ is
          return;
       end if;
 
-      --  Build sorted source dependency table. We do this right away, because
-      --  it is referenced by Up_To_Date_ALI_File_Exists.
+      --  Build sorted source dependency table
 
       for Unum in Units.First .. Last_Unit loop
          if Cunit_Entity (Unum) = Empty
@@ -1130,20 +1048,8 @@ package body Lib.Writ is
 
       Lib.Sort (Sdep_Table (1 .. Num_Sdep));
 
-      --  If we are not generating code, and there is an up to date ALI file
-      --  file accessible, read it, and acquire the compilation arguments from
-      --  this file. In GNATprove mode, always generate the ALI file, which
-      --  contains a special section for formal verification.
-
-      if Operating_Mode /= Generate_Code and then not GNATprove_Mode then
-         if Up_To_Date_ALI_File_Exists then
-            Update_Tables_From_ALI_File;
-            return;
-         end if;
-      end if;
-
-      --  Otherwise acquire compilation arguments and prepare to write out a
-      --  new ali file.
+      --  Acquire compilation arguments and prepare to write out a new ali
+      --  file.
 
       Create_Output_Library_Info;
 
@@ -1219,9 +1125,7 @@ package body Lib.Writ is
 
             if Nkind (U) = N_Subprogram_Body
               and then Present (Corresponding_Spec (U))
-              and then
-                Ekind (Corresponding_Spec (U)) in E_Generic_Procedure
-                                                | E_Generic_Function
+              and then Is_Generic_Subprogram (Corresponding_Spec (U))
             then
                null;
 
@@ -1347,9 +1251,10 @@ package body Lib.Writ is
       --  for which we have generated code
 
       for Unit in Units.First .. Last_Unit loop
-         if Units.Table (Unit).Generate_Code or else Unit = Main_Unit then
+         if Units.Table (Unit).Generate_Code then
             if not Has_No_Elaboration_Code (Cunit (Unit)) then
                Main_Restrictions.Violated (No_Elaboration_Code) := True;
+               exit;
             end if;
          end if;
       end loop;
@@ -1572,11 +1477,8 @@ package body Lib.Writ is
             --  Normal case of a unit entry with a source index
 
             if Sind > No_Source_File then
-               --  We never want directory information in ALI files
-               --  ???But back out this change temporarily until
-               --  gprbuild is fixed.
 
-               if False then
+               if Config_Files_Store_Basename then
                   Fname := Strip_Directory (File_Name (Sind));
                else
                   Fname := File_Name (Sind);
@@ -1823,7 +1725,7 @@ package body Lib.Writ is
 
       --  scope
 
-      Write_Info_Name (Scope (IS_Id));
+      Write_Info_Name (IS_Scope (IS_Id));
       Write_Info_Char (' ');
 
       --  line

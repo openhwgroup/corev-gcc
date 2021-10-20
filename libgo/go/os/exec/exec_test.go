@@ -15,7 +15,6 @@ import (
 	"internal/poll"
 	"internal/testenv"
 	"io"
-	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
@@ -386,7 +385,7 @@ func TestPipeLookPathLeak(t *testing.T) {
 	// Reading /proc/self/fd is more reliable than calling lsof, so try that
 	// first.
 	numOpenFDs := func() (int, []byte, error) {
-		fds, err := ioutil.ReadDir("/proc/self/fd")
+		fds, err := os.ReadDir("/proc/self/fd")
 		if err != nil {
 			return 0, nil, err
 		}
@@ -489,7 +488,7 @@ func numOpenFDsAndroid(t *testing.T) (n int, lsof []byte) {
 }
 
 func TestExtraFilesFDShuffle(t *testing.T) {
-	t.Skip("flaky test; see https://golang.org/issue/5780")
+	testenv.SkipFlaky(t, 5780)
 	switch runtime.GOOS {
 	case "windows":
 		t.Skip("no operating system support; skipping")
@@ -605,6 +604,10 @@ func TestExtraFiles(t *testing.T) {
 	testenv.MustHaveExec(t)
 	testenv.MustHaveGoBuild(t)
 
+	// This test runs with cgo disabled. External linking needs cgo, so
+	// it doesn't work if external linking is required.
+	testenv.MustInternalLink(t)
+
 	if runtime.GOOS == "windows" {
 		t.Skipf("skipping test on %q", runtime.GOOS)
 	}
@@ -633,7 +636,7 @@ func TestExtraFiles(t *testing.T) {
 	// cgo), to make sure none of that potential C code leaks fds.
 	ts := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	// quiet expected TLS handshake error "remote error: bad certificate"
-	ts.Config.ErrorLog = log.New(ioutil.Discard, "", 0)
+	ts.Config.ErrorLog = log.New(io.Discard, "", 0)
 	ts.StartTLS()
 	defer ts.Close()
 	_, err = http.Get(ts.URL)
@@ -641,7 +644,7 @@ func TestExtraFiles(t *testing.T) {
 		t.Errorf("success trying to fetch %s; want an error", ts.URL)
 	}
 
-	tf, err := ioutil.TempFile("", "")
+	tf, err := os.CreateTemp("", "")
 	if err != nil {
 		t.Fatalf("TempFile: %v", err)
 	}
@@ -687,6 +690,18 @@ func TestExtraFiles(t *testing.T) {
 	c.Stdout = &stdout
 	c.Stderr = &stderr
 	c.ExtraFiles = []*os.File{tf}
+	if runtime.GOOS == "illumos" {
+		// Some facilities in illumos are implemented via access
+		// to /proc by libc; such accesses can briefly occupy a
+		// low-numbered fd.  If this occurs concurrently with the
+		// test that checks for leaked descriptors, the check can
+		// become confused and report a spurious leaked descriptor.
+		// (See issue #42431 for more detailed analysis.)
+		//
+		// Attempt to constrain the use of additional threads in the
+		// child process to make this test less flaky:
+		c.Env = append(os.Environ(), "GOMAXPROCS=1")
+	}
 	err = c.Run()
 	if err != nil {
 		t.Fatalf("Run: %v\n--- stdout:\n%s--- stderr:\n%s", err, stdout.Bytes(), stderr.Bytes())
@@ -826,7 +841,7 @@ func TestHelperProcess(*testing.T) {
 			}
 		}
 	case "stdinClose":
-		b, err := ioutil.ReadAll(os.Stdin)
+		b, err := io.ReadAll(os.Stdin)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
@@ -899,6 +914,16 @@ func TestHelperProcess(*testing.T) {
 		os.Exit(1)
 	case "sleep":
 		time.Sleep(3 * time.Second)
+		os.Exit(0)
+	case "pipehandle":
+		handle, _ := strconv.ParseUint(args[0], 16, 64)
+		pipe := os.NewFile(uintptr(handle), "")
+		_, err := fmt.Fprint(pipe, args[1])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "writing to pipe failed: %v\n", err)
+			os.Exit(1)
+		}
+		pipe.Close()
 		os.Exit(0)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command %q\n", cmd)
@@ -1027,41 +1052,18 @@ func TestContextCancel(t *testing.T) {
 	defer cancel()
 	c := helperCommandContext(t, ctx, "cat")
 
-	r, w, err := os.Pipe()
+	stdin, err := c.StdinPipe()
 	if err != nil {
 		t.Fatal(err)
 	}
-	c.Stdin = r
-
-	stdout, err := c.StdoutPipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	readDone := make(chan struct{})
-	go func() {
-		defer close(readDone)
-		var a [1024]byte
-		for {
-			n, err := stdout.Read(a[:])
-			if err != nil {
-				if err != io.EOF {
-					t.Errorf("unexpected read error: %v", err)
-				}
-				return
-			}
-			t.Logf("%s", a[:n])
-		}
-	}()
+	defer stdin.Close()
 
 	if err := c.Start(); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := r.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := io.WriteString(w, "echo"); err != nil {
+	// At this point the process is alive. Ensure it by sending data to stdin.
+	if _, err := io.WriteString(stdin, "echo"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1071,19 +1073,14 @@ func TestContextCancel(t *testing.T) {
 	// should now fail.  Give the process a little while to die.
 	start := time.Now()
 	for {
-		if _, err := io.WriteString(w, "echo"); err != nil {
+		if _, err := io.WriteString(stdin, "echo"); err != nil {
 			break
 		}
-		if time.Since(start) > time.Second {
+		if time.Since(start) > time.Minute {
 			t.Fatal("canceling context did not stop program")
 		}
 		time.Sleep(time.Millisecond)
 	}
-
-	if err := w.Close(); err != nil {
-		t.Errorf("error closing write end of pipe: %v", err)
-	}
-	<-readDone
 
 	if err := c.Wait(); err == nil {
 		t.Error("program unexpectedly exited successfully")

@@ -6,23 +6,17 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2020, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2021, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
 -- ware  Foundation;  either version 3,  or (at your option) any later ver- --
 -- sion.  GNAT is distributed in the hope that it will be useful, but WITH- --
 -- OUT ANY WARRANTY;  without even the  implied warranty of MERCHANTABILITY --
--- or FITNESS FOR A PARTICULAR PURPOSE.                                     --
---                                                                          --
--- As a special exception under Section 7 of GPL version 3, you are granted --
--- additional permissions described in the GCC Runtime Library Exception,   --
--- version 3.1, as published by the Free Software Foundation.               --
---                                                                          --
--- You should have received a copy of the GNU General Public License and    --
--- a copy of the GCC Runtime Library Exception along with this program;     --
--- see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see    --
--- <http://www.gnu.org/licenses/>.                                          --
+-- or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License --
+-- for  more details.  You should have  received  a copy of the GNU General --
+-- Public License  distributed with GNAT; see file COPYING3.  If not, go to --
+-- http://www.gnu.org/licenses for a complete copy of the license.          --
 --                                                                          --
 -- GNAT was originally developed  by the GNAT team at  New York University. --
 -- Extensive contributions were provided by Ada Core Technologies Inc.      --
@@ -1094,6 +1088,15 @@ package body Namet is
       return Id in Name_Entries.First .. Name_Entries.Last;
    end Is_Valid_Name;
 
+   ------------------
+   -- Last_Name_Id --
+   ------------------
+
+   function Last_Name_Id return Name_Id is
+   begin
+      return Name_Id (Int (First_Name_Id) + Name_Entries_Count - 1);
+   end Last_Name_Id;
+
    --------------------
    -- Length_Of_Name --
    --------------------
@@ -1130,11 +1133,12 @@ package body Namet is
           Name_Len              => Short (Buf.Length),
           Byte_Info             => 0,
           Int_Info              => 0,
+          Hash_Link             => No_Name,
+          Name_Has_No_Encodings => False,
           Boolean1_Info         => False,
           Boolean2_Info         => False,
           Boolean3_Info         => False,
-          Name_Has_No_Encodings => False,
-          Hash_Link             => No_Name));
+          Spare                 => False));
 
       --  Set corresponding string entry in the Name_Chars table
 
@@ -1236,12 +1240,13 @@ package body Namet is
            ((Name_Chars_Index      => Name_Chars.Last,
              Name_Len              => Short (Buf.Length),
              Hash_Link             => No_Name,
-             Name_Has_No_Encodings => False,
              Int_Info              => 0,
              Byte_Info             => 0,
+             Name_Has_No_Encodings => False,
              Boolean1_Info         => False,
              Boolean2_Info         => False,
-             Boolean3_Info         => False));
+             Boolean3_Info         => False,
+             Spare                 => False));
 
          --  Set corresponding string entry in the Name_Chars table
 
@@ -1321,11 +1326,12 @@ package body Namet is
              Name_Len              => 1,
              Byte_Info             => 0,
              Int_Info              => 0,
+             Hash_Link             => No_Name,
+             Name_Has_No_Encodings => True,
              Boolean1_Info         => False,
              Boolean2_Info         => False,
              Boolean3_Info         => False,
-             Name_Has_No_Encodings => True,
-             Hash_Link             => No_Name));
+             Spare                 => False));
 
          Name_Chars.Append (C);
          Name_Chars.Append (ASCII.NUL);

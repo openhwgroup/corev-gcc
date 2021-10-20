@@ -1,4 +1,4 @@
-// Copyright (C) 2017-2020 Free Software Foundation, Inc.
+// Copyright (C) 2017-2021 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -15,7 +15,6 @@
 // with this library; see the file COPYING3.  If not see
 // <http://www.gnu.org/licenses/>.
 
-// { dg-options "-std=gnu++17" }
 // { dg-do compile { target c++17 } }
 
 #include <charconv>
@@ -23,11 +22,7 @@
 void
 test01(const char* first, const char* last)
 {
-#if _GLIBCXX_USE_WCHAR_T
   wchar_t wc;
-#else
-  enum W { } wc;
-#endif
   std::from_chars(first, last, wc); // { dg-error "no matching" }
   std::from_chars(first, last, wc, 10); // { dg-error "no matching" }
 

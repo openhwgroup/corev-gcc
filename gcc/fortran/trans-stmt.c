@@ -1,5 +1,5 @@
 /* Statement translation -- generate GCC trees from gfc_code.
-   Copyright (C) 2002-2020 Free Software Foundation, Inc.
+   Copyright (C) 2002-2021 Free Software Foundation, Inc.
    Contributed by Paul Brook <paul@nowt.org>
    and Steven Bosscher <s.bosscher@student.tudelft.nl>
 
@@ -198,6 +198,13 @@ replace_ss (gfc_se *se, gfc_ss *old_ss, gfc_ss *new_ss)
   *sess = new_ss;
   new_ss->next = old_ss->next;
 
+  /* Make sure that trailing references are not lost.  */
+  if (old_ss->info
+      && old_ss->info->data.array.ref
+      && old_ss->info->data.array.ref->next
+      && !(new_ss->info->data.array.ref
+	   && new_ss->info->data.array.ref->next))
+    new_ss->info->data.array.ref = old_ss->info->data.array.ref;
 
   for (loopss = &(se->loop->ss); *loopss != gfc_ss_terminator;
        loopss = &((*loopss)->loop_chain))
@@ -383,6 +390,7 @@ gfc_trans_call (gfc_code * code, bool dependency_check,
   tree index = NULL_TREE;
   tree maskexpr = NULL_TREE;
   tree tmp;
+  bool is_intrinsic_mvbits;
 
   /* A CALL starts a new block because the actual arguments may have to
      be evaluated first.  */
@@ -397,17 +405,29 @@ gfc_trans_call (gfc_code * code, bool dependency_check,
 					   get_proc_ifc_for_call (code),
 					   GFC_SS_REFERENCE);
 
+  /* MVBITS is inlined but needs the dependency checking found here.  */
+  is_intrinsic_mvbits = code->resolved_isym
+			&& code->resolved_isym->id == GFC_ISYM_MVBITS;
+
   /* Is not an elemental subroutine call with array valued arguments.  */
   if (ss == gfc_ss_terminator)
     {
 
-      /* Translate the call.  */
-      has_alternate_specifier
-	= gfc_conv_procedure_call (&se, code->resolved_sym, code->ext.actual,
-				  code->expr1, NULL);
+      if (is_intrinsic_mvbits)
+	{
+	  has_alternate_specifier = 0;
+	  gfc_conv_intrinsic_mvbits (&se, code->ext.actual, NULL);
+	}
+      else
+	{
+	  /* Translate the call.  */
+	  has_alternate_specifier =
+	    gfc_conv_procedure_call (&se, code->resolved_sym,
+				     code->ext.actual, code->expr1, NULL);
 
-      /* A subroutine without side-effect, by definition, does nothing!  */
-      TREE_SIDE_EFFECTS (se.expr) = 1;
+	  /* A subroutine without side-effect, by definition, does nothing!  */
+	  TREE_SIDE_EFFECTS (se.expr) = 1;
+	}
 
       /* Chain the pieces together and return the block.  */
       if (has_alternate_specifier)
@@ -490,10 +510,18 @@ gfc_trans_call (gfc_code * code, bool dependency_check,
 					TREE_TYPE (maskexpr), maskexpr);
 	}
 
-      /* Add the subroutine call to the block.  */
-      gfc_conv_procedure_call (&loopse, code->resolved_sym,
-			       code->ext.actual, code->expr1,
-			       NULL);
+      if (is_intrinsic_mvbits)
+	{
+	  has_alternate_specifier = 0;
+	  gfc_conv_intrinsic_mvbits (&loopse, code->ext.actual, &loop);
+	}
+      else
+	{
+	  /* Add the subroutine call to the block.  */
+	  gfc_conv_procedure_call (&loopse, code->resolved_sym,
+				   code->ext.actual, code->expr1,
+				   NULL);
+	}
 
       if (mask && count1)
 	{
@@ -689,8 +717,7 @@ gfc_trans_fail_image (gfc_code *code ATTRIBUTE_UNUSED)
 {
   if (flag_coarray == GFC_FCOARRAY_LIB)
     return build_call_expr_loc (input_location,
-				gfor_fndecl_caf_fail_image, 1,
-				build_int_cst (pchar_type_node, 0));
+				gfor_fndecl_caf_fail_image, 0);
   else
     {
       const char *name = gfc_get_string (PREFIX ("exit_i%d"), 4);
@@ -1199,7 +1226,8 @@ gfc_trans_sync (gfc_code *code, gfc_exec_op type)
 
   if (code->expr2)
     {
-      gcc_assert (code->expr2->expr_type == EXPR_VARIABLE);
+      gcc_assert (code->expr2->expr_type == EXPR_VARIABLE
+		  || code->expr2->expr_type == EXPR_FUNCTION);
       gfc_init_se (&argse, NULL);
       gfc_conv_expr_val (&argse, code->expr2);
       stat = argse.expr;
@@ -1209,7 +1237,8 @@ gfc_trans_sync (gfc_code *code, gfc_exec_op type)
 
   if (code->expr3 && flag_coarray == GFC_FCOARRAY_LIB)
     {
-      gcc_assert (code->expr3->expr_type == EXPR_VARIABLE);
+      gcc_assert (code->expr3->expr_type == EXPR_VARIABLE
+		  || code->expr3->expr_type == EXPR_FUNCTION);
       gfc_init_se (&argse, NULL);
       argse.want_pointer = 1;
       gfc_conv_expr (&argse, code->expr3);
@@ -1757,11 +1786,12 @@ trans_associate_var (gfc_symbol *sym, gfc_wrapped_block *block)
       if (e->ts.type == BT_CLASS)
 	{
 	  /* Go straight to the class data.  */
-	  if (sym2->attr.dummy)
+	  if (sym2->attr.dummy && !sym2->attr.optional)
 	    {
-	      class_decl = DECL_LANG_SPECIFIC (sym2->backend_decl) ?
-			   GFC_DECL_SAVED_DESCRIPTOR (sym2->backend_decl) :
-			   sym2->backend_decl;
+	      class_decl = sym2->backend_decl;
+	      if (DECL_LANG_SPECIFIC (class_decl)
+		  && GFC_DECL_SAVED_DESCRIPTOR (class_decl))
+		class_decl = GFC_DECL_SAVED_DESCRIPTOR (class_decl);
 	      if (POINTER_TYPE_P (TREE_TYPE (class_decl)))
 		class_decl = build_fold_indirect_ref_loc (input_location,
 							  class_decl);
@@ -2064,6 +2094,7 @@ trans_associate_var (gfc_symbol *sym, gfc_wrapped_block *block)
 	  /* Obtain a temporary class container for the result.  */
 	  gfc_conv_derived_to_class (&se, e, sym->ts, tmp, false, false);
 	  se.expr = build_fold_indirect_ref_loc (input_location, se.expr);
+	  need_len_assign = false;
 	}
       else
 	{
@@ -3639,10 +3670,7 @@ gfc_trans_select_rank_cases (gfc_code * code)
   tree tmp;
   tree cond;
   tree low;
-  tree sexpr;
   tree rank;
-  tree rank_minus_one;
-  tree minus_one;
   gfc_se se;
   gfc_se cse;
   stmtblock_t block;
@@ -3656,24 +3684,25 @@ gfc_trans_select_rank_cases (gfc_code * code)
   gfc_conv_expr_descriptor (&se, code->expr1);
   rank = gfc_conv_descriptor_rank (se.expr);
   rank = gfc_evaluate_now (rank, &block);
-  minus_one = build_int_cst (TREE_TYPE (rank), -1);
-  tmp = fold_build2_loc (input_location, MINUS_EXPR,
-			 gfc_array_index_type,
-			 fold_convert (gfc_array_index_type, rank),
-			 build_int_cst (gfc_array_index_type, 1));
-  rank_minus_one = gfc_evaluate_now (tmp, &block);
-  tmp = gfc_conv_descriptor_ubound_get (se.expr, rank_minus_one);
-  cond = fold_build2_loc (input_location, NE_EXPR, logical_type_node,
-			  tmp, build_int_cst (TREE_TYPE (tmp), -1));
-  tmp = fold_build3_loc (input_location, COND_EXPR,
-			 TREE_TYPE (rank), cond,
-			 rank, minus_one);
-  cond = fold_build2_loc (input_location, EQ_EXPR, logical_type_node,
-			  rank, build_int_cst (TREE_TYPE (rank), 0));
-  sexpr = fold_build3_loc (input_location, COND_EXPR,
-			   TREE_TYPE (rank), cond,
-			   rank, tmp);
-  sexpr = gfc_evaluate_now (sexpr, &block);
+  symbol_attribute attr = gfc_expr_attr (code->expr1);
+  if (!attr.pointer || !attr.allocatable)
+    {
+      /* Special case for assumed-rank ('rank(*)', internally -1):
+	 rank = (rank == 0 || ubound[rank-1] != -1) ? rank : -1.  */
+      cond = fold_build2_loc (input_location, EQ_EXPR, logical_type_node,
+			      rank, build_int_cst (TREE_TYPE (rank), 0));
+      tmp = fold_build2_loc (input_location, MINUS_EXPR, gfc_array_index_type,
+			     fold_convert (gfc_array_index_type, rank),
+			     gfc_index_one_node);
+      tmp = gfc_conv_descriptor_ubound_get (se.expr, tmp);
+      tmp = fold_build2_loc (input_location, NE_EXPR, logical_type_node,
+			     tmp, build_int_cst (TREE_TYPE (tmp), -1));
+      cond = fold_build2_loc (input_location, TRUTH_ORIF_EXPR,
+			      logical_type_node, cond, tmp);
+      tmp = fold_build3_loc (input_location, COND_EXPR, TREE_TYPE (rank),
+			     cond, rank, build_int_cst (TREE_TYPE (rank), -1));
+      rank = gfc_evaluate_now (tmp, &block);
+    }
   TREE_USED (code->exit_label) = 0;
 
 repeat:
@@ -3717,8 +3746,8 @@ repeat:
       if (low != NULL_TREE)
 	{
 	  cond = fold_build2_loc (input_location, EQ_EXPR,
-				  TREE_TYPE (sexpr), sexpr,
-				  fold_convert (TREE_TYPE (sexpr), low));
+				  TREE_TYPE (rank), rank,
+				  fold_convert (TREE_TYPE (rank), low));
 	  tmp = fold_build3_loc (input_location, COND_EXPR, void_type_node,
 				 cond, tmp,
 				 build_empty_stmt (input_location));
@@ -3921,9 +3950,10 @@ check_forall_dependencies (gfc_code *c, stmtblock_t *pre, stmtblock_t *post)
      point to the copy instead.  Note that the shallow copy of
      the variable will not suffice for derived types with
      pointer components.  We therefore leave these to their
-     own devices.  */
+     own devices.  Likewise for allocatable components.  */
   if (lsym->ts.type == BT_DERIVED
-	&& lsym->ts.u.derived->attr.pointer_comp)
+      && (lsym->ts.u.derived->attr.pointer_comp
+	  || lsym->ts.u.derived->attr.alloc_comp))
     return need_temp;
 
   new_symtree = NULL;
@@ -6972,7 +7002,7 @@ gfc_trans_allocate (gfc_code * code)
 	  gfc_expr *init_expr = gfc_expr_to_initialize (expr);
 	  gfc_expr *rhs = e3rhs ? e3rhs : gfc_copy_expr (code->expr3);
 	  flag_realloc_lhs = 0;
-	  tmp = gfc_trans_assignment (init_expr, rhs, false, false, true,
+	  tmp = gfc_trans_assignment (init_expr, rhs, true, false, true,
 				      false);
 	  flag_realloc_lhs = realloc_lhs;
 	  /* Free the expression allocated for init_expr.  */

@@ -149,9 +149,9 @@ constexpr int x3 = f3 ();
 constexpr int
 f4 ()
 {
-  W7 w13 = 5;			// { dg-message "in 'constexpr' expansion of" }
+  W7 w13 = 5;
   return 0;
-}
+}			// { dg-message "in 'constexpr' expansion of" }
 
 constexpr int x4 = f4 ();	// { dg-message "in 'constexpr' expansion of" }
 
@@ -180,6 +180,6 @@ f7 ()
 constexpr int
 f8 ()
 {
-  T t4;			// { dg-error "variable 't4' of non-literal type 'T' in 'constexpr' function" }
+  T t4;			// { dg-error "variable 't4' of non-literal type 'T' in 'constexpr' function only available with" "" { target c++20_down } }
   return 0;
 }

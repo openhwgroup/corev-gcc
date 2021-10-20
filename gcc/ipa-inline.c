@@ -1,5 +1,5 @@
 /* Inlining decision heuristics.
-   Copyright (C) 2003-2020 Free Software Foundation, Inc.
+   Copyright (C) 2003-2021 Free Software Foundation, Inc.
    Contributed by Jan Hubicka
 
 This file is part of GCC.
@@ -283,6 +283,9 @@ sanitize_attrs_match_for_inline_p (const_tree caller, const_tree callee)
 	!= sanitize_flags_p (codes[i], callee))
       return false;
 
+  if (sanitize_coverage_p (caller) != sanitize_coverage_p (callee))
+    return false;
+
   return true;
 }
 
@@ -393,31 +396,64 @@ can_inline_edge_p (struct cgraph_edge *e, bool report,
       e->inline_failed = CIF_SANITIZE_ATTRIBUTE_MISMATCH;
       inlinable = false;
     }
+  else if (profile_arc_flag
+	   && (lookup_attribute ("no_profile_instrument_function",
+				 DECL_ATTRIBUTES (caller->decl)) == NULL_TREE)
+	   != (lookup_attribute ("no_profile_instrument_function",
+				 DECL_ATTRIBUTES (callee->decl)) == NULL_TREE))
+    {
+      cgraph_node *origin = caller;
+      while (origin->clone_of)
+	origin = origin->clone_of;
+
+      if (!DECL_STRUCT_FUNCTION (origin->decl)->always_inline_functions_inlined)
+	{
+	  e->inline_failed = CIF_UNSPECIFIED;
+	  inlinable = false;
+	}
+    }
+
   if (!inlinable && report)
     report_inline_failed_reason (e);
   return inlinable;
 }
 
-/* Return inlining_insns_single limit for function N. If HINT is true
+/* Return inlining_insns_single limit for function N.  If HINT or HINT2 is true
    scale up the bound.  */
 
 static int
-inline_insns_single (cgraph_node *n, bool hint)
+inline_insns_single (cgraph_node *n, bool hint, bool hint2)
 {
-  if (hint)
+  if (hint && hint2)
+    {
+      int64_t spd = opt_for_fn (n->decl, param_inline_heuristics_hint_percent);
+      spd = spd * spd;
+      if (spd > 1000000)
+	spd = 1000000;
+      return opt_for_fn (n->decl, param_max_inline_insns_single) * spd / 100;
+    }
+  if (hint || hint2)
     return opt_for_fn (n->decl, param_max_inline_insns_single)
 	   * opt_for_fn (n->decl, param_inline_heuristics_hint_percent) / 100;
   return opt_for_fn (n->decl, param_max_inline_insns_single);
 }
 
-/* Return inlining_insns_auto limit for function N. If HINT is true
+/* Return inlining_insns_auto limit for function N.  If HINT or HINT2 is true
    scale up the bound.   */
 
 static int
-inline_insns_auto (cgraph_node *n, bool hint)
+inline_insns_auto (cgraph_node *n, bool hint, bool hint2)
 {
   int max_inline_insns_auto = opt_for_fn (n->decl, param_max_inline_insns_auto);
-  if (hint)
+  if (hint && hint2)
+    {
+      int64_t spd = opt_for_fn (n->decl, param_inline_heuristics_hint_percent);
+      spd = spd * spd;
+      if (spd > 1000000)
+	spd = 1000000;
+      return max_inline_insns_auto * spd / 100;
+    }
+  if (hint || hint2)
     return max_inline_insns_auto
 	   * opt_for_fn (n->decl, param_inline_heuristics_hint_percent) / 100;
   return max_inline_insns_auto;
@@ -566,8 +602,8 @@ can_inline_edge_by_limits_p (struct cgraph_edge *e, bool report,
 	  int growth = estimate_edge_growth (e);
 	  if (growth > opt_for_fn (caller->decl, param_max_inline_insns_size)
 	      && (!DECL_DECLARED_INLINE_P (callee->decl)
-		  && growth >= MAX (inline_insns_single (caller, false),
-				    inline_insns_auto (caller, false))))
+		  && growth >= MAX (inline_insns_single (caller, false, false),
+				    inline_insns_auto (caller, false, false))))
 	    {
 	      e->inline_failed = CIF_OPTIMIZATION_MISMATCH;
 	      inlinable = false;
@@ -806,7 +842,7 @@ inlining_speedup (struct cgraph_edge *edge,
 }
 
 /* Return true if the speedup for inlining E is bigger than
-   PARAM_MAX_INLINE_MIN_SPEEDUP.  */
+   param_inline_min_speedup.  */
 
 static bool
 big_speedup_p (struct cgraph_edge *e)
@@ -855,7 +891,7 @@ want_inline_small_function_p (struct cgraph_edge *e, bool report)
 	   && (!e->count.ipa ().initialized_p () || !e->maybe_hot_p ()))
 	   && ipa_fn_summaries->get (callee)->min_size
 		- ipa_call_summaries->get (e)->call_stmt_size
-	      > inline_insns_auto (e->caller, true))
+	      > inline_insns_auto (e->caller, true, true))
     {
       e->inline_failed = CIF_MAX_INLINE_INSNS_AUTO_LIMIT;
       want_inline = false;
@@ -864,7 +900,7 @@ want_inline_small_function_p (struct cgraph_edge *e, bool report)
 	    || e->count.ipa ().nonzero_p ())
 	   && ipa_fn_summaries->get (callee)->min_size
 		- ipa_call_summaries->get (e)->call_stmt_size
-	      > inline_insns_single (e->caller, true))
+	      > inline_insns_single (e->caller, true, true))
     {
       e->inline_failed = (DECL_DECLARED_INLINE_P (callee->decl)
 			  ? CIF_MAX_INLINE_INSNS_SINGLE_LIMIT
@@ -875,10 +911,14 @@ want_inline_small_function_p (struct cgraph_edge *e, bool report)
     {
       int growth = estimate_edge_growth (e);
       ipa_hints hints = estimate_edge_hints (e);
+      /* We have two independent groups of hints.  If one matches in each
+	 of groups the limits are inreased.  If both groups matches, limit
+	 is increased even more.  */
       bool apply_hints = (hints & (INLINE_HINT_indirect_call
 				   | INLINE_HINT_known_hot
 				   | INLINE_HINT_loop_iterations
 				   | INLINE_HINT_loop_stride));
+      bool apply_hints2 = (hints & INLINE_HINT_builtin_constant_p);
 
       if (growth <= opt_for_fn (to->decl,
 				param_max_inline_insns_size))
@@ -888,9 +928,11 @@ want_inline_small_function_p (struct cgraph_edge *e, bool report)
 	 Avoid computation of big_speedup_p when not necessary to change
 	 outcome of decision.  */
       else if (DECL_DECLARED_INLINE_P (callee->decl)
-	       && growth >= inline_insns_single (e->caller, apply_hints)
-	       && (apply_hints
-		   || growth >= inline_insns_single (e->caller, true)
+	       && growth >= inline_insns_single (e->caller, apply_hints,
+						 apply_hints2)
+	       && (apply_hints || apply_hints2
+		   || growth >= inline_insns_single (e->caller, true,
+						     apply_hints2)
 		   || !big_speedup_p (e)))
 	{
           e->inline_failed = CIF_MAX_INLINE_INSNS_SINGLE_LIMIT;
@@ -902,7 +944,7 @@ want_inline_small_function_p (struct cgraph_edge *e, bool report)
 					param_max_inline_insns_small))
 	{
 	  /* growth_positive_p is expensive, always test it last.  */
-          if (growth >= inline_insns_single (e->caller, false)
+	  if (growth >= inline_insns_single (e->caller, false, false)
 	      || growth_positive_p (callee, e, growth))
 	    {
               e->inline_failed = CIF_NOT_DECLARED_INLINED;
@@ -912,13 +954,15 @@ want_inline_small_function_p (struct cgraph_edge *e, bool report)
       /* Apply param_max_inline_insns_auto limit for functions not declared
 	 inline.  Bypass the limit when speedup seems big.  */
       else if (!DECL_DECLARED_INLINE_P (callee->decl)
-	       && growth >= inline_insns_auto (e->caller, apply_hints)
-	       && (apply_hints
-		   || growth >= inline_insns_auto (e->caller, true)
+	       && growth >= inline_insns_auto (e->caller, apply_hints,
+					       apply_hints2)
+	       && (apply_hints || apply_hints2
+		   || growth >= inline_insns_auto (e->caller, true,
+						   apply_hints2)
 		   || !big_speedup_p (e)))
 	{
 	  /* growth_positive_p is expensive, always test it last.  */
-          if (growth >= inline_insns_single (e->caller, false)
+	  if (growth >= inline_insns_single (e->caller, false, false)
 	      || growth_positive_p (callee, e, growth))
 	    {
 	      e->inline_failed = CIF_MAX_INLINE_INSNS_AUTO_LIMIT;
@@ -927,7 +971,7 @@ want_inline_small_function_p (struct cgraph_edge *e, bool report)
 	}
       /* If call is cold, do not inline when function body would grow. */
       else if (!e->maybe_hot_p ()
-	       && (growth >= inline_insns_single (e->caller, false)
+	       && (growth >= inline_insns_single (e->caller, false, false)
 		   || growth_positive_p (callee, e, growth)))
 	{
           e->inline_failed = CIF_UNLIKELY_CALL;
@@ -1111,8 +1155,8 @@ static bool
 wrapper_heuristics_may_apply (struct cgraph_node *where, int size)
 {
   return size < (DECL_DECLARED_INLINE_P (where->decl)
-		 ? inline_insns_single (where, false)
-		 : inline_insns_auto (where, false));
+		 ? inline_insns_single (where, false, false)
+		 : inline_insns_auto (where, false, false));
 }
 
 /* A cost model driving the inlining heuristics in a way so the edges with
@@ -1317,6 +1361,8 @@ edge_badness (struct cgraph_edge *edge, bool dump)
 		| INLINE_HINT_loop_stride))
       || callee_info->growth <= 0)
     badness = badness.shift (badness > 0 ? -2 : 2);
+  if (hints & INLINE_HINT_builtin_constant_p)
+    badness = badness.shift (badness > 0 ? -4 : 4);
   if (hints & (INLINE_HINT_same_scc))
     badness = badness.shift (badness > 0 ? 3 : -3);
   else if (hints & (INLINE_HINT_in_scc))
@@ -1745,7 +1791,7 @@ compute_max_insns (cgraph_node *node, int insns)
 /* Compute badness of all edges in NEW_EDGES and add them to the HEAP.  */
 
 static void
-add_new_edges_to_heap (edge_heap_t *heap, vec<cgraph_edge *> new_edges)
+add_new_edges_to_heap (edge_heap_t *heap, vec<cgraph_edge *> &new_edges)
 {
   while (new_edges.length () > 0)
     {
@@ -1921,7 +1967,7 @@ inline_small_functions (void)
     if (!node->inlined_to)
       {
 	if (!node->alias && node->analyzed
-	    && (node->has_gimple_body_p () || node->thunk.thunk_p)
+	    && (node->has_gimple_body_p () || node->thunk)
 	    && opt_for_fn (node->decl, optimize))
 	  {
 	    class ipa_fn_summary *info = ipa_fn_summaries->get (node);
@@ -2769,9 +2815,6 @@ ipa_inline (void)
 	    }
 	}
     }
-
-  /* Free ipa-prop structures if they are no longer needed.  */
-  ipa_free_all_structures_after_iinln ();
 
   if (dump_enabled_p ())
     dump_printf (MSG_NOTE,

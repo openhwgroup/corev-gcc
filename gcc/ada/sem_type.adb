@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2020, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2021, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -23,32 +23,38 @@
 --                                                                          --
 ------------------------------------------------------------------------------
 
-with Aspects;  use Aspects;
-with Atree;    use Atree;
+with Aspects;        use Aspects;
+with Atree;          use Atree;
 with Alloc;
-with Debug;    use Debug;
-with Einfo;    use Einfo;
-with Elists;   use Elists;
-with Nlists;   use Nlists;
-with Errout;   use Errout;
-with Lib;      use Lib;
-with Namet;    use Namet;
-with Opt;      use Opt;
-with Output;   use Output;
-with Sem;      use Sem;
-with Sem_Aux;  use Sem_Aux;
-with Sem_Ch6;  use Sem_Ch6;
-with Sem_Ch8;  use Sem_Ch8;
-with Sem_Ch12; use Sem_Ch12;
-with Sem_Disp; use Sem_Disp;
-with Sem_Dist; use Sem_Dist;
-with Sem_Util; use Sem_Util;
-with Stand;    use Stand;
-with Sinfo;    use Sinfo;
-with Snames;   use Snames;
+with Debug;          use Debug;
+with Einfo;          use Einfo;
+with Einfo.Entities; use Einfo.Entities;
+with Einfo.Utils;    use Einfo.Utils;
+with Elists;         use Elists;
+with Nlists;         use Nlists;
+with Errout;         use Errout;
+with Lib;            use Lib;
+with Namet;          use Namet;
+with Opt;            use Opt;
+with Output;         use Output;
+with Sem;            use Sem;
+with Sem_Aux;        use Sem_Aux;
+with Sem_Ch6;        use Sem_Ch6;
+with Sem_Ch8;        use Sem_Ch8;
+with Sem_Ch12;       use Sem_Ch12;
+with Sem_Disp;       use Sem_Disp;
+with Sem_Dist;       use Sem_Dist;
+with Sem_Util;       use Sem_Util;
+with Stand;          use Stand;
+with Sinfo;          use Sinfo;
+with Sinfo.Nodes;    use Sinfo.Nodes;
+with Sinfo.Utils;    use Sinfo.Utils;
+with Snames;         use Snames;
 with Table;
-with Treepr;   use Treepr;
-with Uintp;    use Uintp;
+with Treepr;         use Treepr;
+with Uintp;          use Uintp;
+
+with GNAT.HTable;    use GNAT.HTable;
 
 package body Sem_Type is
 
@@ -60,21 +66,17 @@ package body Sem_Type is
    --  their interpretations. An overloaded node has an entry in Interp_Map,
    --  which in turn contains a pointer into the All_Interp array. The
    --  interpretations of a given node are contiguous in All_Interp. Each set
-   --  of interpretations is terminated with the marker No_Interp. In order to
-   --  speed up the retrieval of the interpretations of an overloaded node, the
-   --  Interp_Map table is accessed by means of a simple hashing scheme, and
-   --  the entries in Interp_Map are chained. The heads of clash lists are
-   --  stored in array Headers.
+   --  of interpretations is terminated with the marker No_Interp.
 
-   --              Headers        Interp_Map          All_Interp
+   --     Interp_Map           All_Interp
 
-   --                 _            +-----+             +--------+
-   --                |_|           |_____|         --->|interp1 |
-   --                |_|---------->|node |         |   |interp2 |
-   --                |_|           |index|---------|   |nointerp|
-   --                |_|           |next |             |        |
-   --                              |-----|             |        |
-   --                              +-----+             +--------+
+   --      +-----+             +--------+
+   --      |     |         --->|interp1 |
+   --      |_____|         |   |interp2 |
+   --      |index|---------|   |nointerp|
+   --      |-----|             |        |
+   --      |     |             |        |
+   --      +-----+             +--------+
 
    --  This scheme does not currently reclaim interpretations. In principle,
    --  after a unit is compiled, all overloadings have been resolved, and the
@@ -89,27 +91,25 @@ package body Sem_Type is
      Table_Increment      => Alloc.All_Interp_Increment,
      Table_Name           => "All_Interp");
 
-   type Interp_Ref is record
-      Node  : Node_Id;
-      Index : Interp_Index;
-      Next  : Int;
-   end record;
+   Header_Max : constant := 3079;
+   --  The number of hash buckets; an arbitrary prime number
 
-   Header_Size : constant Int := 2 ** 12;
-   No_Entry    : constant Int := -1;
-   Headers     : array (0 .. Header_Size) of Int := (others => No_Entry);
+   subtype Header_Num is Integer range 0 .. Header_Max - 1;
 
-   package Interp_Map is new Table.Table (
-     Table_Component_Type => Interp_Ref,
-     Table_Index_Type     => Int,
-     Table_Low_Bound      => 0,
-     Table_Initial        => Alloc.Interp_Map_Initial,
-     Table_Increment      => Alloc.Interp_Map_Increment,
-     Table_Name           => "Interp_Map");
-
-   function Hash (N : Node_Id) return Int;
+   function Hash (N : Node_Id) return Header_Num;
    --  A trivial hashing function for nodes, used to insert an overloaded
    --  node into the Interp_Map table.
+
+   package Interp_Map is new Simple_HTable
+     (Header_Num => Header_Num,
+      Element    => Interp_Index,
+      No_Element => -1,
+      Key        => Node_Id,
+      Hash       => Hash,
+      Equal      => "=");
+
+   Last_Overloaded : Node_Id := Empty;
+   --  Overloaded node after initializing a new collection of intepretation
 
    -------------------------------------
    -- Handling of Overload Resolution --
@@ -243,6 +243,13 @@ package body Sem_Type is
          Get_First_Interp (N, I, It);
          while Present (It.Nam) loop
 
+            --  Avoid making duplicate entries in overloads
+
+            if Name = It.Nam
+              and then Base_Type (It.Typ) = Base_Type (T)
+            then
+               return;
+
             --  A user-defined subprogram hides another declared at an outer
             --  level, or one that is use-visible. So return if previous
             --  definition hides new one (which is either in an outer
@@ -252,7 +259,7 @@ package body Sem_Type is
             --  If this is a universal operation, retain the operator in case
             --  preference rule applies.
 
-            if (((Ekind (Name) = E_Function or else Ekind (Name) = E_Procedure)
+            elsif ((Ekind (Name) in E_Function | E_Procedure
                    and then Ekind (Name) = Ekind (It.Nam))
                  or else (Ekind (Name) = E_Operator
                            and then Ekind (It.Nam) = E_Function))
@@ -296,13 +303,6 @@ package body Sem_Type is
                   return;
                end if;
 
-            --  Avoid making duplicate entries in overloads
-
-            elsif Name = It.Nam
-              and then Base_Type (It.Typ) = Base_Type (T)
-            then
-               return;
-
             --  Otherwise keep going
 
             else
@@ -326,8 +326,19 @@ package body Sem_Type is
             return False;
 
          elsif Nkind (N) in N_Binary_Op then
-            return Present (Universal_Interpretation (Left_Opnd (N)))
-              and then Present (Universal_Interpretation (Right_Opnd (N)));
+            if Present (Universal_Interpretation (Left_Opnd (N)))
+              and then Present (Universal_Interpretation (Right_Opnd (N)))
+            then
+               return True;
+            elsif Nkind (N) in N_Op_Eq | N_Op_Ne
+              and then
+                (Is_Anonymous_Access_Type (Etype (Left_Opnd (N)))
+                  or else Is_Anonymous_Access_Type (Etype (Right_Opnd (N))))
+            then
+               return True;
+            else
+               return False;
+            end if;
 
          elsif Nkind (N) in N_Unary_Op then
             return Present (Universal_Interpretation (Right_Opnd (N)));
@@ -433,6 +444,12 @@ package body Sem_Type is
                    Find_Dispatching_Type (E))
          then
             Add_One_Interp (N, Interface_Alias (E), T);
+
+         --  Otherwise this is the first interpretation, N has type Any_Type
+         --  and we must place the new type on the node.
+
+         else
+            Set_Etype (N, T);
          end if;
 
          return;
@@ -468,9 +485,9 @@ package body Sem_Type is
       --  node or the interpretation that is present is for a different
       --  node. In both cases add a new interpretation to the table.
 
-      elsif Interp_Map.Last < 0
+      elsif No (Last_Overloaded)
         or else
-          (Interp_Map.Table (Interp_Map.Last).Node /= N
+          (Last_Overloaded /= N
             and then not Is_Overloaded (N))
       then
          New_Interps (N);
@@ -1009,6 +1026,15 @@ package body Sem_Type is
       elsif T2 = Any_Composite and then Is_Aggregate_Type (T1) then
          return True;
 
+      --  In Ada_2022, an aggregate is compatible with the type that
+      --  as the corresponding aspect.
+
+      elsif Ada_Version >= Ada_2022
+        and then T2 = Any_Composite
+        and then Present (Find_Aspect (T1, Aspect_Aggregate))
+      then
+         return True;
+
       --  If the expected type is an anonymous access, the designated type must
       --  cover that of the expression. Use the base type for this check: even
       --  though access subtypes are rare in sources, they are generated for
@@ -1147,16 +1173,14 @@ package body Sem_Type is
       --  useless unchecked conversions, and since this can only arise in
       --  (known correct) expanded code, no harm is done.
 
-      elsif Is_Array_Type (T2)
-        and then Is_Packed (T2)
+      elsif Is_Packed_Array (T2)
         and then T1 = Packed_Array_Impl_Type (T2)
       then
          return True;
 
       --  Similarly an array type covers its corresponding packed array type
 
-      elsif Is_Array_Type (T1)
-        and then Is_Packed (T1)
+      elsif Is_Packed_Array (T1)
         and then T2 = Packed_Array_Impl_Type (T1)
       then
          return True;
@@ -1329,6 +1353,13 @@ package body Sem_Type is
       --  for special handling of expressions with universal operands, see
       --  comments to Has_Abstract_Interpretation below.
 
+      function Is_User_Defined_Anonymous_Access_Equality
+        (User_Subp, Predef_Subp : Entity_Id) return Boolean;
+      --  Check for Ada 2005, AI-020: If the context involves an anonymous
+      --  access operand, recognize a user-defined equality (User_Subp) with
+      --  the proper signature, declared in the same declarative list as the
+      --  type and not hiding a predefined equality Predef_Subp.
+
       ---------------------------
       -- Inherited_From_Actual --
       ---------------------------
@@ -1378,7 +1409,9 @@ package body Sem_Type is
            and then Nkind (Unit_Declaration_Node (S)) =
                                          N_Subprogram_Renaming_Declaration
 
-           --  Why the Comes_From_Source test here???
+           --  Determine if the renaming came from source or was generated as a
+           --  a result of generic expansion since the actual is represented by
+           --  a constructed subprogram renaming.
 
            and then not Comes_From_Source (Unit_Declaration_Node (S))
 
@@ -1435,7 +1468,8 @@ package body Sem_Type is
             then
                return True;
 
-            --  ??? There are possibly other cases to consider
+            --  Formal_Typ is a private view, or Opnd_Typ and Formal_Typ are
+            --  compatible only on a base-type basis.
 
             else
                return False;
@@ -1734,6 +1768,37 @@ package body Sem_Type is
          end if;
       end Standard_Operator;
 
+      -----------------------------------------------
+      -- Is_User_Defined_Anonymous_Access_Equality --
+      -----------------------------------------------
+
+      function Is_User_Defined_Anonymous_Access_Equality
+        (User_Subp, Predef_Subp : Entity_Id) return Boolean is
+      begin
+         return Present (User_Subp)
+
+         --  Check for Ada 2005 and use of anonymous access
+
+           and then Ada_Version >= Ada_2005
+           and then Etype (User_Subp) = Standard_Boolean
+           and then Is_Anonymous_Access_Type (Operand_Type)
+
+         --  This check is only relevant if User_Subp is visible and not in
+         --  an instance
+
+           and then (In_Open_Scopes (Scope (User_Subp))
+                      or else Is_Potentially_Use_Visible (User_Subp))
+           and then not In_Instance
+           and then not Hides_Op (User_Subp, Predef_Subp)
+
+         --  Is User_Subp declared in the same declarative list as the type?
+
+           and then
+             In_Same_Declaration_List
+               (Designated_Type (Operand_Type),
+                Unit_Declaration_Node (User_Subp));
+      end Is_User_Defined_Anonymous_Access_Equality;
+
    --  Start of processing for Disambiguate
 
    begin
@@ -1754,26 +1819,42 @@ package body Sem_Type is
       It2  := It;
       Nam2 := It.Nam;
 
-      --  Check whether one of the entities is an Ada 2005/2012 and we are
-      --  operating in an earlier mode, in which case we discard the Ada
-      --  2005/2012 entity, so that we get proper Ada 95 overload resolution.
+      --  Check whether one of the entities is an Ada 2005/2012/2022 and we
+      --  are operating in an earlier mode, in which case we discard the Ada
+      --  2005/2012/2022 entity, so that we get proper Ada 95 overload
+      --  resolution.
 
       if Ada_Version < Ada_2005 then
-         if Is_Ada_2005_Only (Nam1) or else Is_Ada_2012_Only (Nam1) then
+         if Is_Ada_2005_Only (Nam1)
+           or else Is_Ada_2012_Only (Nam1)
+           or else Is_Ada_2022_Only (Nam1)
+         then
             return It2;
-         elsif Is_Ada_2005_Only (Nam2) or else Is_Ada_2012_Only (Nam1) then
+
+         elsif Is_Ada_2005_Only (Nam2)
+           or else Is_Ada_2012_Only (Nam2)
+           or else Is_Ada_2022_Only (Nam2)
+         then
             return It1;
          end if;
-      end if;
 
-      --  Check whether one of the entities is an Ada 2012 entity and we are
-      --  operating in Ada 2005 mode, in which case we discard the Ada 2012
-      --  entity, so that we get proper Ada 2005 overload resolution.
+      --  Check whether one of the entities is an Ada 2012/2022 entity and we
+      --  are operating in Ada 2005 mode, in which case we discard the Ada 2012
+      --  Ada 2022 entity, so that we get proper Ada 2005 overload resolution.
 
-      if Ada_Version = Ada_2005 then
-         if Is_Ada_2012_Only (Nam1) then
+      elsif Ada_Version = Ada_2005 then
+         if Is_Ada_2012_Only (Nam1) or else Is_Ada_2022_Only (Nam1) then
             return It2;
-         elsif Is_Ada_2012_Only (Nam2) then
+         elsif Is_Ada_2012_Only (Nam2) or else Is_Ada_2022_Only (Nam2) then
+            return It1;
+         end if;
+
+      --  Ditto for Ada 2012 vs Ada 2022.
+
+      elsif Ada_Version = Ada_2012 then
+         if Is_Ada_2022_Only (Nam1) then
+            return It2;
+         elsif Is_Ada_2022_Only (Nam2) then
             return It1;
          end if;
       end if;
@@ -1801,8 +1882,7 @@ package body Sem_Type is
             begin
                Get_First_Interp (N, I, It);
                while Present (It.Typ) loop
-                  if (It.Typ = Universal_Integer
-                       or else It.Typ = Universal_Real)
+                  if Is_Universal_Numeric_Type (It.Typ)
                     and then (Typ = Any_Type or else Covers (Typ, It.Typ))
                   then
                      return It;
@@ -1847,17 +1927,41 @@ package body Sem_Type is
                   Arg2 := Next_Actual (Arg1);
                end if;
 
-               if Present (Arg2)
-                 and then Present (Universal_Interpretation (Arg1))
-                 and then Universal_Interpretation (Arg2) =
-                          Universal_Interpretation (Arg1)
-               then
-                  Get_First_Interp (N, I, It);
-                  while Scope (It.Nam) /= Standard_Standard loop
-                     Get_Next_Interp (I, It);
-                  end loop;
+               if Present (Arg2) then
+                  if Ekind (Nam1) = E_Operator then
+                     Predef_Subp := Nam1;
+                     User_Subp   := Nam2;
+                  elsif Ekind (Nam2) = E_Operator then
+                     Predef_Subp := Nam2;
+                     User_Subp   := Nam1;
+                  else
+                     Predef_Subp := Empty;
+                     User_Subp   := Empty;
+                  end if;
 
-                  return It;
+                  --  Take into account universal interpretation as well as
+                  --  universal_access equality, as long as AI05-0020 does not
+                  --  trigger.
+
+                  if (Present (Universal_Interpretation (Arg1))
+                       and then Universal_Interpretation (Arg2) =
+                                Universal_Interpretation (Arg1))
+                    or else
+                      (Nkind (N) in N_Op_Eq | N_Op_Ne
+                        and then (Is_Anonymous_Access_Type (Etype (Arg1))
+                                    or else
+                                  Is_Anonymous_Access_Type (Etype (Arg2)))
+                        and then not
+                          Is_User_Defined_Anonymous_Access_Equality
+                            (User_Subp, Predef_Subp))
+                  then
+                     Get_First_Interp (N, I, It);
+                     while Scope (It.Nam) /= Standard_Standard loop
+                        Get_Next_Interp (I, It);
+                     end loop;
+
+                     return It;
+                  end if;
                end if;
             end;
          end if;
@@ -2108,20 +2212,11 @@ package body Sem_Type is
                   return It2;
                end if;
 
-            --  Ada 2005, AI-420: preference rule for "=" on Universal_Access
-            --  states that the operator defined in Standard is not available
-            --  if there is a user-defined equality with the proper signature,
-            --  declared in the same declarative list as the type. The node
-            --  may be an operator or a function call.
+            --  Check for AI05-020
 
             elsif Chars (Nam1) in Name_Op_Eq | Name_Op_Ne
-              and then Ada_Version >= Ada_2005
-              and then Etype (User_Subp) = Standard_Boolean
-              and then Is_Anonymous_Access_Type (Operand_Type)
-              and then
-                In_Same_Declaration_List
-                  (Designated_Type (Operand_Type),
-                   Unit_Declaration_Node (User_Subp))
+              and then Is_User_Defined_Anonymous_Access_Equality
+                         (User_Subp, Predef_Subp)
             then
                if It2.Nam = Predef_Subp then
                   return It1;
@@ -2160,16 +2255,6 @@ package body Sem_Type is
          end if;
       end if;
    end Disambiguate;
-
-   ---------------------
-   -- End_Interp_List --
-   ---------------------
-
-   procedure End_Interp_List is
-   begin
-      All_Interp.Table (All_Interp.Last) := No_Interp;
-      All_Interp.Increment_Last;
-   end End_Interp_List;
 
    -------------------------
    -- Entity_Matches_Spec --
@@ -2217,7 +2302,7 @@ package body Sem_Type is
                --  apply preference rule.
 
                if TR /= Any_Type then
-                  if (T = Universal_Integer or else T = Universal_Real)
+                  if Is_Universal_Numeric_Type (T)
                     and then It.Typ = T
                   then
                      TR := It.Typ;
@@ -2309,7 +2394,6 @@ package body Sem_Type is
       It : out Interp)
    is
       Int_Ind : Interp_Index;
-      Map_Ptr : Int;
       O_N     : Node_Id;
 
    begin
@@ -2327,21 +2411,16 @@ package body Sem_Type is
          O_N := N;
       end if;
 
-      Map_Ptr := Headers (Hash (O_N));
-      while Map_Ptr /= No_Entry loop
-         if Interp_Map.Table (Map_Ptr).Node = O_N then
-            Int_Ind := Interp_Map.Table (Map_Ptr).Index;
-            It := All_Interp.Table (Int_Ind);
-            I := Int_Ind;
-            return;
-         else
-            Map_Ptr := Interp_Map.Table (Map_Ptr).Next;
-         end if;
-      end loop;
+      Int_Ind := Interp_Map.Get (O_N);
 
       --  Procedure should never be called if the node has no interpretations
 
-      raise Program_Error;
+      if Int_Ind < 0 then
+         raise Program_Error;
+      end if;
+
+      I  := Int_Ind;
+      It := All_Interp.Table (Int_Ind);
    end Get_First_Interp;
 
    ---------------------
@@ -2474,12 +2553,9 @@ package body Sem_Type is
    -- Hash --
    ----------
 
-   function Hash (N : Node_Id) return Int is
+   function Hash (N : Node_Id) return Header_Num is
    begin
-      --  Nodes have a size that is power of two, so to select significant
-      --  bits only we remove the low-order bits.
-
-      return ((Int (N) / 2 ** 5) mod Header_Size);
+      return Header_Num (N mod Header_Max);
    end Hash;
 
    --------------
@@ -2504,8 +2580,7 @@ package body Sem_Type is
    procedure Init_Interp_Tables is
    begin
       All_Interp.Init;
-      Interp_Map.Init;
-      Headers := (others => No_Entry);
+      Interp_Map.Reset;
    end Init_Interp_Tables;
 
    -----------------------------------
@@ -3023,47 +3098,12 @@ package body Sem_Type is
    -----------------
 
    procedure New_Interps (N : Node_Id) is
-      Map_Ptr : Int;
-
    begin
       All_Interp.Append (No_Interp);
 
-      Map_Ptr := Headers (Hash (N));
-
-      if Map_Ptr = No_Entry then
-
-         --  Place new node at end of table
-
-         Interp_Map.Increment_Last;
-         Headers (Hash (N)) := Interp_Map.Last;
-
-      else
-         --   Place node at end of chain, or locate its previous entry
-
-         loop
-            if Interp_Map.Table (Map_Ptr).Node = N then
-
-               --  Node is already in the table, and is being rewritten.
-               --  Start a new interp section, retain hash link.
-
-               Interp_Map.Table (Map_Ptr).Node  := N;
-               Interp_Map.Table (Map_Ptr).Index := All_Interp.Last;
-               Set_Is_Overloaded (N, True);
-               return;
-
-            else
-               exit when Interp_Map.Table (Map_Ptr).Next = No_Entry;
-               Map_Ptr := Interp_Map.Table (Map_Ptr).Next;
-            end if;
-         end loop;
-
-         --  Chain the new node
-
-         Interp_Map.Increment_Last;
-         Interp_Map.Table (Map_Ptr).Next := Interp_Map.Last;
-      end if;
-
-      Interp_Map.Table (Interp_Map.Last) := (N, All_Interp.Last, No_Entry);
+      --  Add or rewrite the existing node
+      Last_Overloaded := N;
+      Interp_Map.Set (N, All_Interp.Last);
       Set_Is_Overloaded (N, True);
    end New_Interps;
 
@@ -3248,8 +3288,8 @@ package body Sem_Type is
    ------------------
 
    procedure Save_Interps (Old_N : Node_Id; New_N : Node_Id) is
-      Map_Ptr : Int;
-      O_N     : Node_Id := Old_N;
+      Old_Ind : Interp_Index;
+      O_N     : Node_Id;
 
    begin
       if Is_Overloaded (Old_N) then
@@ -3259,18 +3299,15 @@ package body Sem_Type is
            and then Is_Overloaded (Selector_Name (Old_N))
          then
             O_N := Selector_Name (Old_N);
+         else
+            O_N := Old_N;
          end if;
 
-         Map_Ptr := Headers (Hash (O_N));
-
-         while Interp_Map.Table (Map_Ptr).Node /= O_N loop
-            Map_Ptr := Interp_Map.Table (Map_Ptr).Next;
-            pragma Assert (Map_Ptr /= No_Entry);
-         end loop;
+         Old_Ind := Interp_Map.Get (O_N);
+         pragma Assert (Old_Ind >= 0);
 
          New_Interps (New_N);
-         Interp_Map.Table (Interp_Map.Last).Index :=
-           Interp_Map.Table (Map_Ptr).Index;
+         Interp_Map.Set (New_N, Old_Ind);
       end if;
    end Save_Interps;
 
@@ -3387,7 +3424,8 @@ package body Sem_Type is
       --  Ada 2005 (AI-251): T1 is a concrete type that implements the
       --  class-wide interface T2
 
-      elsif Is_Class_Wide_Type (T2)
+      elsif Is_Tagged_Type (T1)
+        and then Is_Class_Wide_Type (T2)
         and then Is_Interface (Etype (T2))
         and then Interface_Present_In_Ancestor (Typ   => T1,
                                                 Iface => Etype (T2))
@@ -3574,21 +3612,6 @@ package body Sem_Type is
       Write_Str ("Abstract_Op: ");
       Print_Tree_Node (It.Abstract_Op);
    end Write_Interp;
-
-   ----------------------
-   -- Write_Interp_Ref --
-   ----------------------
-
-   procedure Write_Interp_Ref (Map_Ptr : Int) is
-   begin
-      Write_Str (" Node:  ");
-      Write_Int (Int (Interp_Map.Table (Map_Ptr).Node));
-      Write_Str (" Index: ");
-      Write_Int (Int (Interp_Map.Table (Map_Ptr).Index));
-      Write_Str (" Next:  ");
-      Write_Int (Interp_Map.Table (Map_Ptr).Next);
-      Write_Eol;
-   end Write_Interp_Ref;
 
    ---------------------
    -- Write_Overloads --

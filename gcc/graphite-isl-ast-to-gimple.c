@@ -1,5 +1,5 @@
 /* Translation of isl AST to Gimple.
-   Copyright (C) 2014-2020 Free Software Foundation, Inc.
+   Copyright (C) 2014-2021 Free Software Foundation, Inc.
    Contributed by Roman Gareev <gareevroman@gmail.com>.
 
 This file is part of GCC.
@@ -808,7 +808,7 @@ translate_isl_ast_node_user (__isl_keep isl_ast_node *node,
   const int nb_loops = number_of_loops (cfun);
   vec<tree> iv_map;
   iv_map.create (nb_loops);
-  iv_map.safe_grow_cleared (nb_loops);
+  iv_map.safe_grow_cleared (nb_loops, true);
 
   build_iv_mapping (iv_map, gbb, user_expr, ip, pbb->scop->scop_info->region);
   isl_ast_expr_free (user_expr);
@@ -1535,9 +1535,8 @@ graphite_regenerate_ast_isl (scop_p scop)
       if_region->false_region->region.entry->flags |= EDGE_FALLTHRU;
       /* remove_edge_and_dominated_blocks marks loops for removal but
 	 doesn't actually remove them (fix that...).  */
-      loop_p loop;
-      FOR_EACH_LOOP (loop, LI_FROM_INNERMOST)
-	if (! loop->header)
+      for (auto loop : loops_list (cfun, LI_FROM_INNERMOST))
+	if (!loop->header)
 	  delete_loop (loop);
     }
 

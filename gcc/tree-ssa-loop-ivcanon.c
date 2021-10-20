@@ -1,5 +1,5 @@
 /* Induction variable canonicalization and loop peeling.
-   Copyright (C) 2004-2020 Free Software Foundation, Inc.
+   Copyright (C) 2004-2021 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -218,7 +218,7 @@ tree_estimate_loop_size (class loop *loop, edge exit, edge edge_to_cancel,
   gimple_stmt_iterator gsi;
   unsigned int i;
   bool after_exit;
-  vec<basic_block> path = get_loop_hot_path (loop);
+  auto_vec<basic_block> path = get_loop_hot_path (loop);
 
   size->overall = 0;
   size->eliminated_by_peeling = 0;
@@ -342,7 +342,6 @@ tree_estimate_loop_size (class loop *loop, edge exit, edge edge_to_cancel,
 	      - size->last_iteration_eliminated_by_peeling) > upper_bound)
 	    {
               free (body);
-	      path.release ();
 	      return true;
 	    }
 	}
@@ -379,7 +378,7 @@ tree_estimate_loop_size (class loop *loop, edge exit, edge edge_to_cancel,
 	    size->num_branches_on_hot_path++;
 	}
     }
-  path.release ();
+
   if (dump_file && (dump_flags & TDF_DETAILS))
     fprintf (dump_file, "size: %i-%i, last_iteration: %i-%i\n", size->overall,
     	     size->eliminated_by_peeling, size->last_iteration,
@@ -444,7 +443,6 @@ estimated_unrolled_size (struct loop_size *size,
 static edge
 loop_edge_to_cancel (class loop *loop)
 {
-  vec<edge> exits;
   unsigned i;
   edge edge_to_cancel;
   gimple_stmt_iterator gsi;
@@ -453,7 +451,7 @@ loop_edge_to_cancel (class loop *loop)
   if (EDGE_COUNT (loop->latch->preds) > 1)
     return NULL;
 
-  exits = get_loop_exit_edges (loop);
+  auto_vec<edge> exits = get_loop_exit_edges (loop);
 
   FOR_EACH_VEC_ELT (exits, i, edge_to_cancel)
     {
@@ -477,8 +475,6 @@ loop_edge_to_cancel (class loop *loop)
       if (edge_to_cancel->dest != loop->latch)
         continue;
 
-      exits.release ();
-
       /* Verify that the code in loop latch does nothing that may end program
          execution without really reaching the exit.  This may include
 	 non-pure/const function calls, EH statements, volatile ASMs etc.  */
@@ -487,7 +483,6 @@ loop_edge_to_cancel (class loop *loop)
 	   return NULL;
       return edge_to_cancel;
     }
-  exits.release ();
   return NULL;
 }
 
@@ -1222,10 +1217,9 @@ canonicalize_loop_induction_variables (class loop *loop,
      by find_loop_niter_by_eval.  Be sure to keep it for future.  */
   if (niter && TREE_CODE (niter) == INTEGER_CST)
     {
-      vec<edge> exits = get_loop_exit_edges  (loop);
+      auto_vec<edge> exits = get_loop_exit_edges  (loop);
       record_niter_bound (loop, wi::to_widest (niter),
 			  exit == single_likely_exit (loop, exits), true);
-      exits.release ();
     }
 
   /* Force re-computation of loop bounds so we can remove redundant exits.  */
@@ -1291,14 +1285,13 @@ canonicalize_loop_induction_variables (class loop *loop,
 unsigned int
 canonicalize_induction_variables (void)
 {
-  class loop *loop;
   bool changed = false;
   bool irred_invalidated = false;
   bitmap loop_closed_ssa_invalidated = BITMAP_ALLOC (NULL);
 
   estimate_numbers_of_iterations (cfun);
 
-  FOR_EACH_LOOP (loop, LI_FROM_INNERMOST)
+  for (auto loop : loops_list (cfun, LI_FROM_INNERMOST))
     {
       changed |= canonicalize_loop_induction_variables (loop,
 							true, UL_SINGLE_ITER,
@@ -1411,6 +1404,9 @@ tree_unroll_loops_completely_1 (bool may_increase_size, bool unroll_outer,
 	  bitmap_clear (father_bbs);
 	  bitmap_set_bit (father_bbs, loop_father->header->index);
 	}
+      else if (unroll_outer)
+	/* Trigger scalar cleanup once any outermost loop gets unrolled.  */
+	cfun->pending_TODOs |= PENDING_TODO_force_next_scalar_cleanup;
 
       return true;
     }

@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2020, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2021, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -28,46 +28,50 @@
 --  handling of private and full declarations, and the construction of dispatch
 --  tables for tagged types.
 
-with Aspects;   use Aspects;
-with Atree;     use Atree;
-with Contracts; use Contracts;
-with Debug;     use Debug;
-with Einfo;     use Einfo;
-with Elists;    use Elists;
-with Errout;    use Errout;
-with Exp_Disp;  use Exp_Disp;
-with Exp_Dist;  use Exp_Dist;
-with Exp_Dbug;  use Exp_Dbug;
-with Freeze;    use Freeze;
-with Ghost;     use Ghost;
-with Lib;       use Lib;
-with Lib.Xref;  use Lib.Xref;
-with Namet;     use Namet;
-with Nmake;     use Nmake;
-with Nlists;    use Nlists;
-with Opt;       use Opt;
-with Output;    use Output;
-with Rtsfind;   use Rtsfind;
-with Sem;       use Sem;
-with Sem_Aux;   use Sem_Aux;
-with Sem_Cat;   use Sem_Cat;
-with Sem_Ch3;   use Sem_Ch3;
-with Sem_Ch6;   use Sem_Ch6;
-with Sem_Ch8;   use Sem_Ch8;
-with Sem_Ch10;  use Sem_Ch10;
-with Sem_Ch12;  use Sem_Ch12;
-with Sem_Ch13;  use Sem_Ch13;
-with Sem_Disp;  use Sem_Disp;
-with Sem_Eval;  use Sem_Eval;
-with Sem_Prag;  use Sem_Prag;
-with Sem_Util;  use Sem_Util;
-with Sem_Warn;  use Sem_Warn;
-with Snames;    use Snames;
-with Stand;     use Stand;
-with Sinfo;     use Sinfo;
-with Sinput;    use Sinput;
+with Aspects;        use Aspects;
+with Atree;          use Atree;
+with Contracts;      use Contracts;
+with Debug;          use Debug;
+with Einfo;          use Einfo;
+with Einfo.Entities; use Einfo.Entities;
+with Einfo.Utils;    use Einfo.Utils;
+with Elists;         use Elists;
+with Errout;         use Errout;
+with Exp_Disp;       use Exp_Disp;
+with Exp_Dist;       use Exp_Dist;
+with Exp_Dbug;       use Exp_Dbug;
+with Freeze;         use Freeze;
+with Ghost;          use Ghost;
+with Lib;            use Lib;
+with Lib.Xref;       use Lib.Xref;
+with Namet;          use Namet;
+with Nmake;          use Nmake;
+with Nlists;         use Nlists;
+with Opt;            use Opt;
+with Output;         use Output;
+with Rtsfind;        use Rtsfind;
+with Sem;            use Sem;
+with Sem_Aux;        use Sem_Aux;
+with Sem_Cat;        use Sem_Cat;
+with Sem_Ch3;        use Sem_Ch3;
+with Sem_Ch6;        use Sem_Ch6;
+with Sem_Ch8;        use Sem_Ch8;
+with Sem_Ch10;       use Sem_Ch10;
+with Sem_Ch12;       use Sem_Ch12;
+with Sem_Ch13;       use Sem_Ch13;
+with Sem_Disp;       use Sem_Disp;
+with Sem_Eval;       use Sem_Eval;
+with Sem_Prag;       use Sem_Prag;
+with Sem_Util;       use Sem_Util;
+with Sem_Warn;       use Sem_Warn;
+with Snames;         use Snames;
+with Stand;          use Stand;
+with Sinfo;          use Sinfo;
+with Sinfo.Nodes;    use Sinfo.Nodes;
+with Sinfo.Utils;    use Sinfo.Utils;
+with Sinput;         use Sinput;
 with Style;
-with Uintp;     use Uintp;
+with Uintp;          use Uintp;
 
 with GNAT.HTable;
 
@@ -839,7 +843,7 @@ package body Sem_Ch7 is
          --  unannotated body will be used in all instantiations.
 
          Body_Id := Defining_Entity (N);
-         Set_Ekind (Body_Id, E_Package_Body);
+         Mutate_Ekind (Body_Id, E_Package_Body);
          Set_Scope (Body_Id, Scope (Spec_Id));
          Set_Is_Obsolescent (Body_Id, Is_Obsolescent (Spec_Id));
          Set_Body_Entity (Spec_Id, Body_Id);
@@ -871,7 +875,7 @@ package body Sem_Ch7 is
       --  current node otherwise. Note that N was rewritten above, so we must
       --  be sure to get the latest Body_Id value.
 
-      Set_Ekind (Body_Id, E_Package_Body);
+      Mutate_Ekind (Body_Id, E_Package_Body);
       Set_Body_Entity (Spec_Id, Body_Id);
       Set_Spec_Entity (Body_Id, Spec_Id);
 
@@ -1157,7 +1161,7 @@ package body Sem_Ch7 is
 
       Generate_Definition (Id);
       Enter_Name (Id);
-      Set_Ekind  (Id, E_Package);
+      Mutate_Ekind  (Id, E_Package);
       Set_Etype  (Id, Standard_Void_Type);
 
       --  Set SPARK_Mode from context
@@ -1764,14 +1768,34 @@ package body Sem_Ch7 is
          end if;
 
          --  Check preelaborable initialization for full type completing a
-         --  private type for which pragma Preelaborable_Initialization given.
+         --  private type when aspect Preelaborable_Initialization is True
+         --  or is specified by Preelaborable_Initialization attributes
+         --  (in the case of a private type in a generic unit). We pass
+         --  the expression of the aspect (when present) to the parameter
+         --  Preelab_Init_Expr to take into account the rule that presumes
+         --  that subcomponents of generic formal types mentioned in the
+         --  type's P_I aspect have preelaborable initialization (see
+         --  AI12-0409 and RM 10.2.1(11.8/5)).
 
-         if Is_Type (E)
-           and then Must_Have_Preelab_Init (E)
-           and then not Has_Preelaborable_Initialization (E)
-         then
-            Error_Msg_N
-              ("full view of & does not have preelaborable initialization", E);
+         if Is_Type (E) and then Must_Have_Preelab_Init (E) then
+            declare
+               PI_Aspect : constant Node_Id :=
+                             Find_Aspect
+                               (E, Aspect_Preelaborable_Initialization);
+               PI_Expr   : Node_Id := Empty;
+            begin
+               if Present (PI_Aspect) then
+                  PI_Expr := Expression (PI_Aspect);
+               end if;
+
+               if not Has_Preelaborable_Initialization
+                        (E, Preelab_Init_Expr => PI_Expr)
+               then
+                  Error_Msg_N
+                    ("full view of & does not have "
+                     & "preelaborable initialization", E);
+               end if;
+            end;
          end if;
 
          Next_Entity (E);
@@ -1887,7 +1911,7 @@ package body Sem_Ch7 is
    begin
       Generate_Definition (Id);
       Set_Is_Pure         (Id, PF);
-      Init_Size_Align     (Id);
+      Reinit_Size_Align   (Id);
 
       if not Is_Package_Or_Generic_Package (Current_Scope)
         or else In_Private_Part (Current_Scope)
@@ -2057,6 +2081,8 @@ package body Sem_Ch7 is
                            Replace_Elmt (Op_Elmt, New_Op);
                            Remove_Elmt  (Op_List, Op_Elmt_2);
                            Set_Overridden_Operation (New_Op, Parent_Subp);
+                           Set_Is_Ada_2022_Only     (New_Op,
+                             Is_Ada_2022_Only (Parent_Subp));
 
                            --  We don't need to inherit its dispatching slot.
                            --  Set_All_DT_Position has previously ensured that
@@ -2554,15 +2580,15 @@ package body Sem_Ch7 is
       end if;
 
       if Limited_Present (Def) then
-         Set_Ekind (Id, E_Limited_Private_Type);
+         Mutate_Ekind (Id, E_Limited_Private_Type);
       else
-         Set_Ekind (Id, E_Private_Type);
+         Mutate_Ekind (Id, E_Private_Type);
       end if;
 
       Set_Etype              (Id, Id);
       Set_Has_Delayed_Freeze (Id);
       Set_Is_First_Subtype   (Id);
-      Init_Size_Align        (Id);
+      Reinit_Size_Align      (Id);
 
       Set_Is_Constrained (Id,
         No (Discriminant_Specifications (N))
@@ -2588,7 +2614,7 @@ package body Sem_Ch7 is
       Set_Private_Dependents (Id, New_Elmt_List);
 
       if Tagged_Present (Def) then
-         Set_Ekind                       (Id, E_Record_Type_With_Private);
+         Mutate_Ekind                    (Id, E_Record_Type_With_Private);
          Set_Direct_Primitive_Operations (Id, New_Elmt_List);
          Set_Is_Abstract_Type            (Id, Abstract_Present (Def));
          Set_Is_Limited_Record           (Id, Limited_Present (Def));
@@ -2606,6 +2632,15 @@ package body Sem_Ch7 is
 
       elsif Abstract_Present (Def) then
          Error_Msg_N ("only a tagged type can be abstract", N);
+
+      --  When extensions are enabled, we initialize the primitive operations
+      --  list of an untagged private type to an empty element list. (Note:
+      --  This could be done for all private types and shared with the tagged
+      --  case above, but for now we do it separately when the feature of
+      --  prefixed calls for untagged types is enabled.)
+
+      elsif Extensions_Allowed then
+         Set_Direct_Primitive_Operations (Id, New_Elmt_List);
       end if;
    end New_Private_Type;
 
@@ -2713,22 +2748,24 @@ package body Sem_Ch7 is
 
       begin
          Set_Size_Info               (Priv,                             Full);
-         Set_RM_Size                 (Priv, RM_Size                    (Full));
+         Copy_RM_Size                (To => Priv, From => Full);
          Set_Size_Known_At_Compile_Time
                                      (Priv, Size_Known_At_Compile_Time (Full));
          Set_Is_Volatile             (Priv, Is_Volatile                (Full));
          Set_Treat_As_Volatile       (Priv, Treat_As_Volatile          (Full));
+         Set_Is_Atomic               (Priv, Is_Atomic                  (Full));
          Set_Is_Ada_2005_Only        (Priv, Is_Ada_2005_Only           (Full));
          Set_Is_Ada_2012_Only        (Priv, Is_Ada_2012_Only           (Full));
+         Set_Is_Ada_2022_Only        (Priv, Is_Ada_2022_Only           (Full));
          Set_Has_Pragma_Unmodified   (Priv, Has_Pragma_Unmodified      (Full));
          Set_Has_Pragma_Unreferenced (Priv, Has_Pragma_Unreferenced    (Full));
          Set_Has_Pragma_Unreferenced_Objects
                                      (Priv, Has_Pragma_Unreferenced_Objects
                                                                        (Full));
+         Set_Predicates_Ignored      (Priv, Predicates_Ignored         (Full));
          if Is_Unchecked_Union (Full) then
             Set_Is_Unchecked_Union (Base_Type (Priv));
          end if;
-         --  Why is atomic not copied here ???
 
          if Referenced (Full) then
             Set_Referenced (Priv);
@@ -2922,6 +2959,11 @@ package body Sem_Ch7 is
                else
                   Set_Is_Potentially_Use_Visible (Id);
                end if;
+
+            --  Avoid crash caused by previous errors
+
+            elsif No (Etype (Id)) and then Serious_Errors_Detected /= 0 then
+               null;
 
             --  We need to avoid incorrectly marking enumeration literals as
             --  non-visible when a visible use-all-type clause is in effect.
@@ -3183,6 +3225,25 @@ package body Sem_Ch7 is
                   Next_Elmt (Elmt);
                end loop;
             end;
+
+         --  For subtypes of private types the frontend generates two entities:
+         --  one associated with the partial view and the other associated with
+         --  the full view. When the subtype declaration is public the frontend
+         --  places the former entity in the list of public entities of the
+         --  package and the latter entity in the private part of the package.
+         --  When the subtype declaration is private it generates these two
+         --  entities but both are placed in the private part of the package
+         --  (and the full view has the same source location as the partial
+         --  view and no parent; see Prepare_Private_Subtype_Completion).
+
+         elsif Ekind (Id) in E_Private_Subtype
+                           | E_Limited_Private_Subtype
+           and then Present (Full_View (Id))
+           and then Sloc (Id) = Sloc (Full_View (Id))
+           and then No (Parent (Full_View (Id)))
+         then
+            Set_Is_Hidden (Id);
+            Set_Is_Potentially_Use_Visible (Id, False);
 
          elsif not Is_Child_Unit (Id)
            and then (not Is_Private_Type (Id) or else No (Full_View (Id)))

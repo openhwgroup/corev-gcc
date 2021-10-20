@@ -497,6 +497,9 @@ Import::read_one_import()
   p->set_package_name(package_name, this->location());
 
   this->packages_.push_back(p);
+
+  if (pkgpath == "unsafe")
+    this->gogo_->add_unsafe_bindings(p);
 }
 
 // Read an indirectimport line.
@@ -515,6 +518,9 @@ Import::read_one_indirect_import()
   p->set_package_name(package_name, this->location());
 
   this->packages_.push_back(p);
+
+  if (pkgpath == "unsafe")
+    this->gogo_->add_unsafe_bindings(p);
 }
 
 // Read the list of import control functions and/or init graph.
@@ -1049,6 +1055,13 @@ Import::read_named_type(int index)
       this->require_c_string(" ");
     }
 
+  bool in_heap = true;
+  if (this->match_c_string("notinheap"))
+    {
+      this->require_c_string("notinheap ");
+      in_heap = false;
+    }
+
   bool is_alias = false;
   if (this->match_c_string("= "))
     {
@@ -1102,7 +1115,14 @@ Import::read_named_type(int index)
   // declaration of a type defined in some other file.
   Type* type;
   if (this->match_c_string(">") || this->match_c_string("\n"))
-    type = this->types_[index];
+    {
+      type = this->types_[index];
+      if (!in_heap)
+	go_error_at(this->location_,
+		    ("import error at %d for type index %d: "
+		     "forward declaration marked notinheap"),
+		    this->pos(), index);
+    }
   else
     {
       if (no->is_type_declaration())
@@ -1117,6 +1137,8 @@ Import::read_named_type(int index)
 	  // This type has not yet been imported.
 	  ntype->clear_is_visible();
 
+	  if (!in_heap)
+	    ntype->set_not_in_heap();
 	  if (is_alias)
 	    ntype->set_is_alias();
 
@@ -1375,8 +1397,8 @@ Import::read_name()
 
 // Read LENGTH bytes from the stream.
 
-std::string
-Import::read(size_t length)
+void
+Import::read(size_t length, std::string* out)
 {
   const char* data;
   if (!this->stream_->peek(length, &data))
@@ -1385,10 +1407,11 @@ Import::read(size_t length)
 	go_error_at(this->location_, "import error at %d: expected %d bytes",
 		    this->stream_->pos(), static_cast<int>(length));
       this->stream_->set_saw_error();
-      return "";
+      *out = std::string("");
+      return;
     }
+  *out = std::string(data, length);
   this->advance(length);
-  return std::string(data, length);
 }
 
 // Turn a string into a integer with appropriate error handling.
@@ -1487,7 +1510,7 @@ Stream_from_file::~Stream_from_file()
 bool
 Stream_from_file::do_peek(size_t length, const char** bytes)
 {
-  if (this->data_.length() <= length)
+  if (this->data_.length() >= length)
     {
       *bytes = this->data_.data();
       return true;
@@ -1504,7 +1527,7 @@ Stream_from_file::do_peek(size_t length, const char** bytes)
       return false;
     }
 
-  if (lseek(this->fd_, - got, SEEK_CUR) != 0)
+  if (lseek(this->fd_, - got, SEEK_CUR) < 0)
     {
       if (!this->saw_error())
 	go_fatal_error(Linemap::unknown_location(), "lseek failed: %m");
@@ -1524,7 +1547,7 @@ Stream_from_file::do_peek(size_t length, const char** bytes)
 void
 Stream_from_file::do_advance(size_t skip)
 {
-  if (lseek(this->fd_, skip, SEEK_CUR) != 0)
+  if (lseek(this->fd_, skip, SEEK_CUR) < 0)
     {
       if (!this->saw_error())
 	go_fatal_error(Linemap::unknown_location(), "lseek failed: %m");
@@ -1532,7 +1555,7 @@ Stream_from_file::do_advance(size_t skip)
     }
   if (!this->data_.empty())
     {
-      if (this->data_.length() < skip)
+      if (this->data_.length() > skip)
 	this->data_.erase(0, skip);
       else
 	this->data_.clear();

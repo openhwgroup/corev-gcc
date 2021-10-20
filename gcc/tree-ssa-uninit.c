@@ -1,5 +1,5 @@
 /* Predicate aware uninitialized variable warning.
-   Copyright (C) 2001-2020 Free Software Foundation, Inc.
+   Copyright (C) 2001-2021 Free Software Foundation, Inc.
    Contributed by Xinliang David Li <davidxl@google.com>
 
 This file is part of GCC.
@@ -18,6 +18,7 @@ You should have received a copy of the GNU General Public License
 along with GCC; see the file COPYING3.  If not see
 <http://www.gnu.org/licenses/>.  */
 
+#define INCLUDE_STRING
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
@@ -36,6 +37,9 @@ along with GCC; see the file COPYING3.  If not see
 #include "attribs.h"
 #include "builtins.h"
 #include "calls.h"
+#include "gimple-range.h"
+
+#include "gimple-predicate-analysis.h"
 
 /* This implements the pass that does predicate aware warning on uses of
    possibly uninitialized variables.  The pass first collects the set of
@@ -47,18 +51,10 @@ along with GCC; see the file COPYING3.  If not see
    default definitions or by checking if the predicate set that guards the
    defining paths is a superset of the use predicate.  */
 
-/* Max PHI args we can handle in pass.  */
-const unsigned max_phi_args = 32;
-
 /* Pointer set of potentially undefined ssa names, i.e.,
    ssa names that are defined by phi with operands that
    are not defined or potentially undefined.  */
 static hash_set<tree> *possibly_undefined_names = 0;
-
-/* Bit mask handling macros.  */
-#define MASK_SET_BIT(mask, pos) mask |= (1 << pos)
-#define MASK_TEST_BIT(mask, pos) (mask & (1 << pos))
-#define MASK_EMPTY(mask) (mask == 0)
 
 /* Returns the first bit position (starting from LSB)
    in mask that is non zero.  Returns -1 if the mask is empty.  */
@@ -85,17 +81,33 @@ has_undefined_value_p (tree t)
 	      && possibly_undefined_names->contains (t)));
 }
 
-/* Like has_undefined_value_p, but don't return true if TREE_NO_WARNING
-   is set on SSA_NAME_VAR.  */
+/* Return true if EXPR should suppress either uninitialized warning.  */
+
+static inline bool
+get_no_uninit_warning (tree expr)
+{
+  return warning_suppressed_p (expr, OPT_Wuninitialized);
+}
+
+/* Suppress both uninitialized warnings for EXPR.  */
+
+static inline void
+set_no_uninit_warning (tree expr)
+{
+  suppress_warning (expr, OPT_Wuninitialized);
+}
+
+/* Like has_undefined_value_p, but don't return true if the no-warning
+   bit is set on SSA_NAME_VAR for either uninit warning.  */
 
 static inline bool
 uninit_undefined_value_p (tree t)
 {
   if (!has_undefined_value_p (t))
     return false;
-  if (SSA_NAME_VAR (t) && TREE_NO_WARNING (SSA_NAME_VAR (t)))
-    return false;
-  return true;
+  if (!SSA_NAME_VAR (t))
+    return true;
+  return !get_no_uninit_warning (SSA_NAME_VAR (t));
 }
 
 /* Emit warnings for uninitialized variables.  This is done in two passes.
@@ -113,20 +125,19 @@ uninit_undefined_value_p (tree t)
    again for plain uninitialized variables, since optimization may have
    changed conditionally uninitialized to unconditionally uninitialized.  */
 
-/* Emit a warning for EXPR based on variable VAR at the point in the
-   program T, an SSA_NAME, is used being uninitialized.  The exact
-   warning text is in MSGID and DATA is the gimple stmt with info about
-   the location in source code.  When DATA is a GIMPLE_PHI, PHIARG_IDX
-   gives which argument of the phi node to take the location from.  WC
-   is the warning code.  */
+/* Emit warning OPT for variable VAR at the point in the program where
+   the SSA_NAME T is being used uninitialized.  The warning text is in
+   MSGID and STMT is the statement that does the uninitialized read.
+   PHI_ARG_LOC is the location of the PHI argument if T and VAR are one,
+   or UNKNOWN_LOCATION otherwise.  */
 
 static void
-warn_uninit (enum opt_code wc, tree t, tree expr, tree var,
-	     const char *gmsgid, void *data, location_t phiarg_loc)
+warn_uninit (opt_code opt, tree t, tree var, const char *gmsgid,
+	     gimple *context, location_t phi_arg_loc = UNKNOWN_LOCATION)
 {
-  gimple *context = (gimple *) data;
-  location_t location, cfun_loc;
-  expanded_location xloc, floc;
+  /* Bail if the value isn't provably uninitialized.  */
+  if (!has_undefined_value_p (t))
+    return;
 
   /* Ignore COMPLEX_EXPR as initializing only a part of a complex
      turns in a COMPLEX_EXPR with the not initialized part being
@@ -134,65 +145,98 @@ warn_uninit (enum opt_code wc, tree t, tree expr, tree var,
   if (is_gimple_assign (context)
       && gimple_assign_rhs_code (context) == COMPLEX_EXPR)
     return;
-  if (!has_undefined_value_p (t))
-    return;
+
+  /* Ignore REALPART_EXPR or IMAGPART_EXPR if its operand is a call to
+     .DEFERRED_INIT.  This is for handling the following case correctly:
+
+  1 typedef _Complex float C;
+  2 C foo (int cond)
+  3 {
+  4   C f;
+  5   __imag__ f = 0;
+  6   if (cond)
+  7     {
+  8       __real__ f = 1;
+  9       return f;
+ 10     }
+ 11   return f;
+ 12 }
+
+    with -ftrivial-auto-var-init, compiler will insert the following
+    artificial initialization at line 4:
+  f = .DEFERRED_INIT (f, 2);
+  _1 = REALPART_EXPR <f>;
+
+    without the following special handling, _1 = REALPART_EXPR <f> will
+    be treated as the uninitialized use point, which is incorrect. (the
+    real uninitialized use point is at line 11).  */
+  if (is_gimple_assign (context)
+      && (gimple_assign_rhs_code (context) == REALPART_EXPR
+	  || gimple_assign_rhs_code (context) == IMAGPART_EXPR))
+    {
+      tree v = gimple_assign_rhs1 (context);
+      if (TREE_CODE (TREE_OPERAND (v, 0)) == SSA_NAME
+	  && gimple_call_internal_p (SSA_NAME_DEF_STMT (TREE_OPERAND (v, 0)),
+				     IFN_DEFERRED_INIT))
+	return;
+    }
 
   /* Anonymous SSA_NAMEs shouldn't be uninitialized, but ssa_undefined_value_p
-     can return true if the def stmt of anonymous SSA_NAME is COMPLEX_EXPR
+     can return true if the def stmt of an anonymous SSA_NAME is COMPLEX_EXPR
      created for conversion from scalar to complex.  Use the underlying var of
      the COMPLEX_EXPRs real part in that case.  See PR71581.  */
-  if (expr == NULL_TREE
-      && var == NULL_TREE
-      && SSA_NAME_VAR (t) == NULL_TREE
-      && is_gimple_assign (SSA_NAME_DEF_STMT (t))
-      && gimple_assign_rhs_code (SSA_NAME_DEF_STMT (t)) == COMPLEX_EXPR)
+  if (!var && !SSA_NAME_VAR (t))
     {
-      tree v = gimple_assign_rhs1 (SSA_NAME_DEF_STMT (t));
-      if (TREE_CODE (v) == SSA_NAME
-	  && has_undefined_value_p (v)
-	  && zerop (gimple_assign_rhs2 (SSA_NAME_DEF_STMT (t))))
+      gimple *def_stmt = SSA_NAME_DEF_STMT (t);
+      if (is_gimple_assign (def_stmt)
+	  && gimple_assign_rhs_code (def_stmt) == COMPLEX_EXPR)
 	{
-	  expr = SSA_NAME_VAR (v);
-	  var = expr;
+	  tree v = gimple_assign_rhs1 (def_stmt);
+	  if (TREE_CODE (v) == SSA_NAME
+	      && has_undefined_value_p (v)
+	      && zerop (gimple_assign_rhs2 (def_stmt)))
+	    var = SSA_NAME_VAR (v);
 	}
     }
 
-  if (expr == NULL_TREE)
+  if (var == NULL_TREE)
     return;
 
-  /* TREE_NO_WARNING either means we already warned, or the front end
-     wishes to suppress the warning.  */
-  if ((context
-       && (gimple_no_warning_p (context)
-	   || (gimple_assign_single_p (context)
-	       && TREE_NO_WARNING (gimple_assign_rhs1 (context)))))
-      || TREE_NO_WARNING (expr))
+  /* Avoid warning if we've already done so or if the warning has been
+     suppressed.  */
+  if (((warning_suppressed_p (context, OPT_Wuninitialized)
+	|| (gimple_assign_single_p (context)
+	    && get_no_uninit_warning (gimple_assign_rhs1 (context)))))
+      || get_no_uninit_warning (var))
     return;
 
-  if (context != NULL && gimple_has_location (context))
+  /* Use either the location of the read statement or that of the PHI
+     argument, or that of the uninitialized variable, in that order,
+     whichever is valid.  */
+  location_t location;
+  if (gimple_has_location (context))
     location = gimple_location (context);
-  else if (phiarg_loc != UNKNOWN_LOCATION)
-    location = phiarg_loc;
+  else if (phi_arg_loc != UNKNOWN_LOCATION)
+    location = phi_arg_loc;
   else
     location = DECL_SOURCE_LOCATION (var);
   location = linemap_resolve_location (line_table, location,
 				       LRK_SPELLING_LOCATION, NULL);
-  cfun_loc = DECL_SOURCE_LOCATION (cfun->decl);
-  xloc = expand_location (location);
-  floc = expand_location (cfun_loc);
-  auto_diagnostic_group d;
-  if (warning_at (location, wc, gmsgid, expr))
-    {
-      TREE_NO_WARNING (expr) = 1;
 
-      if (location == DECL_SOURCE_LOCATION (var))
-	return;
-      if (xloc.file != floc.file
-	  || linemap_location_before_p (line_table, location, cfun_loc)
-	  || linemap_location_before_p (line_table, cfun->function_end_locus,
-					location))
-	inform (DECL_SOURCE_LOCATION (var), "%qD was declared here", var);
-    }
+  auto_diagnostic_group d;
+  if (!warning_at (location, opt, gmsgid, var))
+    return;
+
+  /* Avoid subsequent warnings for reads of the same variable again.  */
+  suppress_warning (var, opt);
+
+  /* Issue a note pointing to the read variable unless the warning
+     is at the same location.  */
+  location_t var_loc = DECL_SOURCE_LOCATION (var);
+  if (location == var_loc)
+    return;
+
+  inform (var_loc, "%qD was declared here", var);
 }
 
 struct check_defs_data
@@ -201,6 +245,128 @@ struct check_defs_data
   bool found_may_defs;
 };
 
+/* Return true if STMT is a call to built-in function all of whose
+   by-reference arguments are const-qualified (i.e., the function can
+   be assumed not to modify them).  */
+
+static bool
+builtin_call_nomodifying_p (gimple *stmt)
+{
+  if (!gimple_call_builtin_p (stmt, BUILT_IN_NORMAL))
+    return false;
+
+  tree fndecl = gimple_call_fndecl (stmt);
+  if (!fndecl)
+    return false;
+
+  tree fntype = TREE_TYPE (fndecl);
+  if (!fntype)
+    return false;
+
+  /* Check the called function's signature for non-constc pointers.
+     If one is found, return false.  */
+  unsigned argno = 0;
+  tree argtype;
+  function_args_iterator it;
+  FOREACH_FUNCTION_ARGS (fntype, argtype, it)
+    {
+      if (VOID_TYPE_P (argtype))
+	return true;
+
+      ++argno;
+
+      if (!POINTER_TYPE_P (argtype))
+	continue;
+
+      if (TYPE_READONLY (TREE_TYPE (argtype)))
+	continue;
+
+      return false;
+    }
+
+  /* If the number of actual arguments to the call is less than or
+     equal to the number of parameters, return false.  */
+  unsigned nargs = gimple_call_num_args (stmt);
+  if (nargs <= argno)
+    return false;
+
+  /* Check arguments passed through the ellipsis in calls to variadic
+     functions for pointers.  If one is found that's a non-constant
+     pointer, return false.  */
+  for (; argno < nargs; ++argno)
+    {
+      tree arg = gimple_call_arg (stmt, argno);
+      argtype = TREE_TYPE (arg);
+      if (!POINTER_TYPE_P (argtype))
+	continue;
+
+      if (TYPE_READONLY (TREE_TYPE (argtype)))
+	continue;
+
+      return false;
+    }
+
+  return true;
+}
+
+/* If ARG is a FNDECL parameter declared with attribute access none or
+   write_only issue a warning for its read access via PTR.  */
+
+static void
+maybe_warn_read_write_only (tree fndecl, gimple *stmt, tree arg, tree ptr)
+{
+  if (!fndecl)
+    return;
+
+  if (get_no_uninit_warning (arg))
+    return;
+
+  tree fntype = TREE_TYPE (fndecl);
+  if (!fntype)
+    return;
+
+  /* Initialize a map of attribute access specifications for arguments
+     to the function function call.  */
+  rdwr_map rdwr_idx;
+  init_attr_rdwr_indices (&rdwr_idx, TYPE_ATTRIBUTES (fntype));
+
+  unsigned argno = 0;
+  tree parms = DECL_ARGUMENTS (fndecl);
+  for (tree parm = parms; parm; parm = TREE_CHAIN (parm), ++argno)
+    {
+      if (parm != arg)
+	continue;
+
+      const attr_access* access = rdwr_idx.get (argno);
+      if (!access)
+	break;
+
+      if (access->mode != access_none
+	  && access->mode != access_write_only)
+	continue;
+
+      location_t stmtloc
+	= linemap_resolve_location (line_table, gimple_location (stmt),
+				    LRK_SPELLING_LOCATION, NULL);
+
+      if (!warning_at (stmtloc, OPT_Wmaybe_uninitialized,
+		       "%qE may be used uninitialized", ptr))
+	break;
+
+      suppress_warning (arg, OPT_Wmaybe_uninitialized);
+
+      const char* const access_str =
+	TREE_STRING_POINTER (access->to_external_string ());
+
+      location_t parmloc = DECL_SOURCE_LOCATION (parm);
+      inform (parmloc, "accessing argument %u of a function declared with "
+	      "attribute %<%s%>",
+	      argno + 1, access_str);
+
+      break;
+    }
+}
+
 /* Callback for walk_aliased_vdefs.  */
 
 static bool
@@ -208,6 +374,39 @@ check_defs (ao_ref *ref, tree vdef, void *data_)
 {
   check_defs_data *data = (check_defs_data *)data_;
   gimple *def_stmt = SSA_NAME_DEF_STMT (vdef);
+
+  /* Ignore the vdef if the definition statement is a call
+     to .DEFERRED_INIT function.  */
+  if (gimple_call_internal_p (def_stmt, IFN_DEFERRED_INIT))
+    return false;
+
+  /* The ASAN_MARK intrinsic doesn't modify the variable.  */
+  if (is_gimple_call (def_stmt))
+    {
+      /* The ASAN_MARK intrinsic doesn't modify the variable.  */
+      if (gimple_call_internal_p (def_stmt)
+	  && gimple_call_internal_fn (def_stmt) == IFN_ASAN_MARK)
+	return false;
+
+      if (tree fndecl = gimple_call_fndecl (def_stmt))
+	{
+	  /* Some sanitizer calls pass integer arguments to built-ins
+	     that expect pointets. Avoid using gimple_call_builtin_p()
+	     which fails for such calls.  */
+	  if (DECL_BUILT_IN_CLASS (fndecl) == BUILT_IN_NORMAL)
+	    {
+	      built_in_function fncode = DECL_FUNCTION_CODE (fndecl);
+	      if (fncode > BEGIN_SANITIZER_BUILTINS
+		  && fncode < END_SANITIZER_BUILTINS)
+		return false;
+	    }
+	}
+    }
+
+  /* End of VLA scope is not a kill.  */
+  if (gimple_call_builtin_p (def_stmt, BUILT_IN_STACK_RESTORE))
+    return false;
+
   /* If this is a clobber then if it is not a kill walk past it.  */
   if (gimple_clobber_p (def_stmt))
     {
@@ -215,6 +414,10 @@ check_defs (ao_ref *ref, tree vdef, void *data_)
 	return true;
       return false;
     }
+
+  if (builtin_call_nomodifying_p (def_stmt))
+    return false;
+
   /* Found a may-def on this path.  */
   data->found_may_defs = true;
   return true;
@@ -237,7 +440,9 @@ struct wlimits
 };
 
 /* Determine if REF references an uninitialized operand and diagnose
-   it if so.  */
+   it if so.  STMS is the referencing statement.  LHS is the result
+   of the access and may be null.  RHS is the variable referenced by
+   the access; it may not be null.  */
 
 static tree
 maybe_warn_operand (ao_ref &ref, gimple *stmt, tree lhs, tree rhs,
@@ -247,7 +452,7 @@ maybe_warn_operand (ao_ref &ref, gimple *stmt, tree lhs, tree rhs,
   use_operand_p luse_p;
   imm_use_iterator liter;
 
-  if (TREE_NO_WARNING (rhs))
+  if (get_no_uninit_warning (rhs))
     return NULL_TREE;
 
   /* Do not warn if the base was marked so or this is a
@@ -255,19 +460,23 @@ maybe_warn_operand (ao_ref &ref, gimple *stmt, tree lhs, tree rhs,
   tree base = ao_ref_base (&ref);
   if ((VAR_P (base)
        && DECL_HARD_REGISTER (base))
-      || TREE_NO_WARNING (base))
+      || get_no_uninit_warning (base))
     return NULL_TREE;
 
-  /* Do not warn if the access is fully outside of the variable.  */
+  /* Do not warn if the access is zero size or if it's fully outside
+     the object.  */
   poly_int64 decl_size;
+  if (known_size_p (ref.size)
+      && known_eq (ref.max_size, ref.size)
+      && (known_eq (ref.size, 0)
+	  || known_le (ref.offset + ref.size, 0)))
+    return NULL_TREE;
+
   if (DECL_P (base)
-      && ((known_size_p (ref.size)
-	   && known_eq (ref.max_size, ref.size)
-	   && known_le (ref.offset + ref.size, 0))
-	  || (known_ge (ref.offset, 0)
-	      && DECL_SIZE (base)
-	      && poly_int_tree_p (DECL_SIZE (base), &decl_size)
-	      && known_le (decl_size, ref.offset))))
+      && known_ge (ref.offset, 0)
+      && DECL_SIZE (base)
+      && poly_int_tree_p (DECL_SIZE (base), &decl_size)
+      && known_le (decl_size, ref.offset))
     return NULL_TREE;
 
   /* Do not warn if the result of the access is then used for
@@ -380,31 +589,41 @@ maybe_warn_operand (ao_ref &ref, gimple *stmt, tree lhs, tree rhs,
   /* Do not warn if it can be initialized outside this function.
      If we did not reach function entry then we found killing
      clobbers on all paths to entry.  */
-  if (!found_alloc
-      && fentry_reached
-      /* ???  We'd like to use ref_may_alias_global_p but that
-	 excludes global readonly memory and thus we get bogus
-	 warnings from p = cond ? "a" : "b" for example.  */
-      && (!VAR_P (base)
-	  || is_global_var (base)))
-    return NULL_TREE;
+  if (!found_alloc && fentry_reached)
+    {
+      if (TREE_CODE (base) == SSA_NAME)
+	{
+	  tree var = SSA_NAME_VAR (base);
+	  if (var && TREE_CODE (var) == PARM_DECL)
+	    {
+	      maybe_warn_read_write_only (cfun->decl, stmt, var, rhs);
+	      return NULL_TREE;
+	    }
+	}
+
+      if (!VAR_P (base)
+	  || is_global_var (base))
+	/* ???  We'd like to use ref_may_alias_global_p but that
+	   excludes global readonly memory and thus we get bogus
+	   warnings from p = cond ? "a" : "b" for example.  */
+	return NULL_TREE;
+    }
 
   /* Strip the address-of expression from arrays passed to functions. */
   if (TREE_CODE (rhs) == ADDR_EXPR)
     rhs = TREE_OPERAND (rhs, 0);
 
   /* Check again since RHS may have changed above.  */
-  if (TREE_NO_WARNING (rhs))
+  if (get_no_uninit_warning (rhs))
     return NULL_TREE;
 
   /* Avoid warning about empty types such as structs with no members.
      The first_field() test is important for C++ where the predicate
      alone isn't always sufficient.  */
   tree rhstype = TREE_TYPE (rhs);
-  if (TYPE_EMPTY_P (rhstype)
-      || (RECORD_OR_UNION_TYPE_P (rhstype)
-	  && (!first_field (rhstype)
-	      || default_is_empty_record (rhstype))))
+  if (POINTER_TYPE_P (rhstype))
+    rhstype = TREE_TYPE (rhstype);
+  if (is_empty_type (rhstype))
     return NULL_TREE;
 
   bool warned = false;
@@ -416,20 +635,20 @@ maybe_warn_operand (ao_ref &ref, gimple *stmt, tree lhs, tree rhs,
   if (wlims.always_executed)
     {
       if (warning_at (location, OPT_Wuninitialized,
-		      "%G%qE is used uninitialized", stmt, rhs))
+		      "%qE is used uninitialized", rhs))
 	{
 	  /* ???  This is only effective for decls as in
 	     gcc.dg/uninit-B-O0.c.  Avoid doing this for maybe-uninit
 	     uses or accesses by functions as it may hide important
 	     locations.  */
 	  if (lhs)
-	    TREE_NO_WARNING (rhs) = 1;
+	    set_no_uninit_warning (rhs);
 	  warned = true;
 	}
     }
   else if (wlims.wmaybe_uninit)
     warned = warning_at (location, OPT_Wmaybe_uninitialized,
-			 "%G%qE may be used uninitialized", stmt, rhs);
+			 "%qE may be used uninitialized", rhs);
 
   return warned ? base : NULL_TREE;
 }
@@ -440,7 +659,7 @@ maybe_warn_operand (ao_ref &ref, gimple *stmt, tree lhs, tree rhs,
    access implying read access to those objects.  */
 
 static void
-maybe_warn_pass_by_reference (gimple *stmt, wlimits &wlims)
+maybe_warn_pass_by_reference (gcall *stmt, wlimits &wlims)
 {
   if (!wlims.wmaybe_uninit)
     return;
@@ -452,6 +671,10 @@ maybe_warn_pass_by_reference (gimple *stmt, wlimits &wlims)
   tree fndecl = gimple_call_fndecl (stmt);
   tree fntype = gimple_call_fntype (stmt);
   if (!fntype)
+    return;
+
+  /* Const function do not read their arguments.  */
+  if (gimple_call_flags (stmt) & ECF_CONST)
     return;
 
   const built_in_function fncode
@@ -470,9 +693,10 @@ maybe_warn_pass_by_reference (gimple *stmt, wlimits &wlims)
      read_only.  */
   const bool save_always_executed = wlims.always_executed;
 
-  /* Map of attribute access specifications for function arguments.  */
+  /* Initialize a map of attribute access specifications for arguments
+     to the function function call.  */
   rdwr_map rdwr_idx;
-  init_attr_rdwr_indices (&rdwr_idx, fntype);
+  init_attr_rdwr_indices (&rdwr_idx, TYPE_ATTRIBUTES (fntype));
 
   tree argtype;
   unsigned argno = 0;
@@ -486,13 +710,18 @@ maybe_warn_pass_by_reference (gimple *stmt, wlimits &wlims)
 	continue;
 
       tree access_size = NULL_TREE;
-      attr_access *access = rdwr_idx.get (argno - 1);
+      const attr_access* access = rdwr_idx.get (argno - 1);
       if (access)
 	{
-	  if (access->mode == attr_access::none
-	      || access->mode == attr_access::write_only)
+	  if (access->mode == access_none
+	      || access->mode == access_write_only)
 	    continue;
-	  if (save_always_executed && access->mode == attr_access::read_only)
+
+	  if (access->mode == access_deferred
+	      && !TYPE_READONLY (TREE_TYPE (argtype)))
+	    continue;
+
+	  if (save_always_executed && access->mode == access_read_only)
 	    /* Attribute read_only arguments imply read access.  */
 	    wlims.always_executed = true;
 	  else
@@ -514,7 +743,14 @@ maybe_warn_pass_by_reference (gimple *stmt, wlimits &wlims)
 	   (but not definitive) read access.  */
 	wlims.always_executed = false;
 
+      /* Ignore args we are not going to read from.  */
+      if (gimple_call_arg_flags (stmt, argno - 1) & (EAF_UNUSED | EAF_NOREAD))
+	continue;
+
       tree arg = gimple_call_arg (stmt, argno - 1);
+      if (!POINTER_TYPE_P (TREE_TYPE (arg)))
+	/* Avoid actual arguments with invalid types.  */
+	continue;
 
       ao_ref ref;
       ao_ref_init_from_ptr_and_size (&ref, arg, access_size);
@@ -522,45 +758,48 @@ maybe_warn_pass_by_reference (gimple *stmt, wlimits &wlims)
       if (!argbase)
 	continue;
 
-      if (access)
+      if (access && access->mode != access_deferred)
 	{
-	  const char* const mode = (access->mode == attr_access::read_only
-				    ? "read_only" : "read_write");
-	  char attrstr[80];
-	  int n = sprintf (attrstr, "access (%s, %u", mode, argno);
-	  if (access->sizarg < UINT_MAX)
-	    sprintf (attrstr + n, ", %u)", access->sizarg);
-	  else
-	    strcpy (attrstr + n, ")");
+	  const char* const access_str =
+	    TREE_STRING_POINTER (access->to_external_string ());
 
 	  if (fndecl)
 	    {
 	      location_t loc = DECL_SOURCE_LOCATION (fndecl);
-	      inform (loc, "in a call to %qD declared "
-		      "with attribute %<access (%s, %u)%> here",
-		      fndecl, mode, argno);
+	      inform (loc, "in a call to %qD declared with "
+		      "attribute %<%s%> here", fndecl, access_str);
 	    }
 	  else
 	    {
 	      /* Handle calls through function pointers.  */
 	      location_t loc = gimple_location (stmt);
 	      inform (loc, "in a call to %qT declared with "
-		      "attribute %<access (%s, %u)%>",
-		      fntype, mode, argno);
+		      "attribute %<%s%>", fntype, access_str);
 	    }
-	}
-      else if (fndecl)
-	{
-	  location_t loc = DECL_SOURCE_LOCATION (fndecl);
-	  inform (loc, "by argument %u of type %qT to %qD declared here",
-		  argno, argtype, fndecl);
 	}
       else
 	{
-	  /* Handle calls through function pointers.  */
-	  location_t loc = gimple_location (stmt);
-	  inform (loc, "by argument %u of type %qT to %qT",
-		  argno, argtype, fntype);
+	  /* For a declaration with no relevant attribute access create
+	     a dummy object and use the formatting function to avoid
+	     having to complicate things here.  */
+	  attr_access ptr_access = { };
+	  if (!access)
+	    access = &ptr_access;
+	  const std::string argtypestr = access->array_as_string (argtype);
+	  if (fndecl)
+	    {
+	      location_t loc (DECL_SOURCE_LOCATION (fndecl));
+	      inform (loc, "by argument %u of type %s to %qD "
+		      "declared here",
+		      argno, argtypestr.c_str (), fndecl);
+	    }
+	  else
+	    {
+	      /* Handle calls through function pointers.  */
+	      location_t loc (gimple_location (stmt));
+	      inform (loc, "by argument %u of type %s to %qT",
+		      argno, argtypestr.c_str (), fntype);
+	    }
 	}
 
       if (DECL_P (argbase))
@@ -573,8 +812,79 @@ maybe_warn_pass_by_reference (gimple *stmt, wlimits &wlims)
   wlims.always_executed = save_always_executed;
 }
 
+/* Warn about an uninitialized PHI argument on the fallthru path to
+   an always executed block BB.  */
 
-static unsigned int
+static void
+warn_uninit_phi_uses (basic_block bb)
+{
+  edge_iterator ei;
+  edge e, found = NULL, found_back = NULL;
+  /* Look for a fallthru and possibly a single backedge.  */
+  FOR_EACH_EDGE (e, ei, bb->preds)
+    {
+      /* Ignore backedges.  */
+      if (dominated_by_p (CDI_DOMINATORS, e->src, bb))
+	{
+	  if (found_back)
+	    {
+	      found = NULL;
+	      break;
+	    }
+	  found_back = e;
+	  continue;
+	}
+      if (found)
+	{
+	  found = NULL;
+	  break;
+	}
+      found = e;
+    }
+  if (!found)
+    return;
+
+  basic_block succ = single_succ (ENTRY_BLOCK_PTR_FOR_FN (cfun));
+  for (gphi_iterator si = gsi_start_phis (bb); !gsi_end_p (si);
+       gsi_next (&si))
+    {
+      gphi *phi = si.phi ();
+      tree def = PHI_ARG_DEF_FROM_EDGE (phi, found);
+      if (TREE_CODE (def) != SSA_NAME
+	  || !SSA_NAME_IS_DEFAULT_DEF (def)
+	  || virtual_operand_p (def))
+	continue;
+      /* If there's a default def on the fallthru edge PHI
+	 value and there's a use that post-dominates entry
+	 then that use is uninitialized and we can warn.  */
+      imm_use_iterator iter;
+      use_operand_p use_p;
+      gimple *use_stmt = NULL;
+      FOR_EACH_IMM_USE_FAST (use_p, iter, gimple_phi_result (phi))
+	{
+	  use_stmt = USE_STMT (use_p);
+	  if (gimple_location (use_stmt) != UNKNOWN_LOCATION
+	      && dominated_by_p (CDI_POST_DOMINATORS, succ,
+				 gimple_bb (use_stmt))
+	      /* If we found a non-fallthru edge make sure the
+		 use is inside the loop, otherwise the backedge
+		 can serve as initialization.  */
+	      && (!found_back
+		  || dominated_by_p (CDI_DOMINATORS, found_back->src,
+				     gimple_bb (use_stmt))))
+	    break;
+	  use_stmt = NULL;
+	}
+      if (use_stmt)
+	warn_uninit (OPT_Wuninitialized, def, SSA_NAME_VAR (def),
+		     "%qD is used uninitialized", use_stmt);
+    }
+}
+
+/* Issue warnings about reads of uninitialized variables.  WMAYBE_UNINIT
+   is true to issue -Wmaybe-uninitialized, otherwise -Wuninitialized.  */
+
+static void
 warn_uninitialized_vars (bool wmaybe_uninit)
 {
   /* Counters and limits controlling the the depth of the warning.  */
@@ -587,18 +897,27 @@ warn_uninitialized_vars (bool wmaybe_uninit)
     {
       basic_block succ = single_succ (ENTRY_BLOCK_PTR_FOR_FN (cfun));
       wlims.always_executed = dominated_by_p (CDI_POST_DOMINATORS, succ, bb);
+
+      if (wlims.always_executed)
+	warn_uninit_phi_uses (bb);
+
       for (gsi = gsi_start_bb (bb); !gsi_end_p (gsi); gsi_next (&gsi))
 	{
 	  gimple *stmt = gsi_stmt (gsi);
-	  use_operand_p use_p;
-	  ssa_op_iter op_iter;
-	  tree use;
+
+	  /* The call is an artificial use, will not provide meaningful
+	     error message.  If the result of the call is used somewhere
+	     else, we warn there instead.  */
+	  if (gimple_call_internal_p (stmt, IFN_DEFERRED_INIT))
+	    continue;
 
 	  if (is_gimple_debug (stmt))
 	    continue;
 
 	  /* We only do data flow with SSA_NAMEs, so that's all we
 	     can warn about.  */
+	  use_operand_p use_p;
+	  ssa_op_iter op_iter;
 	  FOR_EACH_SSA_USE_OPERAND (use_p, stmt, op_iter, SSA_OP_USE)
 	    {
 	      /* BIT_INSERT_EXPR first operand should not be considered
@@ -609,17 +928,13 @@ warn_uninitialized_vars (bool wmaybe_uninit)
 		      && use_p->use == gimple_assign_rhs1_ptr (ass))
 		    continue;
 		}
-	      use = USE_FROM_PTR (use_p);
+	      tree use = USE_FROM_PTR (use_p);
 	      if (wlims.always_executed)
 		warn_uninit (OPT_Wuninitialized, use, SSA_NAME_VAR (use),
-			     SSA_NAME_VAR (use),
-			     "%qD is used uninitialized", stmt,
-			     UNKNOWN_LOCATION);
+			     "%qD is used uninitialized", stmt);
 	      else if (wmaybe_uninit)
 		warn_uninit (OPT_Wmaybe_uninitialized, use, SSA_NAME_VAR (use),
-			     SSA_NAME_VAR (use),
-			     "%qD may be used uninitialized",
-			     stmt, UNKNOWN_LOCATION);
+			     "%qD may be used uninitialized", stmt);
 	    }
 
 	  /* For limiting the alias walk below we count all
@@ -627,8 +942,8 @@ warn_uninitialized_vars (bool wmaybe_uninit)
 	  if (gimple_vdef (stmt))
 	    wlims.vdef_cnt++;
 
-	  if (is_gimple_call (stmt))
-	    maybe_warn_pass_by_reference (stmt, wlims);
+	  if (gcall *call = dyn_cast <gcall *> (stmt))
+	    maybe_warn_pass_by_reference (call, wlims);
 	  else if (gimple_assign_load_p (stmt)
 		   && gimple_has_location (stmt))
 	    {
@@ -649,8 +964,6 @@ warn_uninitialized_vars (bool wmaybe_uninit)
 	    }
 	}
     }
-
-  return 0;
 }
 
 /* Checks if the operand OPND of PHI is defined by
@@ -662,16 +975,13 @@ warn_uninitialized_vars (bool wmaybe_uninit)
 static bool
 can_skip_redundant_opnd (tree opnd, gimple *phi)
 {
-  gimple *op_def;
-  tree phi_def;
-  int i, n;
-
-  phi_def = gimple_phi_result (phi);
-  op_def = SSA_NAME_DEF_STMT (opnd);
+  tree phi_def = gimple_phi_result (phi);
+  gimple *op_def = SSA_NAME_DEF_STMT (opnd);
   if (gimple_code (op_def) != GIMPLE_PHI)
     return false;
-  n = gimple_phi_num_args (op_def);
-  for (i = 0; i < n; ++i)
+
+  unsigned n = gimple_phi_num_args (op_def);
+  for (unsigned i = 0; i < n; ++i)
     {
       tree op = gimple_phi_arg_def (op_def, i);
       if (TREE_CODE (op) != SSA_NAME)
@@ -683,21 +993,20 @@ can_skip_redundant_opnd (tree opnd, gimple *phi)
   return true;
 }
 
-/* Returns a bit mask holding the positions of arguments in PHI
-   that have empty (or possibly empty) definitions.  */
+/* Return a bitset holding the positions of arguments in PHI with empty
+   (or possibly empty) definitions.  */
 
 static unsigned
 compute_uninit_opnds_pos (gphi *phi)
 {
-  size_t i, n;
   unsigned uninit_opnds = 0;
 
-  n = gimple_phi_num_args (phi);
+  unsigned n = gimple_phi_num_args (phi);
   /* Bail out for phi with too many args.  */
-  if (n > max_phi_args)
+  if (n > predicate::func_t::max_phi_args)
     return 0;
 
-  for (i = 0; i < n; ++i)
+  for (unsigned i = 0; i < n; ++i)
     {
       tree op = gimple_phi_arg_def (phi, i);
       if (TREE_CODE (op) == SSA_NAME
@@ -717,2045 +1026,32 @@ compute_uninit_opnds_pos (gphi *phi)
   return uninit_opnds;
 }
 
-/* Find the immediate postdominator PDOM of the specified
-   basic block BLOCK.  */
+/* Function object type used to determine whether an expression
+   is of interest to the predicate analyzer.  */
 
-static inline basic_block
-find_pdom (basic_block block)
+struct uninit_undef_val_t: public predicate::func_t
 {
-  if (block == EXIT_BLOCK_PTR_FOR_FN (cfun))
-    return EXIT_BLOCK_PTR_FOR_FN (cfun);
-  else
-    {
-      basic_block bb = get_immediate_dominator (CDI_POST_DOMINATORS, block);
-      if (!bb)
-	return EXIT_BLOCK_PTR_FOR_FN (cfun);
-      return bb;
-    }
-}
-
-/* Find the immediate DOM of the specified basic block BLOCK.  */
-
-static inline basic_block
-find_dom (basic_block block)
-{
-  if (block == ENTRY_BLOCK_PTR_FOR_FN (cfun))
-    return ENTRY_BLOCK_PTR_FOR_FN (cfun);
-  else
-    {
-      basic_block bb = get_immediate_dominator (CDI_DOMINATORS, block);
-      if (!bb)
-	return ENTRY_BLOCK_PTR_FOR_FN (cfun);
-      return bb;
-    }
-}
-
-/* Returns true if BB1 is postdominating BB2 and BB1 is
-   not a loop exit bb.  The loop exit bb check is simple and does
-   not cover all cases.  */
-
-static bool
-is_non_loop_exit_postdominating (basic_block bb1, basic_block bb2)
-{
-  if (!dominated_by_p (CDI_POST_DOMINATORS, bb2, bb1))
-    return false;
-
-  if (single_pred_p (bb1) && !single_succ_p (bb2))
-    return false;
-
-  return true;
-}
-
-/* Find the closest postdominator of a specified BB, which is control
-   equivalent to BB.  */
-
-static inline basic_block
-find_control_equiv_block (basic_block bb)
-{
-  basic_block pdom;
-
-  pdom = find_pdom (bb);
-
-  /* Skip the postdominating bb that is also loop exit.  */
-  if (!is_non_loop_exit_postdominating (pdom, bb))
-    return NULL;
-
-  if (dominated_by_p (CDI_DOMINATORS, pdom, bb))
-    return pdom;
-
-  return NULL;
-}
-
-#define MAX_NUM_CHAINS 8
-#define MAX_CHAIN_LEN 5
-#define MAX_POSTDOM_CHECK 8
-#define MAX_SWITCH_CASES 40
-
-/* Computes the control dependence chains (paths of edges)
-   for DEP_BB up to the dominating basic block BB (the head node of a
-   chain should be dominated by it).  CD_CHAINS is pointer to an
-   array holding the result chains.  CUR_CD_CHAIN is the current
-   chain being computed.  *NUM_CHAINS is total number of chains.  The
-   function returns true if the information is successfully computed,
-   return false if there is no control dependence or not computed.  */
-
-static bool
-compute_control_dep_chain (basic_block bb, basic_block dep_bb,
-			   vec<edge> *cd_chains,
-			   size_t *num_chains,
-			   vec<edge> *cur_cd_chain,
-			   int *num_calls)
-{
-  edge_iterator ei;
-  edge e;
-  size_t i;
-  bool found_cd_chain = false;
-  size_t cur_chain_len = 0;
-
-  if (*num_calls > param_uninit_control_dep_attempts)
-    return false;
-  ++*num_calls;
-
-  /* Could use a set instead.  */
-  cur_chain_len = cur_cd_chain->length ();
-  if (cur_chain_len > MAX_CHAIN_LEN)
-    return false;
-
-  for (i = 0; i < cur_chain_len; i++)
-    {
-      edge e = (*cur_cd_chain)[i];
-      /* Cycle detected.  */
-      if (e->src == bb)
-	return false;
-    }
-
-  FOR_EACH_EDGE (e, ei, bb->succs)
-    {
-      basic_block cd_bb;
-      int post_dom_check = 0;
-      if (e->flags & (EDGE_FAKE | EDGE_ABNORMAL))
-	continue;
-
-      cd_bb = e->dest;
-      cur_cd_chain->safe_push (e);
-      while (!is_non_loop_exit_postdominating (cd_bb, bb))
-	{
-	  if (cd_bb == dep_bb)
-	    {
-	      /* Found a direct control dependence.  */
-	      if (*num_chains < MAX_NUM_CHAINS)
-		{
-		  cd_chains[*num_chains] = cur_cd_chain->copy ();
-		  (*num_chains)++;
-		}
-	      found_cd_chain = true;
-	      /* Check path from next edge.  */
-	      break;
-	    }
-
-	  /* Now check if DEP_BB is indirectly control dependent on BB.  */
-	  if (compute_control_dep_chain (cd_bb, dep_bb, cd_chains, num_chains,
-					 cur_cd_chain, num_calls))
-	    {
-	      found_cd_chain = true;
-	      break;
-	    }
-
-	  cd_bb = find_pdom (cd_bb);
-	  post_dom_check++;
-	  if (cd_bb == EXIT_BLOCK_PTR_FOR_FN (cfun)
-	      || post_dom_check > MAX_POSTDOM_CHECK)
-	    break;
-	}
-      cur_cd_chain->pop ();
-      gcc_assert (cur_cd_chain->length () == cur_chain_len);
-    }
-  gcc_assert (cur_cd_chain->length () == cur_chain_len);
-
-  return found_cd_chain;
-}
-
-/* The type to represent a simple predicate.  */
-
-struct pred_info
-{
-  tree pred_lhs;
-  tree pred_rhs;
-  enum tree_code cond_code;
-  bool invert;
+  virtual bool operator()(tree) override;
+  virtual unsigned phi_arg_set (gphi *) override;
 };
 
-/* The type to represent a sequence of predicates grouped
-  with .AND. operation.  */
+/* Return true if the argument is an expression of interest.  */
 
-typedef vec<pred_info, va_heap, vl_ptr> pred_chain;
-
-/* The type to represent a sequence of pred_chains grouped
-  with .OR. operation.  */
-
-typedef vec<pred_chain, va_heap, vl_ptr> pred_chain_union;
-
-/* Converts the chains of control dependence edges into a set of
-   predicates.  A control dependence chain is represented by a vector
-   edges.  DEP_CHAINS points to an array of dependence chains.
-   NUM_CHAINS is the size of the chain array.  One edge in a dependence
-   chain is mapped to predicate expression represented by pred_info
-   type.  One dependence chain is converted to a composite predicate that
-   is the result of AND operation of pred_info mapped to each edge.
-   A composite predicate is presented by a vector of pred_info.  On
-   return, *PREDS points to the resulting array of composite predicates.
-   *NUM_PREDS is the number of composite predictes.  */
-
-static bool
-convert_control_dep_chain_into_preds (vec<edge> *dep_chains,
-				      size_t num_chains,
-				      pred_chain_union *preds)
+bool
+uninit_undef_val_t::operator()(tree val)
 {
-  bool has_valid_pred = false;
-  size_t i, j;
-  if (num_chains == 0 || num_chains >= MAX_NUM_CHAINS)
-    return false;
-
-  /* Now convert the control dep chain into a set
-     of predicates.  */
-  preds->reserve (num_chains);
-
-  for (i = 0; i < num_chains; i++)
-    {
-      vec<edge> one_cd_chain = dep_chains[i];
-
-      has_valid_pred = false;
-      pred_chain t_chain = vNULL;
-      for (j = 0; j < one_cd_chain.length (); j++)
-	{
-	  gimple *cond_stmt;
-	  gimple_stmt_iterator gsi;
-	  basic_block guard_bb;
-	  pred_info one_pred;
-	  edge e;
-
-	  e = one_cd_chain[j];
-	  guard_bb = e->src;
-	  gsi = gsi_last_bb (guard_bb);
-	  /* Ignore empty forwarder blocks.  */
-	  if (empty_block_p (guard_bb) && single_succ_p (guard_bb))
-	    continue;
-	  /* An empty basic block here is likely a PHI, and is not one
-	     of the cases we handle below.  */
-	  if (gsi_end_p (gsi))
-	    {
-	      has_valid_pred = false;
-	      break;
-	    }
-	  cond_stmt = gsi_stmt (gsi);
-	  if (is_gimple_call (cond_stmt) && EDGE_COUNT (e->src->succs) >= 2)
-	    /* Ignore EH edge.  Can add assertion on the other edge's flag.  */
-	    continue;
-	  /* Skip if there is essentially one succesor.  */
-	  if (EDGE_COUNT (e->src->succs) == 2)
-	    {
-	      edge e1;
-	      edge_iterator ei1;
-	      bool skip = false;
-
-	      FOR_EACH_EDGE (e1, ei1, e->src->succs)
-		{
-		  if (EDGE_COUNT (e1->dest->succs) == 0)
-		    {
-		      skip = true;
-		      break;
-		    }
-		}
-	      if (skip)
-		continue;
-	    }
-	  if (gimple_code (cond_stmt) == GIMPLE_COND)
-	    {
-	      one_pred.pred_lhs = gimple_cond_lhs (cond_stmt);
-	      one_pred.pred_rhs = gimple_cond_rhs (cond_stmt);
-	      one_pred.cond_code = gimple_cond_code (cond_stmt);
-	      one_pred.invert = !!(e->flags & EDGE_FALSE_VALUE);
-	      t_chain.safe_push (one_pred);
-	      has_valid_pred = true;
-	    }
-	  else if (gswitch *gs = dyn_cast<gswitch *> (cond_stmt))
-	    {
-	      /* Avoid quadratic behavior.  */
-	      if (gimple_switch_num_labels (gs) > MAX_SWITCH_CASES)
-		{
-		  has_valid_pred = false;
-		  break;
-		}
-	      /* Find the case label.  */
-	      tree l = NULL_TREE;
-	      unsigned idx;
-	      for (idx = 0; idx < gimple_switch_num_labels (gs); ++idx)
-		{
-		  tree tl = gimple_switch_label (gs, idx);
-		  if (e->dest == label_to_block (cfun, CASE_LABEL (tl)))
-		    {
-		      if (!l)
-			l = tl;
-		      else
-			{
-			  l = NULL_TREE;
-			  break;
-			}
-		    }
-		}
-	      /* If more than one label reaches this block or the case
-		 label doesn't have a single value (like the default one)
-		 fail.  */
-	      if (!l
-		  || !CASE_LOW (l)
-		  || (CASE_HIGH (l)
-		      && !operand_equal_p (CASE_LOW (l), CASE_HIGH (l), 0)))
-		{
-		  has_valid_pred = false;
-		  break;
-		}
-	      one_pred.pred_lhs = gimple_switch_index (gs);
-	      one_pred.pred_rhs = CASE_LOW (l);
-	      one_pred.cond_code = EQ_EXPR;
-	      one_pred.invert = false;
-	      t_chain.safe_push (one_pred);
-	      has_valid_pred = true;
-	    }
-	  else
-	    {
-	      has_valid_pred = false;
-	      break;
-	    }
-	}
-
-      if (!has_valid_pred)
-	break;
-      else
-	preds->safe_push (t_chain);
-    }
-  return has_valid_pred;
-}
-
-/* Computes all control dependence chains for USE_BB.  The control
-   dependence chains are then converted to an array of composite
-   predicates pointed to by PREDS.  PHI_BB is the basic block of
-   the phi whose result is used in USE_BB.  */
-
-static bool
-find_predicates (pred_chain_union *preds,
-		 basic_block phi_bb,
-		 basic_block use_bb)
-{
-  size_t num_chains = 0, i;
-  int num_calls = 0;
-  vec<edge> dep_chains[MAX_NUM_CHAINS];
-  auto_vec<edge, MAX_CHAIN_LEN + 1> cur_chain;
-  bool has_valid_pred = false;
-  basic_block cd_root = 0;
-
-  /* First find the closest bb that is control equivalent to PHI_BB
-     that also dominates USE_BB.  */
-  cd_root = phi_bb;
-  while (dominated_by_p (CDI_DOMINATORS, use_bb, cd_root))
-    {
-      basic_block ctrl_eq_bb = find_control_equiv_block (cd_root);
-      if (ctrl_eq_bb && dominated_by_p (CDI_DOMINATORS, use_bb, ctrl_eq_bb))
-	cd_root = ctrl_eq_bb;
-      else
-	break;
-    }
-
-  compute_control_dep_chain (cd_root, use_bb, dep_chains, &num_chains,
-			     &cur_chain, &num_calls);
-
-  has_valid_pred
-    = convert_control_dep_chain_into_preds (dep_chains, num_chains, preds);
-  for (i = 0; i < num_chains; i++)
-    dep_chains[i].release ();
-  return has_valid_pred;
-}
-
-/* Computes the set of incoming edges of PHI that have non empty
-   definitions of a phi chain.  The collection will be done
-   recursively on operands that are defined by phis.  CD_ROOT
-   is the control dependence root.  *EDGES holds the result, and
-   VISITED_PHIS is a pointer set for detecting cycles.  */
-
-static void
-collect_phi_def_edges (gphi *phi, basic_block cd_root,
-		       auto_vec<edge> *edges,
-		       hash_set<gimple *> *visited_phis)
-{
-  size_t i, n;
-  edge opnd_edge;
-  tree opnd;
-
-  if (visited_phis->add (phi))
-    return;
-
-  n = gimple_phi_num_args (phi);
-  for (i = 0; i < n; i++)
-    {
-      opnd_edge = gimple_phi_arg_edge (phi, i);
-      opnd = gimple_phi_arg_def (phi, i);
-
-      if (TREE_CODE (opnd) != SSA_NAME)
-	{
-	  if (dump_file && (dump_flags & TDF_DETAILS))
-	    {
-	      fprintf (dump_file, "\n[CHECK] Found def edge %d in ", (int) i);
-	      print_gimple_stmt (dump_file, phi, 0);
-	    }
-	  edges->safe_push (opnd_edge);
-	}
-      else
-	{
-	  gimple *def = SSA_NAME_DEF_STMT (opnd);
-
-	  if (gimple_code (def) == GIMPLE_PHI
-	      && dominated_by_p (CDI_DOMINATORS, gimple_bb (def), cd_root))
-	    collect_phi_def_edges (as_a<gphi *> (def), cd_root, edges,
-				   visited_phis);
-	  else if (!uninit_undefined_value_p (opnd))
-	    {
-	      if (dump_file && (dump_flags & TDF_DETAILS))
-		{
-		  fprintf (dump_file, "\n[CHECK] Found def edge %d in ",
-			   (int) i);
-		  print_gimple_stmt (dump_file, phi, 0);
-		}
-	      edges->safe_push (opnd_edge);
-	    }
-	}
-    }
-}
-
-/* For each use edge of PHI, computes all control dependence chains.
-   The control dependence chains are then converted to an array of
-   composite predicates pointed to by PREDS.  */
-
-static bool
-find_def_preds (pred_chain_union *preds, gphi *phi)
-{
-  size_t num_chains = 0, i, n;
-  vec<edge> dep_chains[MAX_NUM_CHAINS];
-  auto_vec<edge, MAX_CHAIN_LEN + 1> cur_chain;
-  auto_vec<edge> def_edges;
-  bool has_valid_pred = false;
-  basic_block phi_bb, cd_root = 0;
-
-  phi_bb = gimple_bb (phi);
-  /* First find the closest dominating bb to be
-     the control dependence root.  */
-  cd_root = find_dom (phi_bb);
-  if (!cd_root)
-    return false;
-
-  hash_set<gimple *> visited_phis;
-  collect_phi_def_edges (phi, cd_root, &def_edges, &visited_phis);
-
-  n = def_edges.length ();
-  if (n == 0)
-    return false;
-
-  for (i = 0; i < n; i++)
-    {
-      size_t prev_nc, j;
-      int num_calls = 0;
-      edge opnd_edge;
-
-      opnd_edge = def_edges[i];
-      prev_nc = num_chains;
-      compute_control_dep_chain (cd_root, opnd_edge->src, dep_chains,
-				 &num_chains, &cur_chain, &num_calls);
-
-      /* Now update the newly added chains with
-	 the phi operand edge:  */
-      if (EDGE_COUNT (opnd_edge->src->succs) > 1)
-	{
-	  if (prev_nc == num_chains && num_chains < MAX_NUM_CHAINS)
-	    dep_chains[num_chains++] = vNULL;
-	  for (j = prev_nc; j < num_chains; j++)
-	    dep_chains[j].safe_push (opnd_edge);
-	}
-    }
-
-  has_valid_pred
-    = convert_control_dep_chain_into_preds (dep_chains, num_chains, preds);
-  for (i = 0; i < num_chains; i++)
-    dep_chains[i].release ();
-  return has_valid_pred;
-}
-
-/* Dump a pred_info.  */
-
-static void
-dump_pred_info (pred_info one_pred)
-{
-  if (one_pred.invert)
-    fprintf (dump_file, " (.NOT.) ");
-  print_generic_expr (dump_file, one_pred.pred_lhs);
-  fprintf (dump_file, " %s ", op_symbol_code (one_pred.cond_code));
-  print_generic_expr (dump_file, one_pred.pred_rhs);
-}
-
-/* Dump a pred_chain.  */
-
-static void
-dump_pred_chain (pred_chain one_pred_chain)
-{
-  size_t np = one_pred_chain.length ();
-  for (size_t j = 0; j < np; j++)
-    {
-      dump_pred_info (one_pred_chain[j]);
-      if (j < np - 1)
-	fprintf (dump_file, " (.AND.) ");
-      else
-	fprintf (dump_file, "\n");
-    }
-}
-
-/* Dumps the predicates (PREDS) for USESTMT.  */
-
-static void
-dump_predicates (gimple *usestmt, pred_chain_union preds, const char *msg)
-{
-  fprintf (dump_file, "%s", msg);
-  if (usestmt)
-    {
-      print_gimple_stmt (dump_file, usestmt, 0);
-      fprintf (dump_file, "is guarded by :\n\n");
-    }
-  size_t num_preds = preds.length ();
-  for (size_t i = 0; i < num_preds; i++)
-    {
-      dump_pred_chain (preds[i]);
-      if (i < num_preds - 1)
-	fprintf (dump_file, "(.OR.)\n");
-      else
-	fprintf (dump_file, "\n\n");
-    }
-}
-
-/* Destroys the predicate set *PREDS.  */
-
-static void
-destroy_predicate_vecs (pred_chain_union *preds)
-{
-  size_t i;
-
-  size_t n = preds->length ();
-  for (i = 0; i < n; i++)
-    (*preds)[i].release ();
-  preds->release ();
-}
-
-/* Computes the 'normalized' conditional code with operand
-   swapping and condition inversion.  */
-
-static enum tree_code
-get_cmp_code (enum tree_code orig_cmp_code, bool swap_cond, bool invert)
-{
-  enum tree_code tc = orig_cmp_code;
-
-  if (swap_cond)
-    tc = swap_tree_comparison (orig_cmp_code);
-  if (invert)
-    tc = invert_tree_comparison (tc, false);
-
-  switch (tc)
-    {
-    case LT_EXPR:
-    case LE_EXPR:
-    case GT_EXPR:
-    case GE_EXPR:
-    case EQ_EXPR:
-    case NE_EXPR:
-      break;
-    default:
-      return ERROR_MARK;
-    }
-  return tc;
-}
-
-/* Returns whether VAL CMPC BOUNDARY is true.  */
-
-static bool
-is_value_included_in (tree val, tree boundary, enum tree_code cmpc)
-{
-  bool inverted = false;
-  bool result;
-
-  /* Only handle integer constant here.  */
-  if (TREE_CODE (val) != INTEGER_CST || TREE_CODE (boundary) != INTEGER_CST)
-    return true;
-
-  if (cmpc == GE_EXPR || cmpc == GT_EXPR || cmpc == NE_EXPR)
-    {
-      cmpc = invert_tree_comparison (cmpc, false);
-      inverted = true;
-    }
-
-  if (cmpc == EQ_EXPR)
-    result = tree_int_cst_equal (val, boundary);
-  else if (cmpc == LT_EXPR)
-    result = tree_int_cst_lt (val, boundary);
-  else
-    {
-      gcc_assert (cmpc == LE_EXPR);
-      result = tree_int_cst_le (val, boundary);
-    }
-
-  if (inverted)
-    result ^= 1;
-
-  return result;
-}
-
-/* Returns whether VAL satisfies (x CMPC BOUNDARY) predicate.  CMPC can be
-   either one of the range comparison codes ({GE,LT,EQ,NE}_EXPR and the like),
-   or BIT_AND_EXPR.  EXACT_P is only meaningful for the latter.  It modifies the
-   question from whether VAL & BOUNDARY != 0 to whether VAL & BOUNDARY == VAL.
-   For other values of CMPC, EXACT_P is ignored.  */
-
-static bool
-value_sat_pred_p (tree val, tree boundary, enum tree_code cmpc,
-		  bool exact_p = false)
-{
-  if (cmpc != BIT_AND_EXPR)
-    return is_value_included_in (val, boundary, cmpc);
-
-  wide_int andw = wi::to_wide (val) & wi::to_wide (boundary);
-  if (exact_p)
-    return andw == wi::to_wide (val);
-  else
-    return andw.to_uhwi ();
-}
-
-/* Returns true if PRED is common among all the predicate
-   chains (PREDS) (and therefore can be factored out).
-   NUM_PRED_CHAIN is the size of array PREDS.  */
-
-static bool
-find_matching_predicate_in_rest_chains (pred_info pred,
-					pred_chain_union preds,
-					size_t num_pred_chains)
-{
-  size_t i, j, n;
-
-  /* Trival case.  */
-  if (num_pred_chains == 1)
-    return true;
-
-  for (i = 1; i < num_pred_chains; i++)
-    {
-      bool found = false;
-      pred_chain one_chain = preds[i];
-      n = one_chain.length ();
-      for (j = 0; j < n; j++)
-	{
-	  pred_info pred2 = one_chain[j];
-	  /* Can relax the condition comparison to not
-	     use address comparison.  However, the most common
-	     case is that multiple control dependent paths share
-	     a common path prefix, so address comparison should
-	     be ok.  */
-
-	  if (operand_equal_p (pred2.pred_lhs, pred.pred_lhs, 0)
-	      && operand_equal_p (pred2.pred_rhs, pred.pred_rhs, 0)
-	      && pred2.invert == pred.invert)
-	    {
-	      found = true;
-	      break;
-	    }
-	}
-      if (!found)
-	return false;
-    }
-  return true;
-}
-
-/* Forward declaration.  */
-static bool is_use_properly_guarded (gimple *use_stmt,
-				     basic_block use_bb,
-				     gphi *phi,
-				     unsigned uninit_opnds,
-				     pred_chain_union *def_preds,
-				     hash_set<gphi *> *visited_phis);
-
-/* Returns true if all uninitialized opnds are pruned.  Returns false
-   otherwise.  PHI is the phi node with uninitialized operands,
-   UNINIT_OPNDS is the bitmap of the uninitialize operand positions,
-   FLAG_DEF is the statement defining the flag guarding the use of the
-   PHI output, BOUNDARY_CST is the const value used in the predicate
-   associated with the flag, CMP_CODE is the comparison code used in
-   the predicate, VISITED_PHIS is the pointer set of phis visited, and
-   VISITED_FLAG_PHIS is the pointer to the pointer set of flag definitions
-   that are also phis.
-
-   Example scenario:
-
-   BB1:
-   flag_1 = phi <0, 1>			// (1)
-   var_1  = phi <undef, some_val>
-
-
-   BB2:
-   flag_2 = phi <0,   flag_1, flag_1>   // (2)
-   var_2  = phi <undef, var_1, var_1>
-   if (flag_2 == 1)
-      goto BB3;
-
-   BB3:
-   use of var_2				// (3)
-
-   Because some flag arg in (1) is not constant, if we do not look into the
-   flag phis recursively, it is conservatively treated as unknown and var_1
-   is thought to be flowed into use at (3).  Since var_1 is potentially
-   uninitialized a false warning will be emitted.
-   Checking recursively into (1), the compiler can find out that only some_val
-   (which is defined) can flow into (3) which is OK.  */
-
-static bool
-prune_uninit_phi_opnds (gphi *phi, unsigned uninit_opnds, gphi *flag_def,
-			tree boundary_cst, enum tree_code cmp_code,
-			hash_set<gphi *> *visited_phis,
-			bitmap *visited_flag_phis)
-{
-  unsigned i;
-
-  for (i = 0; i < MIN (max_phi_args, gimple_phi_num_args (flag_def)); i++)
-    {
-      tree flag_arg;
-
-      if (!MASK_TEST_BIT (uninit_opnds, i))
-	continue;
-
-      flag_arg = gimple_phi_arg_def (flag_def, i);
-      if (!is_gimple_constant (flag_arg))
-	{
-	  gphi *flag_arg_def, *phi_arg_def;
-	  tree phi_arg;
-	  unsigned uninit_opnds_arg_phi;
-
-	  if (TREE_CODE (flag_arg) != SSA_NAME)
-	    return false;
-	  flag_arg_def = dyn_cast<gphi *> (SSA_NAME_DEF_STMT (flag_arg));
-	  if (!flag_arg_def)
-	    return false;
-
-	  phi_arg = gimple_phi_arg_def (phi, i);
-	  if (TREE_CODE (phi_arg) != SSA_NAME)
-	    return false;
-
-	  phi_arg_def = dyn_cast<gphi *> (SSA_NAME_DEF_STMT (phi_arg));
-	  if (!phi_arg_def)
-	    return false;
-
-	  if (gimple_bb (phi_arg_def) != gimple_bb (flag_arg_def))
-	    return false;
-
-	  if (!*visited_flag_phis)
-	    *visited_flag_phis = BITMAP_ALLOC (NULL);
-
-	  tree phi_result = gimple_phi_result (flag_arg_def);
-	  if (bitmap_bit_p (*visited_flag_phis, SSA_NAME_VERSION (phi_result)))
-	    return false;
-
-	  bitmap_set_bit (*visited_flag_phis,
-			  SSA_NAME_VERSION (gimple_phi_result (flag_arg_def)));
-
-	  /* Now recursively prune the uninitialized phi args.  */
-	  uninit_opnds_arg_phi = compute_uninit_opnds_pos (phi_arg_def);
-	  if (!prune_uninit_phi_opnds
-	      (phi_arg_def, uninit_opnds_arg_phi, flag_arg_def, boundary_cst,
-	       cmp_code, visited_phis, visited_flag_phis))
-	    return false;
-
-	  phi_result = gimple_phi_result (flag_arg_def);
-	  bitmap_clear_bit (*visited_flag_phis, SSA_NAME_VERSION (phi_result));
-	  continue;
-	}
-
-      /* Now check if the constant is in the guarded range.  */
-      if (is_value_included_in (flag_arg, boundary_cst, cmp_code))
-	{
-	  tree opnd;
-	  gimple *opnd_def;
-
-	  /* Now that we know that this undefined edge is not
-	     pruned.  If the operand is defined by another phi,
-	     we can further prune the incoming edges of that
-	     phi by checking the predicates of this operands.  */
-
-	  opnd = gimple_phi_arg_def (phi, i);
-	  opnd_def = SSA_NAME_DEF_STMT (opnd);
-	  if (gphi *opnd_def_phi = dyn_cast <gphi *> (opnd_def))
-	    {
-	      edge opnd_edge;
-	      unsigned uninit_opnds2 = compute_uninit_opnds_pos (opnd_def_phi);
-	      if (!MASK_EMPTY (uninit_opnds2))
-		{
-		  pred_chain_union def_preds = vNULL;
-		  bool ok;
-		  opnd_edge = gimple_phi_arg_edge (phi, i);
-		  ok = is_use_properly_guarded (phi,
-						opnd_edge->src,
-						opnd_def_phi,
-						uninit_opnds2,
-						&def_preds,
-						visited_phis);
-		  destroy_predicate_vecs (&def_preds);
-		  if (!ok)
-		    return false;
-		}
-	    }
-	  else
-	    return false;
-	}
-    }
-
-  return true;
-}
-
-/* A helper function that determines if the predicate set
-   of the use is not overlapping with that of the uninit paths.
-   The most common senario of guarded use is in Example 1:
-     Example 1:
-	   if (some_cond)
-	   {
-	      x = ...;
-	      flag = true;
-	   }
-
-	    ... some code ...
-
-	   if (flag)
-	      use (x);
-
-     The real world examples are usually more complicated, but similar
-     and usually result from inlining:
-
-	 bool init_func (int * x)
-	 {
-	     if (some_cond)
-		return false;
-	     *x  =  ..
-	     return true;
-	 }
-
-	 void foo (..)
-	 {
-	     int x;
-
-	     if (!init_func (&x))
-		return;
-
-	     .. some_code ...
-	     use (x);
-	 }
-
-     Another possible use scenario is in the following trivial example:
-
-     Example 2:
-	  if (n > 0)
-	     x = 1;
-	  ...
-	  if (n > 0)
-	    {
-	      if (m < 2)
-		 .. = x;
-	    }
-
-     Predicate analysis needs to compute the composite predicate:
-
-       1) 'x' use predicate: (n > 0) .AND. (m < 2)
-       2) 'x' default value  (non-def) predicate: .NOT. (n > 0)
-       (the predicate chain for phi operand defs can be computed
-       starting from a bb that is control equivalent to the phi's
-       bb and is dominating the operand def.)
-
-       and check overlapping:
-	  (n > 0) .AND. (m < 2) .AND. (.NOT. (n > 0))
-	<==> false
-
-     This implementation provides framework that can handle
-     scenarios.  (Note that many simple cases are handled properly
-     without the predicate analysis -- this is due to jump threading
-     transformation which eliminates the merge point thus makes
-     path sensitive analysis unnecessary.)
-
-     PHI is the phi node whose incoming (undefined) paths need to be
-     pruned, and UNINIT_OPNDS is the bitmap holding uninit operand
-     positions.  VISITED_PHIS is the pointer set of phi stmts being
-     checked.  */
-
-static bool
-use_pred_not_overlap_with_undef_path_pred (pred_chain_union preds,
-					   gphi *phi, unsigned uninit_opnds,
-					   hash_set<gphi *> *visited_phis)
-{
-  unsigned int i, n;
-  gimple *flag_def = 0;
-  tree boundary_cst = 0;
-  enum tree_code cmp_code;
-  bool swap_cond = false;
-  bool invert = false;
-  pred_chain the_pred_chain = vNULL;
-  bitmap visited_flag_phis = NULL;
-  bool all_pruned = false;
-  size_t num_preds = preds.length ();
-
-  gcc_assert (num_preds > 0);
-  /* Find within the common prefix of multiple predicate chains
-     a predicate that is a comparison of a flag variable against
-     a constant.  */
-  the_pred_chain = preds[0];
-  n = the_pred_chain.length ();
-  for (i = 0; i < n; i++)
-    {
-      tree cond_lhs, cond_rhs, flag = 0;
-
-      pred_info the_pred = the_pred_chain[i];
-
-      invert = the_pred.invert;
-      cond_lhs = the_pred.pred_lhs;
-      cond_rhs = the_pred.pred_rhs;
-      cmp_code = the_pred.cond_code;
-
-      if (cond_lhs != NULL_TREE && TREE_CODE (cond_lhs) == SSA_NAME
-	  && cond_rhs != NULL_TREE && is_gimple_constant (cond_rhs))
-	{
-	  boundary_cst = cond_rhs;
-	  flag = cond_lhs;
-	}
-      else if (cond_rhs != NULL_TREE && TREE_CODE (cond_rhs) == SSA_NAME
-	       && cond_lhs != NULL_TREE && is_gimple_constant (cond_lhs))
-	{
-	  boundary_cst = cond_lhs;
-	  flag = cond_rhs;
-	  swap_cond = true;
-	}
-
-      if (!flag)
-	continue;
-
-      flag_def = SSA_NAME_DEF_STMT (flag);
-
-      if (!flag_def)
-	continue;
-
-      if ((gimple_code (flag_def) == GIMPLE_PHI)
-	  && (gimple_bb (flag_def) == gimple_bb (phi))
-	  && find_matching_predicate_in_rest_chains (the_pred, preds,
-						     num_preds))
-	break;
-
-      flag_def = 0;
-    }
-
-  if (!flag_def)
-    return false;
-
-  /* Now check all the uninit incoming edge has a constant flag value
-     that is in conflict with the use guard/predicate.  */
-  cmp_code = get_cmp_code (cmp_code, swap_cond, invert);
-
-  if (cmp_code == ERROR_MARK)
-    return false;
-
-  all_pruned = prune_uninit_phi_opnds
-    (phi, uninit_opnds, as_a<gphi *> (flag_def), boundary_cst, cmp_code,
-     visited_phis, &visited_flag_phis);
-
-  if (visited_flag_phis)
-    BITMAP_FREE (visited_flag_phis);
-
-  return all_pruned;
-}
-
-/* The helper function returns true if two predicates X1 and X2
-   are equivalent.  It assumes the expressions have already
-   properly re-associated.  */
-
-static inline bool
-pred_equal_p (pred_info x1, pred_info x2)
-{
-  enum tree_code c1, c2;
-  if (!operand_equal_p (x1.pred_lhs, x2.pred_lhs, 0)
-      || !operand_equal_p (x1.pred_rhs, x2.pred_rhs, 0))
-    return false;
-
-  c1 = x1.cond_code;
-  if (x1.invert != x2.invert
-      && TREE_CODE_CLASS (x2.cond_code) == tcc_comparison)
-    c2 = invert_tree_comparison (x2.cond_code, false);
-  else
-    c2 = x2.cond_code;
-
-  return c1 == c2;
-}
-
-/* Returns true if the predication is testing !=.  */
-
-static inline bool
-is_neq_relop_p (pred_info pred)
-{
-
-  return ((pred.cond_code == NE_EXPR && !pred.invert)
-	  || (pred.cond_code == EQ_EXPR && pred.invert));
-}
-
-/* Returns true if pred is of the form X != 0.  */
-
-static inline bool
-is_neq_zero_form_p (pred_info pred)
-{
-  if (!is_neq_relop_p (pred) || !integer_zerop (pred.pred_rhs)
-      || TREE_CODE (pred.pred_lhs) != SSA_NAME)
-    return false;
-  return true;
-}
-
-/* The helper function returns true if two predicates X1
-   is equivalent to X2 != 0.  */
-
-static inline bool
-pred_expr_equal_p (pred_info x1, tree x2)
-{
-  if (!is_neq_zero_form_p (x1))
-    return false;
-
-  return operand_equal_p (x1.pred_lhs, x2, 0);
-}
-
-/* Returns true of the domain of single predicate expression
-   EXPR1 is a subset of that of EXPR2.  Returns false if it
-   cannot be proved.  */
-
-static bool
-is_pred_expr_subset_of (pred_info expr1, pred_info expr2)
-{
-  enum tree_code code1, code2;
-
-  if (pred_equal_p (expr1, expr2))
-    return true;
-
-  if ((TREE_CODE (expr1.pred_rhs) != INTEGER_CST)
-      || (TREE_CODE (expr2.pred_rhs) != INTEGER_CST))
-    return false;
-
-  if (!operand_equal_p (expr1.pred_lhs, expr2.pred_lhs, 0))
-    return false;
-
-  code1 = expr1.cond_code;
-  if (expr1.invert)
-    code1 = invert_tree_comparison (code1, false);
-  code2 = expr2.cond_code;
-  if (expr2.invert)
-    code2 = invert_tree_comparison (code2, false);
-
-  if (code2 == NE_EXPR && code1 == NE_EXPR)
-    return false;
-
-  if (code2 == NE_EXPR)
-    return !value_sat_pred_p (expr2.pred_rhs, expr1.pred_rhs, code1);
-
-  if (code1 == EQ_EXPR)
-    return value_sat_pred_p (expr1.pred_rhs, expr2.pred_rhs, code2);
-
-  if (code1 == code2)
-    return value_sat_pred_p (expr1.pred_rhs, expr2.pred_rhs, code2,
-			     code1 == BIT_AND_EXPR);
+  if (TREE_CODE (val) == SSA_NAME)
+    return uninit_undefined_value_p (val);
 
   return false;
 }
 
-/* Returns true if the domain of PRED1 is a subset
-   of that of PRED2.  Returns false if it cannot be proved so.  */
+/* Return a bitset of PHI arguments of interest.  */
 
-static bool
-is_pred_chain_subset_of (pred_chain pred1, pred_chain pred2)
+unsigned
+uninit_undef_val_t::phi_arg_set (gphi *phi)
 {
-  size_t np1, np2, i1, i2;
-
-  np1 = pred1.length ();
-  np2 = pred2.length ();
-
-  for (i2 = 0; i2 < np2; i2++)
-    {
-      bool found = false;
-      pred_info info2 = pred2[i2];
-      for (i1 = 0; i1 < np1; i1++)
-	{
-	  pred_info info1 = pred1[i1];
-	  if (is_pred_expr_subset_of (info1, info2))
-	    {
-	      found = true;
-	      break;
-	    }
-	}
-      if (!found)
-	return false;
-    }
-  return true;
-}
-
-/* Returns true if the domain defined by
-   one pred chain ONE_PRED is a subset of the domain
-   of *PREDS.  It returns false if ONE_PRED's domain is
-   not a subset of any of the sub-domains of PREDS
-   (corresponding to each individual chains in it), even
-   though it may be still be a subset of whole domain
-   of PREDS which is the union (ORed) of all its subdomains.
-   In other words, the result is conservative.  */
-
-static bool
-is_included_in (pred_chain one_pred, pred_chain_union preds)
-{
-  size_t i;
-  size_t n = preds.length ();
-
-  for (i = 0; i < n; i++)
-    {
-      if (is_pred_chain_subset_of (one_pred, preds[i]))
-	return true;
-    }
-
-  return false;
-}
-
-/* Compares two predicate sets PREDS1 and PREDS2 and returns
-   true if the domain defined by PREDS1 is a superset
-   of PREDS2's domain.  N1 and N2 are array sizes of PREDS1 and
-   PREDS2 respectively.  The implementation chooses not to build
-   generic trees (and relying on the folding capability of the
-   compiler), but instead performs brute force comparison of
-   individual predicate chains (won't be a compile time problem
-   as the chains are pretty short).  When the function returns
-   false, it does not necessarily mean *PREDS1 is not a superset
-   of *PREDS2, but mean it may not be so since the analysis cannot
-   prove it.  In such cases, false warnings may still be
-   emitted.  */
-
-static bool
-is_superset_of (pred_chain_union preds1, pred_chain_union preds2)
-{
-  size_t i, n2;
-  pred_chain one_pred_chain = vNULL;
-
-  n2 = preds2.length ();
-
-  for (i = 0; i < n2; i++)
-    {
-      one_pred_chain = preds2[i];
-      if (!is_included_in (one_pred_chain, preds1))
-	return false;
-    }
-
-  return true;
-}
-
-/* Returns true if X1 is the negate of X2.  */
-
-static inline bool
-pred_neg_p (pred_info x1, pred_info x2)
-{
-  enum tree_code c1, c2;
-  if (!operand_equal_p (x1.pred_lhs, x2.pred_lhs, 0)
-      || !operand_equal_p (x1.pred_rhs, x2.pred_rhs, 0))
-    return false;
-
-  c1 = x1.cond_code;
-  if (x1.invert == x2.invert)
-    c2 = invert_tree_comparison (x2.cond_code, false);
-  else
-    c2 = x2.cond_code;
-
-  return c1 == c2;
-}
-
-/* 1) ((x IOR y) != 0) AND (x != 0) is equivalent to (x != 0);
-   2) (X AND Y) OR (!X AND Y) is equivalent to Y;
-   3) X OR (!X AND Y) is equivalent to (X OR Y);
-   4) ((x IAND y) != 0) || (x != 0 AND y != 0)) is equivalent to
-      (x != 0 AND y != 0)
-   5) (X AND Y) OR (!X AND Z) OR (!Y AND Z) is equivalent to
-      (X AND Y) OR Z
-
-   PREDS is the predicate chains, and N is the number of chains.  */
-
-/* Helper function to implement rule 1 above.  ONE_CHAIN is
-   the AND predication to be simplified.  */
-
-static void
-simplify_pred (pred_chain *one_chain)
-{
-  size_t i, j, n;
-  bool simplified = false;
-  pred_chain s_chain = vNULL;
-
-  n = one_chain->length ();
-
-  for (i = 0; i < n; i++)
-    {
-      pred_info *a_pred = &(*one_chain)[i];
-
-      if (!a_pred->pred_lhs)
-	continue;
-      if (!is_neq_zero_form_p (*a_pred))
-	continue;
-
-      gimple *def_stmt = SSA_NAME_DEF_STMT (a_pred->pred_lhs);
-      if (gimple_code (def_stmt) != GIMPLE_ASSIGN)
-	continue;
-      if (gimple_assign_rhs_code (def_stmt) == BIT_IOR_EXPR)
-	{
-	  for (j = 0; j < n; j++)
-	    {
-	      pred_info *b_pred = &(*one_chain)[j];
-
-	      if (!b_pred->pred_lhs)
-		continue;
-	      if (!is_neq_zero_form_p (*b_pred))
-		continue;
-
-	      if (pred_expr_equal_p (*b_pred, gimple_assign_rhs1 (def_stmt))
-		  || pred_expr_equal_p (*b_pred, gimple_assign_rhs2 (def_stmt)))
-		{
-		  /* Mark a_pred for removal.  */
-		  a_pred->pred_lhs = NULL;
-		  a_pred->pred_rhs = NULL;
-		  simplified = true;
-		  break;
-		}
-	    }
-	}
-    }
-
-  if (!simplified)
-    return;
-
-  for (i = 0; i < n; i++)
-    {
-      pred_info *a_pred = &(*one_chain)[i];
-      if (!a_pred->pred_lhs)
-	continue;
-      s_chain.safe_push (*a_pred);
-    }
-
-  one_chain->release ();
-  *one_chain = s_chain;
-}
-
-/* The helper function implements the rule 2 for the
-   OR predicate PREDS.
-
-   2) (X AND Y) OR (!X AND Y) is equivalent to Y.  */
-
-static bool
-simplify_preds_2 (pred_chain_union *preds)
-{
-  size_t i, j, n;
-  bool simplified = false;
-  pred_chain_union s_preds = vNULL;
-
-  /* (X AND Y) OR (!X AND Y) is equivalent to Y.
-     (X AND Y) OR (X AND !Y) is equivalent to X.  */
-
-  n = preds->length ();
-  for (i = 0; i < n; i++)
-    {
-      pred_info x, y;
-      pred_chain *a_chain = &(*preds)[i];
-
-      if (a_chain->length () != 2)
-	continue;
-
-      x = (*a_chain)[0];
-      y = (*a_chain)[1];
-
-      for (j = 0; j < n; j++)
-	{
-	  pred_chain *b_chain;
-	  pred_info x2, y2;
-
-	  if (j == i)
-	    continue;
-
-	  b_chain = &(*preds)[j];
-	  if (b_chain->length () != 2)
-	    continue;
-
-	  x2 = (*b_chain)[0];
-	  y2 = (*b_chain)[1];
-
-	  if (pred_equal_p (x, x2) && pred_neg_p (y, y2))
-	    {
-	      /* Kill a_chain.  */
-	      a_chain->release ();
-	      b_chain->release ();
-	      b_chain->safe_push (x);
-	      simplified = true;
-	      break;
-	    }
-	  if (pred_neg_p (x, x2) && pred_equal_p (y, y2))
-	    {
-	      /* Kill a_chain.  */
-	      a_chain->release ();
-	      b_chain->release ();
-	      b_chain->safe_push (y);
-	      simplified = true;
-	      break;
-	    }
-	}
-    }
-  /* Now clean up the chain.  */
-  if (simplified)
-    {
-      for (i = 0; i < n; i++)
-	{
-	  if ((*preds)[i].is_empty ())
-	    continue;
-	  s_preds.safe_push ((*preds)[i]);
-	}
-      preds->release ();
-      (*preds) = s_preds;
-      s_preds = vNULL;
-    }
-
-  return simplified;
-}
-
-/* The helper function implements the rule 2 for the
-   OR predicate PREDS.
-
-   3) x OR (!x AND y) is equivalent to x OR y.  */
-
-static bool
-simplify_preds_3 (pred_chain_union *preds)
-{
-  size_t i, j, n;
-  bool simplified = false;
-
-  /* Now iteratively simplify X OR (!X AND Z ..)
-       into X OR (Z ...).  */
-
-  n = preds->length ();
-  if (n < 2)
-    return false;
-
-  for (i = 0; i < n; i++)
-    {
-      pred_info x;
-      pred_chain *a_chain = &(*preds)[i];
-
-      if (a_chain->length () != 1)
-	continue;
-
-      x = (*a_chain)[0];
-
-      for (j = 0; j < n; j++)
-	{
-	  pred_chain *b_chain;
-	  pred_info x2;
-	  size_t k;
-
-	  if (j == i)
-	    continue;
-
-	  b_chain = &(*preds)[j];
-	  if (b_chain->length () < 2)
-	    continue;
-
-	  for (k = 0; k < b_chain->length (); k++)
-	    {
-	      x2 = (*b_chain)[k];
-	      if (pred_neg_p (x, x2))
-		{
-		  b_chain->unordered_remove (k);
-		  simplified = true;
-		  break;
-		}
-	    }
-	}
-    }
-  return simplified;
-}
-
-/* The helper function implements the rule 4 for the
-   OR predicate PREDS.
-
-   2) ((x AND y) != 0) OR (x != 0 AND y != 0) is equivalent to
-       (x != 0 ANd y != 0).   */
-
-static bool
-simplify_preds_4 (pred_chain_union *preds)
-{
-  size_t i, j, n;
-  bool simplified = false;
-  pred_chain_union s_preds = vNULL;
-  gimple *def_stmt;
-
-  n = preds->length ();
-  for (i = 0; i < n; i++)
-    {
-      pred_info z;
-      pred_chain *a_chain = &(*preds)[i];
-
-      if (a_chain->length () != 1)
-	continue;
-
-      z = (*a_chain)[0];
-
-      if (!is_neq_zero_form_p (z))
-	continue;
-
-      def_stmt = SSA_NAME_DEF_STMT (z.pred_lhs);
-      if (gimple_code (def_stmt) != GIMPLE_ASSIGN)
-	continue;
-
-      if (gimple_assign_rhs_code (def_stmt) != BIT_AND_EXPR)
-	continue;
-
-      for (j = 0; j < n; j++)
-	{
-	  pred_chain *b_chain;
-	  pred_info x2, y2;
-
-	  if (j == i)
-	    continue;
-
-	  b_chain = &(*preds)[j];
-	  if (b_chain->length () != 2)
-	    continue;
-
-	  x2 = (*b_chain)[0];
-	  y2 = (*b_chain)[1];
-	  if (!is_neq_zero_form_p (x2) || !is_neq_zero_form_p (y2))
-	    continue;
-
-	  if ((pred_expr_equal_p (x2, gimple_assign_rhs1 (def_stmt))
-	       && pred_expr_equal_p (y2, gimple_assign_rhs2 (def_stmt)))
-	      || (pred_expr_equal_p (x2, gimple_assign_rhs2 (def_stmt))
-		  && pred_expr_equal_p (y2, gimple_assign_rhs1 (def_stmt))))
-	    {
-	      /* Kill a_chain.  */
-	      a_chain->release ();
-	      simplified = true;
-	      break;
-	    }
-	}
-    }
-  /* Now clean up the chain.  */
-  if (simplified)
-    {
-      for (i = 0; i < n; i++)
-	{
-	  if ((*preds)[i].is_empty ())
-	    continue;
-	  s_preds.safe_push ((*preds)[i]);
-	}
-
-      preds->release ();
-      (*preds) = s_preds;
-      s_preds = vNULL;
-    }
-
-  return simplified;
-}
-
-/* This function simplifies predicates in PREDS.  */
-
-static void
-simplify_preds (pred_chain_union *preds, gimple *use_or_def, bool is_use)
-{
-  size_t i, n;
-  bool changed = false;
-
-  if (dump_file && dump_flags & TDF_DETAILS)
-    {
-      fprintf (dump_file, "[BEFORE SIMPLICATION -- ");
-      dump_predicates (use_or_def, *preds, is_use ? "[USE]:\n" : "[DEF]:\n");
-    }
-
-  for (i = 0; i < preds->length (); i++)
-    simplify_pred (&(*preds)[i]);
-
-  n = preds->length ();
-  if (n < 2)
-    return;
-
-  do
-    {
-      changed = false;
-      if (simplify_preds_2 (preds))
-	changed = true;
-
-      /* Now iteratively simplify X OR (!X AND Z ..)
-       into X OR (Z ...).  */
-      if (simplify_preds_3 (preds))
-	changed = true;
-
-      if (simplify_preds_4 (preds))
-	changed = true;
-    }
-  while (changed);
-
-  return;
-}
-
-/* This is a helper function which attempts to normalize predicate chains
-  by following UD chains.  It basically builds up a big tree of either IOR
-  operations or AND operations, and convert the IOR tree into a
-  pred_chain_union or BIT_AND tree into a pred_chain.
-  Example:
-
-  _3 = _2 RELOP1 _1;
-  _6 = _5 RELOP2 _4;
-  _9 = _8 RELOP3 _7;
-  _10 = _3 | _6;
-  _12 = _9 | _0;
-  _t = _10 | _12;
-
- then _t != 0 will be normalized into a pred_chain_union
-
-   (_2 RELOP1 _1) OR (_5 RELOP2 _4) OR (_8 RELOP3 _7) OR (_0 != 0)
-
- Similarly given,
-
-  _3 = _2 RELOP1 _1;
-  _6 = _5 RELOP2 _4;
-  _9 = _8 RELOP3 _7;
-  _10 = _3 & _6;
-  _12 = _9 & _0;
-
- then _t != 0 will be normalized into a pred_chain:
-   (_2 RELOP1 _1) AND (_5 RELOP2 _4) AND (_8 RELOP3 _7) AND (_0 != 0)
-
-  */
-
-/* This is a helper function that stores a PRED into NORM_PREDS.  */
-
-inline static void
-push_pred (pred_chain_union *norm_preds, pred_info pred)
-{
-  pred_chain pred_chain = vNULL;
-  pred_chain.safe_push (pred);
-  norm_preds->safe_push (pred_chain);
-}
-
-/* A helper function that creates a predicate of the form
-   OP != 0 and push it WORK_LIST.  */
-
-inline static void
-push_to_worklist (tree op, vec<pred_info, va_heap, vl_ptr> *work_list,
-		  hash_set<tree> *mark_set)
-{
-  if (mark_set->contains (op))
-    return;
-  mark_set->add (op);
-
-  pred_info arg_pred;
-  arg_pred.pred_lhs = op;
-  arg_pred.pred_rhs = integer_zero_node;
-  arg_pred.cond_code = NE_EXPR;
-  arg_pred.invert = false;
-  work_list->safe_push (arg_pred);
-}
-
-/* A helper that generates a pred_info from a gimple assignment
-   CMP_ASSIGN with comparison rhs.  */
-
-static pred_info
-get_pred_info_from_cmp (gimple *cmp_assign)
-{
-  pred_info n_pred;
-  n_pred.pred_lhs = gimple_assign_rhs1 (cmp_assign);
-  n_pred.pred_rhs = gimple_assign_rhs2 (cmp_assign);
-  n_pred.cond_code = gimple_assign_rhs_code (cmp_assign);
-  n_pred.invert = false;
-  return n_pred;
-}
-
-/* Returns true if the PHI is a degenerated phi with
-   all args with the same value (relop).  In that case, *PRED
-   will be updated to that value.  */
-
-static bool
-is_degenerated_phi (gimple *phi, pred_info *pred_p)
-{
-  int i, n;
-  tree op0;
-  gimple *def0;
-  pred_info pred0;
-
-  n = gimple_phi_num_args (phi);
-  op0 = gimple_phi_arg_def (phi, 0);
-
-  if (TREE_CODE (op0) != SSA_NAME)
-    return false;
-
-  def0 = SSA_NAME_DEF_STMT (op0);
-  if (gimple_code (def0) != GIMPLE_ASSIGN)
-    return false;
-  if (TREE_CODE_CLASS (gimple_assign_rhs_code (def0)) != tcc_comparison)
-    return false;
-  pred0 = get_pred_info_from_cmp (def0);
-
-  for (i = 1; i < n; ++i)
-    {
-      gimple *def;
-      pred_info pred;
-      tree op = gimple_phi_arg_def (phi, i);
-
-      if (TREE_CODE (op) != SSA_NAME)
-	return false;
-
-      def = SSA_NAME_DEF_STMT (op);
-      if (gimple_code (def) != GIMPLE_ASSIGN)
-	return false;
-      if (TREE_CODE_CLASS (gimple_assign_rhs_code (def)) != tcc_comparison)
-	return false;
-      pred = get_pred_info_from_cmp (def);
-      if (!pred_equal_p (pred, pred0))
-	return false;
-    }
-
-  *pred_p = pred0;
-  return true;
-}
-
-/* Normalize one predicate PRED
-   1) if PRED can no longer be normlized, put it into NORM_PREDS.
-   2) otherwise if PRED is of the form x != 0, follow x's definition
-      and put normalized predicates into WORK_LIST.  */
-
-static void
-normalize_one_pred_1 (pred_chain_union *norm_preds,
-		      pred_chain *norm_chain,
-		      pred_info pred,
-		      enum tree_code and_or_code,
-		      vec<pred_info, va_heap, vl_ptr> *work_list,
-		      hash_set<tree> *mark_set)
-{
-  if (!is_neq_zero_form_p (pred))
-    {
-      if (and_or_code == BIT_IOR_EXPR)
-	push_pred (norm_preds, pred);
-      else
-	norm_chain->safe_push (pred);
-      return;
-    }
-
-  gimple *def_stmt = SSA_NAME_DEF_STMT (pred.pred_lhs);
-
-  if (gimple_code (def_stmt) == GIMPLE_PHI
-      && is_degenerated_phi (def_stmt, &pred))
-    work_list->safe_push (pred);
-  else if (gimple_code (def_stmt) == GIMPLE_PHI && and_or_code == BIT_IOR_EXPR)
-    {
-      int i, n;
-      n = gimple_phi_num_args (def_stmt);
-
-      /* If we see non zero constant, we should punt.  The predicate
-       * should be one guarding the phi edge.  */
-      for (i = 0; i < n; ++i)
-	{
-	  tree op = gimple_phi_arg_def (def_stmt, i);
-	  if (TREE_CODE (op) == INTEGER_CST && !integer_zerop (op))
-	    {
-	      push_pred (norm_preds, pred);
-	      return;
-	    }
-	}
-
-      for (i = 0; i < n; ++i)
-	{
-	  tree op = gimple_phi_arg_def (def_stmt, i);
-	  if (integer_zerop (op))
-	    continue;
-
-	  push_to_worklist (op, work_list, mark_set);
-	}
-    }
-  else if (gimple_code (def_stmt) != GIMPLE_ASSIGN)
-    {
-      if (and_or_code == BIT_IOR_EXPR)
-	push_pred (norm_preds, pred);
-      else
-	norm_chain->safe_push (pred);
-    }
-  else if (gimple_assign_rhs_code (def_stmt) == and_or_code)
-    {
-      /* Avoid splitting up bit manipulations like x & 3 or y | 1.  */
-      if (is_gimple_min_invariant (gimple_assign_rhs2 (def_stmt)))
-	{
-	  /* But treat x & 3 as condition.  */
-	  if (and_or_code == BIT_AND_EXPR)
-	    {
-	      pred_info n_pred;
-	      n_pred.pred_lhs = gimple_assign_rhs1 (def_stmt);
-	      n_pred.pred_rhs = gimple_assign_rhs2 (def_stmt);
-	      n_pred.cond_code = and_or_code;
-	      n_pred.invert = false;
-	      norm_chain->safe_push (n_pred);
-	    }
-	}
-      else
-	{
-	  push_to_worklist (gimple_assign_rhs1 (def_stmt), work_list, mark_set);
-	  push_to_worklist (gimple_assign_rhs2 (def_stmt), work_list, mark_set);
-	}
-    }
-  else if (TREE_CODE_CLASS (gimple_assign_rhs_code (def_stmt))
-	   == tcc_comparison)
-    {
-      pred_info n_pred = get_pred_info_from_cmp (def_stmt);
-      if (and_or_code == BIT_IOR_EXPR)
-	push_pred (norm_preds, n_pred);
-      else
-	norm_chain->safe_push (n_pred);
-    }
-  else
-    {
-      if (and_or_code == BIT_IOR_EXPR)
-	push_pred (norm_preds, pred);
-      else
-	norm_chain->safe_push (pred);
-    }
-}
-
-/* Normalize PRED and store the normalized predicates into NORM_PREDS.  */
-
-static void
-normalize_one_pred (pred_chain_union *norm_preds, pred_info pred)
-{
-  vec<pred_info, va_heap, vl_ptr> work_list = vNULL;
-  enum tree_code and_or_code = ERROR_MARK;
-  pred_chain norm_chain = vNULL;
-
-  if (!is_neq_zero_form_p (pred))
-    {
-      push_pred (norm_preds, pred);
-      return;
-    }
-
-  gimple *def_stmt = SSA_NAME_DEF_STMT (pred.pred_lhs);
-  if (gimple_code (def_stmt) == GIMPLE_ASSIGN)
-    and_or_code = gimple_assign_rhs_code (def_stmt);
-  if (and_or_code != BIT_IOR_EXPR && and_or_code != BIT_AND_EXPR)
-    {
-      if (TREE_CODE_CLASS (and_or_code) == tcc_comparison)
-	{
-	  pred_info n_pred = get_pred_info_from_cmp (def_stmt);
-	  push_pred (norm_preds, n_pred);
-	}
-      else
-	push_pred (norm_preds, pred);
-      return;
-    }
-
-  work_list.safe_push (pred);
-  hash_set<tree> mark_set;
-
-  while (!work_list.is_empty ())
-    {
-      pred_info a_pred = work_list.pop ();
-      normalize_one_pred_1 (norm_preds, &norm_chain, a_pred, and_or_code,
-			    &work_list, &mark_set);
-    }
-  if (and_or_code == BIT_AND_EXPR)
-    norm_preds->safe_push (norm_chain);
-
-  work_list.release ();
-}
-
-static void
-normalize_one_pred_chain (pred_chain_union *norm_preds, pred_chain one_chain)
-{
-  vec<pred_info, va_heap, vl_ptr> work_list = vNULL;
-  hash_set<tree> mark_set;
-  pred_chain norm_chain = vNULL;
-  size_t i;
-
-  for (i = 0; i < one_chain.length (); i++)
-    {
-      work_list.safe_push (one_chain[i]);
-      mark_set.add (one_chain[i].pred_lhs);
-    }
-
-  while (!work_list.is_empty ())
-    {
-      pred_info a_pred = work_list.pop ();
-      normalize_one_pred_1 (0, &norm_chain, a_pred, BIT_AND_EXPR, &work_list,
-			    &mark_set);
-    }
-
-  norm_preds->safe_push (norm_chain);
-  work_list.release ();
-}
-
-/* Normalize predicate chains PREDS and returns the normalized one.  */
-
-static pred_chain_union
-normalize_preds (pred_chain_union preds, gimple *use_or_def, bool is_use)
-{
-  pred_chain_union norm_preds = vNULL;
-  size_t n = preds.length ();
-  size_t i;
-
-  if (dump_file && dump_flags & TDF_DETAILS)
-    {
-      fprintf (dump_file, "[BEFORE NORMALIZATION --");
-      dump_predicates (use_or_def, preds, is_use ? "[USE]:\n" : "[DEF]:\n");
-    }
-
-  for (i = 0; i < n; i++)
-    {
-      if (preds[i].length () != 1)
-	normalize_one_pred_chain (&norm_preds, preds[i]);
-      else
-	{
-	  normalize_one_pred (&norm_preds, preds[i][0]);
-	  preds[i].release ();
-	}
-    }
-
-  if (dump_file)
-    {
-      fprintf (dump_file, "[AFTER NORMALIZATION -- ");
-      dump_predicates (use_or_def, norm_preds,
-		       is_use ? "[USE]:\n" : "[DEF]:\n");
-    }
-
-  destroy_predicate_vecs (&preds);
-  return norm_preds;
-}
-
-/* Return TRUE if PREDICATE can be invalidated by any individual
-   predicate in USE_GUARD.  */
-
-static bool
-can_one_predicate_be_invalidated_p (pred_info predicate,
-				    pred_chain use_guard)
-{
-  if (dump_file && dump_flags & TDF_DETAILS)
-    {
-      fprintf (dump_file, "Testing if this predicate: ");
-      dump_pred_info (predicate);
-      fprintf (dump_file, "\n...can be invalidated by a USE guard of: ");
-      dump_pred_chain (use_guard);
-    }
-  for (size_t i = 0; i < use_guard.length (); ++i)
-    {
-      /* NOTE: This is a very simple check, and only understands an
-	 exact opposite.  So, [i == 0] is currently only invalidated
-	 by [.NOT. i == 0] or [i != 0].  Ideally we should also
-	 invalidate with say [i > 5] or [i == 8].  There is certainly
-	 room for improvement here.  */
-      if (pred_neg_p (predicate, use_guard[i]))
-	{
-	  if (dump_file && dump_flags & TDF_DETAILS)
-	    {
-	      fprintf (dump_file, "  Predicate was invalidated by: ");
-	      dump_pred_info (use_guard[i]);
-	      fputc ('\n', dump_file);
-	    }
-	  return true;
-	}
-    }
-  return false;
-}
-
-/* Return TRUE if all predicates in UNINIT_PRED are invalidated by
-   USE_GUARD being true.  */
-
-static bool
-can_chain_union_be_invalidated_p (pred_chain_union uninit_pred,
-				  pred_chain use_guard)
-{
-  if (uninit_pred.is_empty ())
-    return false;
-  if (dump_file && dump_flags & TDF_DETAILS)
-    dump_predicates (NULL, uninit_pred,
-		     "Testing if anything here can be invalidated: ");
-  for (size_t i = 0; i < uninit_pred.length (); ++i)
-    {
-      pred_chain c = uninit_pred[i];
-      size_t j;
-      for (j = 0; j < c.length (); ++j)
-	if (can_one_predicate_be_invalidated_p (c[j], use_guard))
-	  break;
-
-      /* If we were unable to invalidate any predicate in C, then there
-	 is a viable path from entry to the PHI where the PHI takes
-	 an uninitialized value and continues to a use of the PHI.  */
-      if (j == c.length ())
-	return false;
-    }
-  return true;
-}
-
-/* Return TRUE if none of the uninitialized operands in UNINT_OPNDS
-   can actually happen if we arrived at a use for PHI.
-
-   PHI_USE_GUARDS are the guard conditions for the use of the PHI.  */
-
-static bool
-uninit_uses_cannot_happen (gphi *phi, unsigned uninit_opnds,
-			   pred_chain_union phi_use_guards)
-{
-  unsigned phi_args = gimple_phi_num_args (phi);
-  if (phi_args > max_phi_args)
-    return false;
-
-  /* PHI_USE_GUARDS are OR'ed together.  If we have more than one
-     possible guard, there's no way of knowing which guard was true.
-     Since we need to be absolutely sure that the uninitialized
-     operands will be invalidated, bail.  */
-  if (phi_use_guards.length () != 1)
-    return false;
-
-  /* Look for the control dependencies of all the uninitialized
-     operands and build guard predicates describing them.  */
-  pred_chain_union uninit_preds;
-  bool ret = true;
-  for (unsigned i = 0; i < phi_args; ++i)
-    {
-      if (!MASK_TEST_BIT (uninit_opnds, i))
-	continue;
-
-      edge e = gimple_phi_arg_edge (phi, i);
-      vec<edge> dep_chains[MAX_NUM_CHAINS];
-      auto_vec<edge, MAX_CHAIN_LEN + 1> cur_chain;
-      size_t num_chains = 0;
-      int num_calls = 0;
-
-      /* Build the control dependency chain for uninit operand `i'...  */
-      uninit_preds = vNULL;
-      if (!compute_control_dep_chain (ENTRY_BLOCK_PTR_FOR_FN (cfun),
-				      e->src, dep_chains, &num_chains,
-				      &cur_chain, &num_calls))
-	{
-	  ret = false;
-	  break;
-	}
-      /* ...and convert it into a set of predicates.  */
-      bool has_valid_preds
-	= convert_control_dep_chain_into_preds (dep_chains, num_chains,
-						&uninit_preds);
-      for (size_t j = 0; j < num_chains; ++j)
-	dep_chains[j].release ();
-      if (!has_valid_preds)
-	{
-	  ret = false;
-	  break;
-	}
-      simplify_preds (&uninit_preds, NULL, false);
-      uninit_preds = normalize_preds (uninit_preds, NULL, false);
-
-      /* Can the guard for this uninitialized operand be invalidated
-	 by the PHI use?  */
-      if (!can_chain_union_be_invalidated_p (uninit_preds, phi_use_guards[0]))
-	{
-	  ret = false;
-	  break;
-	}
-    }
-  destroy_predicate_vecs (&uninit_preds);
-  return ret;
-}
-
-/* Computes the predicates that guard the use and checks
-   if the incoming paths that have empty (or possibly
-   empty) definition can be pruned/filtered.  The function returns
-   true if it can be determined that the use of PHI's def in
-   USE_STMT is guarded with a predicate set not overlapping with
-   predicate sets of all runtime paths that do not have a definition.
-
-   Returns false if it is not or it cannot be determined.  USE_BB is
-   the bb of the use (for phi operand use, the bb is not the bb of
-   the phi stmt, but the src bb of the operand edge).
-
-   UNINIT_OPNDS is a bit vector.  If an operand of PHI is uninitialized, the
-   corresponding bit in the vector is 1.  VISITED_PHIS is a pointer
-   set of phis being visited.
-
-   *DEF_PREDS contains the (memoized) defining predicate chains of PHI.
-   If *DEF_PREDS is the empty vector, the defining predicate chains of
-   PHI will be computed and stored into *DEF_PREDS as needed.
-
-   VISITED_PHIS is a pointer set of phis being visited.  */
-
-static bool
-is_use_properly_guarded (gimple *use_stmt,
-			 basic_block use_bb,
-			 gphi *phi,
-			 unsigned uninit_opnds,
-			 pred_chain_union *def_preds,
-			 hash_set<gphi *> *visited_phis)
-{
-  basic_block phi_bb;
-  pred_chain_union preds = vNULL;
-  bool has_valid_preds = false;
-  bool is_properly_guarded = false;
-
-  if (visited_phis->add (phi))
-    return false;
-
-  phi_bb = gimple_bb (phi);
-
-  if (is_non_loop_exit_postdominating (use_bb, phi_bb))
-    return false;
-
-  has_valid_preds = find_predicates (&preds, phi_bb, use_bb);
-
-  if (!has_valid_preds)
-    {
-      destroy_predicate_vecs (&preds);
-      return false;
-    }
-
-  /* Try to prune the dead incoming phi edges.  */
-  is_properly_guarded
-    = use_pred_not_overlap_with_undef_path_pred (preds, phi, uninit_opnds,
-						 visited_phis);
-
-  /* We might be able to prove that if the control dependencies
-     for UNINIT_OPNDS are true, that the control dependencies for
-     USE_STMT can never be true.  */
-  if (!is_properly_guarded)
-    is_properly_guarded |= uninit_uses_cannot_happen (phi, uninit_opnds,
-						      preds);
-
-  if (is_properly_guarded)
-    {
-      destroy_predicate_vecs (&preds);
-      return true;
-    }
-
-  if (def_preds->is_empty ())
-    {
-      has_valid_preds = find_def_preds (def_preds, phi);
-
-      if (!has_valid_preds)
-	{
-	  destroy_predicate_vecs (&preds);
-	  return false;
-	}
-
-      simplify_preds (def_preds, phi, false);
-      *def_preds = normalize_preds (*def_preds, phi, false);
-    }
-
-  simplify_preds (&preds, use_stmt, true);
-  preds = normalize_preds (preds, use_stmt, true);
-
-  is_properly_guarded = is_superset_of (*def_preds, preds);
-
-  destroy_predicate_vecs (&preds);
-  return is_properly_guarded;
+  return compute_uninit_opnds_pos (phi);
 }
 
 /* Searches through all uses of a potentially
@@ -2769,48 +1065,42 @@ is_use_properly_guarded (gimple *use_stmt,
 
 static gimple *
 find_uninit_use (gphi *phi, unsigned uninit_opnds,
-		 vec<gphi *> *worklist,
-		 hash_set<gphi *> *added_to_worklist)
+		 vec<gphi *> *worklist, hash_set<gphi *> *added_to_worklist)
 {
-  tree phi_result;
+  /* The Boolean predicate guarding the PHI definition.  Initialized
+     lazily from PHI in the first call to is_use_guarded() and cached
+     for subsequent iterations.  */
+  uninit_undef_val_t eval;
+  predicate def_preds (eval);
+
   use_operand_p use_p;
-  gimple *use_stmt;
   imm_use_iterator iter;
-  pred_chain_union def_preds = vNULL;
-  gimple *ret = NULL;
-
-  phi_result = gimple_phi_result (phi);
-
+  tree phi_result = gimple_phi_result (phi);
   FOR_EACH_IMM_USE_FAST (use_p, iter, phi_result)
     {
-      basic_block use_bb;
-
-      use_stmt = USE_STMT (use_p);
+      gimple *use_stmt = USE_STMT (use_p);
       if (is_gimple_debug (use_stmt))
 	continue;
 
+      basic_block use_bb;
       if (gphi *use_phi = dyn_cast<gphi *> (use_stmt))
 	use_bb = gimple_phi_arg_edge (use_phi,
 				      PHI_ARG_INDEX_FROM_USE (use_p))->src;
       else
 	use_bb = gimple_bb (use_stmt);
 
-      hash_set<gphi *> visited_phis;
-      if (is_use_properly_guarded (use_stmt, use_bb, phi, uninit_opnds,
-				   &def_preds, &visited_phis))
+      if (def_preds.is_use_guarded (use_stmt, use_bb, phi, uninit_opnds))
 	continue;
 
       if (dump_file && (dump_flags & TDF_DETAILS))
 	{
-	  fprintf (dump_file, "[CHECK]: Found unguarded use: ");
+	  fprintf (dump_file, "Found unguarded use in bb %u: ",
+		   use_bb->index);
 	  print_gimple_stmt (dump_file, use_stmt, 0);
 	}
       /* Found one real use, return.  */
       if (gimple_code (use_stmt) != GIMPLE_PHI)
-	{
-	  ret = use_stmt;
-	  break;
-	}
+	return use_stmt;
 
       /* Found a phi use that is not guarded,
 	 add the phi to the worklist.  */
@@ -2827,8 +1117,7 @@ find_uninit_use (gphi *phi, unsigned uninit_opnds,
 	}
     }
 
-  destroy_predicate_vecs (&def_preds);
-  return ret;
+  return NULL;
 }
 
 /* Look for inputs to PHI that are SSA_NAMEs that have empty definitions
@@ -2843,44 +1132,54 @@ static void
 warn_uninitialized_phi (gphi *phi, vec<gphi *> *worklist,
 			hash_set<gphi *> *added_to_worklist)
 {
-  unsigned uninit_opnds;
-  gimple *uninit_use_stmt = 0;
-  tree uninit_op;
-  int phiarg_index;
-  location_t loc;
-
   /* Don't look at virtual operands.  */
   if (virtual_operand_p (gimple_phi_result (phi)))
     return;
 
-  uninit_opnds = compute_uninit_opnds_pos (phi);
-
+  unsigned uninit_opnds = compute_uninit_opnds_pos (phi);
   if (MASK_EMPTY (uninit_opnds))
     return;
 
   if (dump_file && (dump_flags & TDF_DETAILS))
     {
-      fprintf (dump_file, "[CHECK]: examining phi: ");
+      fprintf (dump_file, "Examining phi: ");
       print_gimple_stmt (dump_file, phi, 0);
     }
 
-  /* Now check if we have any use of the value without proper guard.  */
-  uninit_use_stmt = find_uninit_use (phi, uninit_opnds,
-				     worklist, added_to_worklist);
+  gimple *uninit_use_stmt = find_uninit_use (phi, uninit_opnds,
+					     worklist, added_to_worklist);
 
-  /* All uses are properly guarded.  */
+  /* All uses are properly guarded but a new PHI may have been added
+     to WORKLIST.  */
   if (!uninit_use_stmt)
     return;
 
-  phiarg_index = MASK_FIRST_SET_BIT (uninit_opnds);
-  uninit_op = gimple_phi_arg_def (phi, phiarg_index);
+  unsigned phiarg_index = MASK_FIRST_SET_BIT (uninit_opnds);
+  tree uninit_op = gimple_phi_arg_def (phi, phiarg_index);
   if (SSA_NAME_VAR (uninit_op) == NULL_TREE)
     return;
+
+  location_t loc = UNKNOWN_LOCATION;
   if (gimple_phi_arg_has_location (phi, phiarg_index))
     loc = gimple_phi_arg_location (phi, phiarg_index);
   else
-    loc = UNKNOWN_LOCATION;
-  warn_uninit (OPT_Wmaybe_uninitialized, uninit_op, SSA_NAME_VAR (uninit_op),
+    {
+      tree arg_def = gimple_phi_arg_def (phi, phiarg_index);
+      if (TREE_CODE (arg_def) == SSA_NAME)
+	{
+	  gimple *def_stmt = SSA_NAME_DEF_STMT (arg_def);
+	  if (gphi *arg_phi = dyn_cast<gphi *> (def_stmt))
+	    {
+	      unsigned uop = compute_uninit_opnds_pos (arg_phi);
+	      unsigned idx = MASK_FIRST_SET_BIT (uop);
+	      if (idx < gimple_phi_num_args (arg_phi)
+		  && gimple_phi_arg_has_location (arg_phi, idx))
+		loc = gimple_phi_arg_location (arg_phi, idx);
+	    }
+	}
+    }
+
+  warn_uninit (OPT_Wmaybe_uninitialized, uninit_op,
 	       SSA_NAME_VAR (uninit_op),
 	       "%qD may be used uninitialized in this function",
 	       uninit_use_stmt, loc);
@@ -2921,8 +1220,8 @@ public:
 
 }; // class pass_late_warn_uninitialized
 
-unsigned int
-pass_late_warn_uninitialized::execute (function *fun)
+static void
+execute_late_warn_uninitialized (function *fun)
 {
   basic_block bb;
   gphi_iterator gsi;
@@ -2945,15 +1244,13 @@ pass_late_warn_uninitialized::execute (function *fun)
     for (gsi = gsi_start_phis (bb); !gsi_end_p (gsi); gsi_next (&gsi))
       {
 	gphi *phi = gsi.phi ();
-	size_t n, i;
-
-	n = gimple_phi_num_args (phi);
 
 	/* Don't look at virtual operands.  */
 	if (virtual_operand_p (gimple_phi_result (phi)))
 	  continue;
 
-	for (i = 0; i < n; ++i)
+	unsigned n = gimple_phi_num_args (phi);
+	for (unsigned i = 0; i < n; ++i)
 	  {
 	    tree op = gimple_phi_arg_def (phi, i);
 	    if (TREE_CODE (op) == SSA_NAME && uninit_undefined_value_p (op))
@@ -2962,7 +1259,8 @@ pass_late_warn_uninitialized::execute (function *fun)
 		added_to_worklist.add (phi);
 		if (dump_file && (dump_flags & TDF_DETAILS))
 		  {
-		    fprintf (dump_file, "[WORKLIST]: add to initial list: ");
+		    fprintf (dump_file, "[WORKLIST]: add to initial list "
+			     "for operand %u of: ", i);
 		    print_gimple_stmt (dump_file, phi, 0);
 		  }
 		break;
@@ -2982,6 +1280,12 @@ pass_late_warn_uninitialized::execute (function *fun)
   possibly_undefined_names = NULL;
   free_dominance_info (CDI_POST_DOMINATORS);
   timevar_pop (TV_TREE_UNINIT);
+}
+
+unsigned int
+pass_late_warn_uninitialized::execute (function *fun)
+{
+  execute_late_warn_uninitialized (fun);
   return 0;
 }
 
@@ -3001,6 +1305,7 @@ execute_early_warn_uninitialized (void)
      optimization we want to warn about possible uninitialized as late
      as possible, thus don't do it here.  However, without
      optimization we need to warn here about "may be uninitialized".  */
+  calculate_dominance_info (CDI_DOMINATORS);
   calculate_dominance_info (CDI_POST_DOMINATORS);
 
   warn_uninitialized_vars (/*warn_maybe_uninitialized=*/!optimize);

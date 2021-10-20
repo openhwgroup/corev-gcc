@@ -1,5 +1,5 @@
 /* Prints out trees in human readable form.
-   Copyright (C) 1992-2020 Free Software Foundation, Inc.
+   Copyright (C) 1992-2021 Free Software Foundation, Inc.
    Hacked by Michael Tiemann (tiemann@cygnus.com)
 
 This file is part of GCC.
@@ -51,6 +51,7 @@ cxx_print_decl (FILE *file, tree node, int indent)
     }
   else if (TREE_CODE (node) == TEMPLATE_DECL)
     {
+      print_node (file, "result", DECL_TEMPLATE_RESULT (node), indent + 4);
       print_node (file, "parms", DECL_TEMPLATE_PARMS (node), indent + 4);
       indent_to (file, indent + 3);
       fprintf (file, " full-name \"%s\"",
@@ -58,6 +59,42 @@ cxx_print_decl (FILE *file, tree node, int indent)
     }
 
   bool need_indent = true;
+
+  tree ntnode = STRIP_TEMPLATE (node);
+  if (TREE_CODE (ntnode) == FUNCTION_DECL
+      || TREE_CODE (ntnode) == VAR_DECL
+      || TREE_CODE (ntnode) == TYPE_DECL
+      || TREE_CODE (ntnode) == CONCEPT_DECL
+      || TREE_CODE (ntnode) == NAMESPACE_DECL)
+    {
+      unsigned m = 0;
+      if (DECL_LANG_SPECIFIC (ntnode) && DECL_MODULE_IMPORT_P (ntnode))
+	m = get_importing_module (ntnode, true);
+
+      if (const char *name = m == ~0u ? "" : module_name (m, true))
+	{
+	  if (need_indent)
+	    indent_to (file, indent + 3);
+	  fprintf (file, " module %d:%s", m, name);
+	  need_indent = false;
+	}
+
+      if (DECL_LANG_SPECIFIC (ntnode) && DECL_MODULE_PURVIEW_P (ntnode))
+	{
+	  if (need_indent)
+	    indent_to (file, indent + 3);
+	  fprintf (file, " purview");
+	  need_indent = false;
+	}
+    }
+
+  if (DECL_MODULE_EXPORT_P (node))
+    {
+      if (need_indent)
+	indent_to (file, indent + 3);
+      fprintf (file, " exported");
+      need_indent = false;
+    }
 
   if (DECL_EXTERNAL (node) && DECL_NOT_REALLY_EXTERN (node))
     {
@@ -79,13 +116,8 @@ cxx_print_decl (FILE *file, tree node, int indent)
   
   if (VAR_OR_FUNCTION_DECL_P (node)
       && DECL_TEMPLATE_INFO (node))
-    {
-      if (need_indent)
-	indent_to (file, indent + 3);
-      fprintf (file, " template-info %p",
-	       (void *) DECL_TEMPLATE_INFO (node));
-      need_indent = false;
-    }
+    print_node (file, "template-info", DECL_TEMPLATE_INFO (node),
+		indent + 4);
 }
 
 void
@@ -135,6 +167,7 @@ cxx_print_type (FILE *file, tree node, int indent)
       return;
 
     case TYPE_PACK_EXPANSION:
+      print_node (file, "pattern", PACK_EXPANSION_PATTERN (node), indent + 4);
       print_node (file, "args", PACK_EXPANSION_EXTRA_ARGS (node), indent + 4);
       return;
 
@@ -250,6 +283,43 @@ cxx_print_xnode (FILE *file, tree node, int indent)
       print_node (file, "function", OVL_FUNCTION (node), indent + 4);
       print_node (file, "next", OVL_CHAIN (node), indent + 4);
       break;
+    case BINDING_VECTOR:
+      {
+	unsigned len = BINDING_VECTOR_NUM_CLUSTERS (node);
+	print_node (file, "name", BINDING_VECTOR_NAME (node), indent + 4);
+	fprintf (file, " clusters %u, alloc %u", len,
+		 BINDING_VECTOR_ALLOC_CLUSTERS (node));
+	for (unsigned ix = 0; ix != len; ix++)
+	  {
+	    binding_cluster *cluster = &BINDING_VECTOR_CLUSTER (node, ix);
+	    char pfx[24];
+	    for (unsigned jx = 0; jx != BINDING_VECTOR_SLOTS_PER_CLUSTER; jx++)
+	      if (cluster->indices[jx].span)
+		{
+		  int len = sprintf (pfx, "module:%u",
+				     cluster->indices[jx].base);
+		  if (cluster->indices[jx].span > 1)
+		    len += sprintf (&pfx[len], "(+%u)",
+				    cluster->indices[jx].span);
+		  len += sprintf (&pfx[len], " cluster:%u/%u", ix, jx);
+		  binding_slot &slot = cluster->slots[jx];
+		  if (slot.is_lazy ())
+		    {
+		      indent_to (file, indent + 4);
+		      unsigned lazy = slot.get_lazy ();
+		      fprintf (file, "%s snum:%u", pfx, lazy);
+		    }
+		  else if (slot)
+		    print_node (file, pfx, slot, indent + 4);
+		  else
+		    {
+		      indent_to (file, indent + 4);
+		      fprintf (file, "%s NULL", pfx);
+		    }
+		}
+	  }
+      }
+      break;
     case TEMPLATE_PARM_INDEX:
       print_node (file, "decl", TEMPLATE_PARM_DECL (node), indent+4);
       indent_to (file, indent + 3);
@@ -320,4 +390,24 @@ DEBUG_FUNCTION void
 debug_tree (cp_expr node)
 {
   debug_tree (node.get_value());
+}
+
+DEBUG_FUNCTION void
+debug_overload (tree node)
+{
+  FILE *file = stdout;
+
+  for (lkp_iterator iter (node); iter; ++iter)
+    {
+      tree decl = *iter;
+      auto xloc = expand_location (DECL_SOURCE_LOCATION (decl));
+      auto fullname = decl_as_string (decl, 0);
+      bool using_p = iter.using_p ();
+      bool hidden_p = iter.hidden_p ();
+
+      fprintf (file, "%p:%c%c %s:%d:%d \"%s\"\n", (void *)decl,
+	       hidden_p ? 'H' : '-',
+	       using_p ? 'U' : '-',
+	       xloc.file, xloc.line, xloc.column, fullname);
+    }
 }

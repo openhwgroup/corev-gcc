@@ -15,6 +15,8 @@ import (
 //go:linkname cgoCheckPointer
 //go:linkname cgoCheckResult
 
+var ncgocall uint64 // number of cgo calls in total for dead m
+
 // Pointer checking for cgo code.
 
 // We want to detect all cases where a program that does not use
@@ -227,7 +229,7 @@ func cgoCheckUnknownPointer(p unsafe.Pointer, msg string) (base, i uintptr) {
 		hbits := heapBitsForAddr(base)
 		n := span.elemsize
 		for i = uintptr(0); i < n; i += sys.PtrSize {
-			if i != 1*sys.PtrSize && !hbits.morePointers() {
+			if !hbits.morePointers() {
 				// No more possible pointers.
 				break
 			}

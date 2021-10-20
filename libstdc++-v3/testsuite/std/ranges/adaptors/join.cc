@@ -1,4 +1,4 @@
-// Copyright (C) 2020 Free Software Foundation, Inc.
+// Copyright (C) 2020-2021 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -19,6 +19,7 @@
 // { dg-do run { target c++2a } }
 
 #include <algorithm>
+#include <array>
 #include <ranges>
 #include <string>
 #include <string_view>
@@ -92,7 +93,7 @@ test05()
 {
   using namespace std::literals;
   std::vector<std::string> x = {"the", " ", "quick", " ", "brown", " ", "fox"};
-  auto v = x | views::join | views::split(' ');
+  auto v = x | views::join | views::lazy_split(' ');
   auto i = v.begin();
   VERIFY( ranges::equal(*i++, "the"sv) );
   VERIFY( ranges::equal(*i++, "quick"sv) );
@@ -123,6 +124,87 @@ test06()
   b = ranges::end(v);
 }
 
+void
+test07()
+{
+  // LWG 3474. Nesting join_views is broken because of CTAD
+  std::vector<std::vector<std::vector<int>>> nested_vectors = {
+    {{1, 2, 3}, {4, 5}, {6}},
+    {{7},       {8, 9}, {10, 11, 12}},
+    {{13}}
+  };
+  auto joined = nested_vectors | std::views::join | std::views::join;
+
+  using V = decltype(joined);
+  static_assert( std::same_as<std::ranges::range_value_t<V>, int> );
+}
+
+void
+test08()
+{
+  // LWG 3500. join_view::iterator::operator->() is bogus
+  struct X { int a; };
+  ranges::single_view<ranges::single_view<X>> s{std::in_place, std::in_place, 5};
+  auto v = s | views::join;
+  auto i = v.begin();
+  VERIFY( i->a == 5 );
+}
+
+template<auto join = views::join>
+void
+test09()
+{
+  // Verify SFINAE behavior.
+  static_assert(!requires { join(); });
+  static_assert(!requires { join(0, 0); });
+  static_assert(!requires { join(0); });
+  static_assert(!requires { 0 | join; });
+}
+
+void
+test10()
+{
+  // PR libstdc++/100290
+  auto v = views::single(0)
+    | views::transform([](const auto& s) { return views::single(s); })
+    | views::join;
+  VERIFY( ranges::next(v.begin()) == v.end() );
+}
+
+void
+test11()
+{
+  // Verify P2328 changes.
+  int r[] = {1, 2, 3};
+  auto v = r
+    | views::transform([] (int n) { return std::vector{{n, -n}}; })
+    | views::join;
+  VERIFY( ranges::equal(v, (int[]){1, -1, 2, -2, 3, -3}) );
+
+  struct S {
+    S() = default;
+    S(const S&) = delete;
+    S(S&&) = delete;
+  };
+  auto w = r
+    | views::transform([] (int) { return std::array<S, 2>{}; })
+    | views::join;
+  for (auto& i : w)
+    ;
+}
+
+void
+test12()
+{
+  // PR libstdc++/101263
+  constexpr auto b = [] {
+    auto r = std::views::iota(0, 5)
+      | std::views::lazy_split(0)
+      | std::views::join;
+    return r.begin() != r.end();
+  }();
+}
+
 int
 main()
 {
@@ -132,4 +214,10 @@ main()
   test04();
   test05();
   test06();
+  test07();
+  test08();
+  test09();
+  test10();
+  test11();
+  test12();
 }

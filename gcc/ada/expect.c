@@ -6,7 +6,7 @@
  *                                                                          *
  *                          C Implementation File                           *
  *                                                                          *
- *                     Copyright (C) 2001-2020, AdaCore                     *
+ *                     Copyright (C) 2001-2021, AdaCore                     *
  *                                                                          *
  * GNAT is free software;  you can  redistribute it  and/or modify it under *
  * terms of the  GNU General Public License as published  by the Free Soft- *
@@ -39,6 +39,7 @@
 #include "system.h"
 #endif
 
+#include "adaint.h"
 #include <sys/types.h>
 
 #ifdef __MINGW32__
@@ -78,7 +79,6 @@
 #include <process.h>
 #include <signal.h>
 #include <io.h>
-#include "adaint.h"
 #include "mingw32.h"
 
 int
@@ -360,7 +360,11 @@ __gnat_pipe (int *fd)
 int
 __gnat_expect_fork (void)
 {
-  return fork ();
+  int pid = fork();
+  if (pid == 0) {
+    __gnat_in_child_after_fork = 1;
+  }
+  return pid;
 }
 
 void

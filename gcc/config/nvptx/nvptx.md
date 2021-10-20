@@ -1,5 +1,5 @@
 ;; Machine description for NVPTX.
-;; Copyright (C) 2014-2020 Free Software Foundation, Inc.
+;; Copyright (C) 2014-2021 Free Software Foundation, Inc.
 ;; Contributed by Bernd Schmidt <bernds@codesourcery.com>
 ;;
 ;; This file is part of GCC.
@@ -146,6 +146,13 @@
   return true;
 })
 
+;; Test for a function symbol ref operand
+(define_predicate "symbol_ref_function_operand"
+  (match_code "symbol_ref")
+{
+  return SYMBOL_REF_FUNCTION_P (op);
+})
+
 (define_attr "predicable" "false,true"
   (const_string "true"))
 
@@ -240,6 +247,17 @@
   return nvptx_output_mov_insn (operands[0], operands[1]);
 }
   [(set_attr "subregs_ok" "true")])
+
+;; ptxas segfaults on 'mov.u64 %r24,bar+4096', so break it up.
+(define_split
+  [(set (match_operand:DI 0 "nvptx_register_operand")
+	(const:DI (plus:DI (match_operand:DI 1 "symbol_ref_function_operand")
+			   (match_operand 2 "const_int_operand"))))]
+  ""
+  [(set (match_dup 0) (match_dup 1))
+   (set (match_dup 0) (plus:DI (match_dup 0) (match_dup 2)))
+  ]
+  "")
 
 (define_insn "*mov<mode>_insn"
   [(set (match_operand:SDFM 0 "nonimmediate_operand" "=R,R,m")
@@ -365,9 +383,13 @@
   [(set (match_operand:QHIM 0 "nvptx_nonimmediate_operand" "=R,m")
 	(truncate:QHIM (match_operand:SI 1 "nvptx_register_operand" "R,R")))]
   ""
-  "@
-   %.\\tcvt%t0.u32\\t%0, %1;
-   %.\\tst%A0.u%T0\\t%0, %1;"
+  {
+    if (which_alternative == 1)
+      return "%.\\tst%A0.u%T0\\t%0, %1;";
+    if (GET_MODE (operands[0]) == QImode)
+      return "%.\\tmov%t0\\t%0, %1;";
+    return "%.\\tcvt%t0.u32\\t%0, %1;";
+  }
   [(set_attr "subregs_ok" "true")])
 
 (define_insn "truncdi<mode>2"
@@ -1430,14 +1452,24 @@
 		 (match_operand:SI 3 "const_int_operand" "n")]
 		  UNSPEC_SHUFFLE))]
   ""
-  "%.\\tshfl%S3.b32\\t%0, %1, %2, 31;")
+  {
+    if (TARGET_PTX_6_3)
+      return "%.\\tshfl.sync%S3.b32\\t%0, %1, %2, 31, 0xffffffff;";
+    else
+      return "%.\\tshfl%S3.b32\\t%0, %1, %2, 31;";
+  })
 
 (define_insn "nvptx_vote_ballot"
   [(set (match_operand:SI 0 "nvptx_register_operand" "=R")
 	(unspec:SI [(match_operand:BI 1 "nvptx_register_operand" "R")]
 		   UNSPEC_VOTE_BALLOT))]
   ""
-  "%.\\tvote.ballot.b32\\t%0, %1;")
+  {
+    if (TARGET_PTX_6_3)
+      return "%.\\tvote.sync.ballot.b32\\t%0, %1, 0xffffffff;";
+    else
+      return "%.\\tvote.ballot.b32\\t%0, %1;";
+  })
 
 ;; Patterns for OpenMP SIMD-via-SIMT lowering
 
@@ -1610,7 +1642,11 @@
    (set (match_dup 1)
 	(unspec_volatile:SDIM [(const_int 0)] UNSPECV_CAS))]
   ""
-  "%.\\tatom%A1.cas.b%T0\\t%0, %1, %2, %3;"
+  {
+    const char *t
+      = "%.\\tatom%A1.cas.b%T0\\t%0, %1, %2, %3;";
+    return nvptx_output_atomic_insn (t, operands, 1, 4);
+  }
   [(set_attr "atomic" "true")])
 
 (define_insn "atomic_exchange<mode>"
@@ -1622,7 +1658,11 @@
    (set (match_dup 1)
 	(match_operand:SDIM 2 "nvptx_nonmemory_operand" "Ri"))]	;; input
   ""
-  "%.\\tatom%A1.exch.b%T0\\t%0, %1, %2;"
+  {
+    const char *t
+      = "%.\tatom%A1.exch.b%T0\t%0, %1, %2;";
+    return nvptx_output_atomic_insn (t, operands, 1, 3);
+  }
   [(set_attr "atomic" "true")])
 
 (define_insn "atomic_fetch_add<mode>"
@@ -1635,7 +1675,11 @@
    (set (match_operand:SDIM 0 "nvptx_register_operand" "=R")
 	(match_dup 1))]
   ""
-  "%.\\tatom%A1.add%t0\\t%0, %1, %2;"
+  {
+    const char *t
+      = "%.\\tatom%A1.add%t0\\t%0, %1, %2;";
+    return nvptx_output_atomic_insn (t, operands, 1, 3);
+  }
   [(set_attr "atomic" "true")])
 
 (define_insn "atomic_fetch_addsf"
@@ -1648,7 +1692,11 @@
    (set (match_operand:SF 0 "nvptx_register_operand" "=R")
 	(match_dup 1))]
   ""
-  "%.\\tatom%A1.add%t0\\t%0, %1, %2;"
+  {
+    const char *t
+      = "%.\\tatom%A1.add%t0\\t%0, %1, %2;";
+    return nvptx_output_atomic_insn (t, operands, 1, 3);
+  }
   [(set_attr "atomic" "true")])
 
 (define_code_iterator any_logic [and ior xor])
@@ -1664,8 +1712,29 @@
    (set (match_operand:SDIM 0 "nvptx_register_operand" "=R")
 	(match_dup 1))]
   "<MODE>mode == SImode || TARGET_SM35"
-  "%.\\tatom%A1.b%T0.<logic>\\t%0, %1, %2;"
+  {
+    const char *t
+      = "%.\\tatom%A1.b%T0.<logic>\\t%0, %1, %2;";
+    return nvptx_output_atomic_insn (t, operands, 1, 3);
+  }
+
   [(set_attr "atomic" "true")])
+
+(define_expand "atomic_test_and_set"
+  [(match_operand:SI 0 "nvptx_register_operand")	;; bool success output
+   (match_operand:QI 1 "memory_operand")		;; memory
+   (match_operand:SI 2 "const_int_operand")]		;; model
+  ""
+{
+  rtx libfunc;
+  rtx addr;
+  libfunc = init_one_libfunc ("__atomic_test_and_set_1");
+  addr = convert_memory_address (ptr_mode, XEXP (operands[1], 0));
+  emit_library_call_value (libfunc, operands[0], LCT_NORMAL, SImode,
+			  addr, ptr_mode,
+			  operands[2], SImode);
+  DONE;
+})
 
 (define_insn "nvptx_barsync"
   [(unspec_volatile [(match_operand:SI 0 "nvptx_nonmemory_operand" "Ri")

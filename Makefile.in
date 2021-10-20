@@ -109,6 +109,9 @@ RPATH_ENVVAR = @RPATH_ENVVAR@
 # executables in PATH.
 GCC_SHLIB_SUBDIR = @GCC_SHLIB_SUBDIR@
 
+# If the build should make suitable code for shared host resources.
+host_shared = @host_shared@
+
 # Build programs are put under this directory.
 BUILD_SUBDIR = @build_subdir@
 # This is set by the configure script to the arguments to use when configuring
@@ -159,6 +162,7 @@ BUILD_EXPORTS = \
 	GDC="$(GDC_FOR_BUILD)"; export GDC; \
 	GDCFLAGS="$(GDCFLAGS_FOR_BUILD)"; export GDCFLAGS; \
 	DLLTOOL="$(DLLTOOL_FOR_BUILD)"; export DLLTOOL; \
+	DSYMUTIL="$(DSYMUTIL_FOR_BUILD)"; export DSYMUTIL; \
 	LD="$(LD_FOR_BUILD)"; export LD; \
 	LDFLAGS="$(LDFLAGS_FOR_BUILD)"; export LDFLAGS; \
 	NM="$(NM_FOR_BUILD)"; export NM; \
@@ -200,6 +204,7 @@ HOST_EXPORTS = \
 	CC_FOR_BUILD="$(CC_FOR_BUILD)"; export CC_FOR_BUILD; \
 	CXX_FOR_BUILD="$(CXX_FOR_BUILD)"; export CXX_FOR_BUILD; \
 	DLLTOOL="$(DLLTOOL)"; export DLLTOOL; \
+	DSYMUTIL="$(DSYMUTIL)"; export DSYMUTIL; \
 	LD="$(LD)"; export LD; \
 	LDFLAGS="$(STAGE1_LDFLAGS) $(LDFLAGS)"; export LDFLAGS; \
 	NM="$(NM)"; export NM; \
@@ -212,6 +217,7 @@ HOST_EXPORTS = \
 	READELF="$(READELF)"; export READELF; \
 	AR_FOR_TARGET="$(AR_FOR_TARGET)"; export AR_FOR_TARGET; \
 	AS_FOR_TARGET="$(AS_FOR_TARGET)"; export AS_FOR_TARGET; \
+	DSYMUTIL_FOR_TARGET="$(DSYMUTIL_FOR_TARGET)"; export DSYMUTIL_FOR_TARGET; \
 	GCC_FOR_TARGET="$(GCC_FOR_TARGET)"; export GCC_FOR_TARGET; \
 	LD_FOR_TARGET="$(LD_FOR_TARGET)"; export LD_FOR_TARGET; \
 	NM_FOR_TARGET="$(NM_FOR_TARGET)"; export NM_FOR_TARGET; \
@@ -294,6 +300,7 @@ BASE_TARGET_EXPORTS = \
 	GOC="$(GOC_FOR_TARGET) $(XGCC_FLAGS_FOR_TARGET) $$TFLAGS"; export GOC; \
 	GDC="$(GDC_FOR_TARGET) $(XGCC_FLAGS_FOR_TARGET) $$TFLAGS"; export GDC; \
 	DLLTOOL="$(DLLTOOL_FOR_TARGET)"; export DLLTOOL; \
+	DSYMUTIL="$(DSYMUTIL_FOR_TARGET)"; export DSYMUTIL; \
 	LD="$(COMPILER_LD_FOR_TARGET)"; export LD; \
 	LDFLAGS="$(LDFLAGS_FOR_TARGET)"; export LDFLAGS; \
 	LIPO="$(LIPO_FOR_TARGET)"; export LIPO; \
@@ -356,6 +363,7 @@ CFLAGS_FOR_BUILD = @CFLAGS_FOR_BUILD@
 CXXFLAGS_FOR_BUILD = @CXXFLAGS_FOR_BUILD@
 CXX_FOR_BUILD = @CXX_FOR_BUILD@
 DLLTOOL_FOR_BUILD = @DLLTOOL_FOR_BUILD@
+DSYMUTIL_FOR_BUILD = @DSYMUTIL_FOR_BUILD@
 GFORTRAN_FOR_BUILD = @GFORTRAN_FOR_BUILD@
 GOC_FOR_BUILD = @GOC_FOR_BUILD@
 GDC_FOR_BUILD = @GDC_FOR_BUILD@
@@ -406,6 +414,7 @@ AR_FLAGS = rc
 CC = @CC@
 CXX = @CXX@
 DLLTOOL = @DLLTOOL@
+DSYMUTIL = @DSYMUTIL@
 LD = @LD@
 LIPO = @LIPO@
 NM = @NM@
@@ -565,7 +574,7 @@ STAGEprofile_TFLAGS = $(STAGE2_TFLAGS)
 STAGEtrain_CFLAGS = $(filter-out -fchecking=1,$(STAGE3_CFLAGS))
 STAGEtrain_TFLAGS = $(filter-out -fchecking=1,$(STAGE3_TFLAGS))
 
-STAGEfeedback_CFLAGS = $(STAGE4_CFLAGS) -fprofile-use
+STAGEfeedback_CFLAGS = $(STAGE4_CFLAGS) -fprofile-use -fprofile-reproducible=parallel-runs
 STAGEfeedback_TFLAGS = $(STAGE4_TFLAGS)
 
 STAGEautoprofile_CFLAGS = $(STAGE2_CFLAGS) -g
@@ -596,6 +605,7 @@ GFORTRAN_FOR_TARGET=$(STAGE_CC_WRAPPER) @GFORTRAN_FOR_TARGET@
 GOC_FOR_TARGET=$(STAGE_CC_WRAPPER) @GOC_FOR_TARGET@
 GDC_FOR_TARGET=$(STAGE_CC_WRAPPER) @GDC_FOR_TARGET@
 DLLTOOL_FOR_TARGET=@DLLTOOL_FOR_TARGET@
+DSYMUTIL_FOR_TARGET=@DSYMUTIL_FOR_TARGET@
 LD_FOR_TARGET=@LD_FOR_TARGET@
 
 LIPO_FOR_TARGET=@LIPO_FOR_TARGET@
@@ -814,6 +824,7 @@ BASE_FLAGS_TO_PASS = \
 	"CPPFLAGS_FOR_TARGET=$(CPPFLAGS_FOR_TARGET)" \
 	"CXXFLAGS_FOR_TARGET=$(CXXFLAGS_FOR_TARGET)" \
 	"DLLTOOL_FOR_TARGET=$(DLLTOOL_FOR_TARGET)" \
+	"DSYMUTIL_FOR_TARGET=$(DSYMUTIL_FOR_TARGET)" \
 	"FLAGS_FOR_TARGET=$(FLAGS_FOR_TARGET)" \
 	"GFORTRAN_FOR_TARGET=$(GFORTRAN_FOR_TARGET)" \
 	"GOC_FOR_TARGET=$(GOC_FOR_TARGET)" \
@@ -889,6 +900,7 @@ EXTRA_HOST_FLAGS = \
 	'CC=$(CC)' \
 	'CXX=$(CXX)' \
 	'DLLTOOL=$(DLLTOOL)' \
+	'DSYMUTIL=$(DSYMUTIL)' \
 	'GFORTRAN=$(GFORTRAN)' \
 	'GOC=$(GOC)' \
 	'GDC=$(GDC)' \
@@ -947,6 +959,7 @@ EXTRA_TARGET_FLAGS = \
 	 $$(XGCC_FLAGS_FOR_TARGET) $$(TFLAGS)' \
 	'CXXFLAGS=$$(CXXFLAGS_FOR_TARGET)' \
 	'DLLTOOL=$$(DLLTOOL_FOR_TARGET)' \
+	'DSYMUTIL=$$(DSYMUTIL_FOR_TARGET)' \
 	'GFORTRAN=$$(GFORTRAN_FOR_TARGET) $$(XGCC_FLAGS_FOR_TARGET) $$(TFLAGS)' \
 	'GOC=$$(GOC_FOR_TARGET) $$(XGCC_FLAGS_FOR_TARGET) $$(TFLAGS)' \
 	'GOCFLAGS=$$(GOCFLAGS_FOR_TARGET)' \
@@ -1017,6 +1030,7 @@ configure-host:  \
     maybe-configure-ld \
     maybe-configure-libbacktrace \
     maybe-configure-libcpp \
+    maybe-configure-libcody \
     maybe-configure-libdecnumber \
     maybe-configure-libgui \
     maybe-configure-libiberty \
@@ -1037,6 +1051,7 @@ configure-host:  \
     maybe-configure-tk \
     maybe-configure-libtermcap \
     maybe-configure-utils \
+    maybe-configure-c++tools \
     maybe-configure-gnattools \
     maybe-configure-lto-plugin \
     maybe-configure-libcc1 \
@@ -1056,7 +1071,6 @@ configure-target:  \
     maybe-configure-target-libgfortran \
     maybe-configure-target-libobjc \
     maybe-configure-target-libgo \
-    maybe-configure-target-libhsail-rt \
     maybe-configure-target-libphobos \
     maybe-configure-target-libtermcap \
     maybe-configure-target-winsup \
@@ -1163,6 +1177,9 @@ all-host: maybe-all-libbacktrace
 @if libcpp-no-bootstrap
 all-host: maybe-all-libcpp
 @endif libcpp-no-bootstrap
+@if libcody-no-bootstrap
+all-host: maybe-all-libcody
+@endif libcody-no-bootstrap
 @if libdecnumber-no-bootstrap
 all-host: maybe-all-libdecnumber
 @endif libdecnumber-no-bootstrap
@@ -1193,6 +1210,7 @@ all-host: maybe-all-guile
 all-host: maybe-all-tk
 all-host: maybe-all-libtermcap
 all-host: maybe-all-utils
+all-host: maybe-all-c++tools
 all-host: maybe-all-gnattools
 @if lto-plugin-no-bootstrap
 all-host: maybe-all-lto-plugin
@@ -1225,7 +1243,6 @@ all-target: maybe-all-target-libquadmath
 all-target: maybe-all-target-libgfortran
 all-target: maybe-all-target-libobjc
 all-target: maybe-all-target-libgo
-all-target: maybe-all-target-libhsail-rt
 all-target: maybe-all-target-libphobos
 all-target: maybe-all-target-libtermcap
 all-target: maybe-all-target-winsup
@@ -1281,6 +1298,7 @@ info-host: maybe-info-itcl
 info-host: maybe-info-ld
 info-host: maybe-info-libbacktrace
 info-host: maybe-info-libcpp
+info-host: maybe-info-libcody
 info-host: maybe-info-libdecnumber
 info-host: maybe-info-libgui
 info-host: maybe-info-libiberty
@@ -1301,6 +1319,7 @@ info-host: maybe-info-guile
 info-host: maybe-info-tk
 info-host: maybe-info-libtermcap
 info-host: maybe-info-utils
+info-host: maybe-info-c++tools
 info-host: maybe-info-gnattools
 info-host: maybe-info-lto-plugin
 info-host: maybe-info-libcc1
@@ -1321,7 +1340,6 @@ info-target: maybe-info-target-libquadmath
 info-target: maybe-info-target-libgfortran
 info-target: maybe-info-target-libobjc
 info-target: maybe-info-target-libgo
-info-target: maybe-info-target-libhsail-rt
 info-target: maybe-info-target-libphobos
 info-target: maybe-info-target-libtermcap
 info-target: maybe-info-target-winsup
@@ -1370,6 +1388,7 @@ dvi-host: maybe-dvi-itcl
 dvi-host: maybe-dvi-ld
 dvi-host: maybe-dvi-libbacktrace
 dvi-host: maybe-dvi-libcpp
+dvi-host: maybe-dvi-libcody
 dvi-host: maybe-dvi-libdecnumber
 dvi-host: maybe-dvi-libgui
 dvi-host: maybe-dvi-libiberty
@@ -1390,6 +1409,7 @@ dvi-host: maybe-dvi-guile
 dvi-host: maybe-dvi-tk
 dvi-host: maybe-dvi-libtermcap
 dvi-host: maybe-dvi-utils
+dvi-host: maybe-dvi-c++tools
 dvi-host: maybe-dvi-gnattools
 dvi-host: maybe-dvi-lto-plugin
 dvi-host: maybe-dvi-libcc1
@@ -1410,7 +1430,6 @@ dvi-target: maybe-dvi-target-libquadmath
 dvi-target: maybe-dvi-target-libgfortran
 dvi-target: maybe-dvi-target-libobjc
 dvi-target: maybe-dvi-target-libgo
-dvi-target: maybe-dvi-target-libhsail-rt
 dvi-target: maybe-dvi-target-libphobos
 dvi-target: maybe-dvi-target-libtermcap
 dvi-target: maybe-dvi-target-winsup
@@ -1459,6 +1478,7 @@ pdf-host: maybe-pdf-itcl
 pdf-host: maybe-pdf-ld
 pdf-host: maybe-pdf-libbacktrace
 pdf-host: maybe-pdf-libcpp
+pdf-host: maybe-pdf-libcody
 pdf-host: maybe-pdf-libdecnumber
 pdf-host: maybe-pdf-libgui
 pdf-host: maybe-pdf-libiberty
@@ -1479,6 +1499,7 @@ pdf-host: maybe-pdf-guile
 pdf-host: maybe-pdf-tk
 pdf-host: maybe-pdf-libtermcap
 pdf-host: maybe-pdf-utils
+pdf-host: maybe-pdf-c++tools
 pdf-host: maybe-pdf-gnattools
 pdf-host: maybe-pdf-lto-plugin
 pdf-host: maybe-pdf-libcc1
@@ -1499,7 +1520,6 @@ pdf-target: maybe-pdf-target-libquadmath
 pdf-target: maybe-pdf-target-libgfortran
 pdf-target: maybe-pdf-target-libobjc
 pdf-target: maybe-pdf-target-libgo
-pdf-target: maybe-pdf-target-libhsail-rt
 pdf-target: maybe-pdf-target-libphobos
 pdf-target: maybe-pdf-target-libtermcap
 pdf-target: maybe-pdf-target-winsup
@@ -1548,6 +1568,7 @@ html-host: maybe-html-itcl
 html-host: maybe-html-ld
 html-host: maybe-html-libbacktrace
 html-host: maybe-html-libcpp
+html-host: maybe-html-libcody
 html-host: maybe-html-libdecnumber
 html-host: maybe-html-libgui
 html-host: maybe-html-libiberty
@@ -1568,6 +1589,7 @@ html-host: maybe-html-guile
 html-host: maybe-html-tk
 html-host: maybe-html-libtermcap
 html-host: maybe-html-utils
+html-host: maybe-html-c++tools
 html-host: maybe-html-gnattools
 html-host: maybe-html-lto-plugin
 html-host: maybe-html-libcc1
@@ -1588,7 +1610,6 @@ html-target: maybe-html-target-libquadmath
 html-target: maybe-html-target-libgfortran
 html-target: maybe-html-target-libobjc
 html-target: maybe-html-target-libgo
-html-target: maybe-html-target-libhsail-rt
 html-target: maybe-html-target-libphobos
 html-target: maybe-html-target-libtermcap
 html-target: maybe-html-target-winsup
@@ -1637,6 +1658,7 @@ TAGS-host: maybe-TAGS-itcl
 TAGS-host: maybe-TAGS-ld
 TAGS-host: maybe-TAGS-libbacktrace
 TAGS-host: maybe-TAGS-libcpp
+TAGS-host: maybe-TAGS-libcody
 TAGS-host: maybe-TAGS-libdecnumber
 TAGS-host: maybe-TAGS-libgui
 TAGS-host: maybe-TAGS-libiberty
@@ -1657,6 +1679,7 @@ TAGS-host: maybe-TAGS-guile
 TAGS-host: maybe-TAGS-tk
 TAGS-host: maybe-TAGS-libtermcap
 TAGS-host: maybe-TAGS-utils
+TAGS-host: maybe-TAGS-c++tools
 TAGS-host: maybe-TAGS-gnattools
 TAGS-host: maybe-TAGS-lto-plugin
 TAGS-host: maybe-TAGS-libcc1
@@ -1677,7 +1700,6 @@ TAGS-target: maybe-TAGS-target-libquadmath
 TAGS-target: maybe-TAGS-target-libgfortran
 TAGS-target: maybe-TAGS-target-libobjc
 TAGS-target: maybe-TAGS-target-libgo
-TAGS-target: maybe-TAGS-target-libhsail-rt
 TAGS-target: maybe-TAGS-target-libphobos
 TAGS-target: maybe-TAGS-target-libtermcap
 TAGS-target: maybe-TAGS-target-winsup
@@ -1726,6 +1748,7 @@ install-info-host: maybe-install-info-itcl
 install-info-host: maybe-install-info-ld
 install-info-host: maybe-install-info-libbacktrace
 install-info-host: maybe-install-info-libcpp
+install-info-host: maybe-install-info-libcody
 install-info-host: maybe-install-info-libdecnumber
 install-info-host: maybe-install-info-libgui
 install-info-host: maybe-install-info-libiberty
@@ -1746,6 +1769,7 @@ install-info-host: maybe-install-info-guile
 install-info-host: maybe-install-info-tk
 install-info-host: maybe-install-info-libtermcap
 install-info-host: maybe-install-info-utils
+install-info-host: maybe-install-info-c++tools
 install-info-host: maybe-install-info-gnattools
 install-info-host: maybe-install-info-lto-plugin
 install-info-host: maybe-install-info-libcc1
@@ -1766,7 +1790,6 @@ install-info-target: maybe-install-info-target-libquadmath
 install-info-target: maybe-install-info-target-libgfortran
 install-info-target: maybe-install-info-target-libobjc
 install-info-target: maybe-install-info-target-libgo
-install-info-target: maybe-install-info-target-libhsail-rt
 install-info-target: maybe-install-info-target-libphobos
 install-info-target: maybe-install-info-target-libtermcap
 install-info-target: maybe-install-info-target-winsup
@@ -1815,6 +1838,7 @@ install-pdf-host: maybe-install-pdf-itcl
 install-pdf-host: maybe-install-pdf-ld
 install-pdf-host: maybe-install-pdf-libbacktrace
 install-pdf-host: maybe-install-pdf-libcpp
+install-pdf-host: maybe-install-pdf-libcody
 install-pdf-host: maybe-install-pdf-libdecnumber
 install-pdf-host: maybe-install-pdf-libgui
 install-pdf-host: maybe-install-pdf-libiberty
@@ -1835,6 +1859,7 @@ install-pdf-host: maybe-install-pdf-guile
 install-pdf-host: maybe-install-pdf-tk
 install-pdf-host: maybe-install-pdf-libtermcap
 install-pdf-host: maybe-install-pdf-utils
+install-pdf-host: maybe-install-pdf-c++tools
 install-pdf-host: maybe-install-pdf-gnattools
 install-pdf-host: maybe-install-pdf-lto-plugin
 install-pdf-host: maybe-install-pdf-libcc1
@@ -1855,7 +1880,6 @@ install-pdf-target: maybe-install-pdf-target-libquadmath
 install-pdf-target: maybe-install-pdf-target-libgfortran
 install-pdf-target: maybe-install-pdf-target-libobjc
 install-pdf-target: maybe-install-pdf-target-libgo
-install-pdf-target: maybe-install-pdf-target-libhsail-rt
 install-pdf-target: maybe-install-pdf-target-libphobos
 install-pdf-target: maybe-install-pdf-target-libtermcap
 install-pdf-target: maybe-install-pdf-target-winsup
@@ -1904,6 +1928,7 @@ install-html-host: maybe-install-html-itcl
 install-html-host: maybe-install-html-ld
 install-html-host: maybe-install-html-libbacktrace
 install-html-host: maybe-install-html-libcpp
+install-html-host: maybe-install-html-libcody
 install-html-host: maybe-install-html-libdecnumber
 install-html-host: maybe-install-html-libgui
 install-html-host: maybe-install-html-libiberty
@@ -1924,6 +1949,7 @@ install-html-host: maybe-install-html-guile
 install-html-host: maybe-install-html-tk
 install-html-host: maybe-install-html-libtermcap
 install-html-host: maybe-install-html-utils
+install-html-host: maybe-install-html-c++tools
 install-html-host: maybe-install-html-gnattools
 install-html-host: maybe-install-html-lto-plugin
 install-html-host: maybe-install-html-libcc1
@@ -1944,7 +1970,6 @@ install-html-target: maybe-install-html-target-libquadmath
 install-html-target: maybe-install-html-target-libgfortran
 install-html-target: maybe-install-html-target-libobjc
 install-html-target: maybe-install-html-target-libgo
-install-html-target: maybe-install-html-target-libhsail-rt
 install-html-target: maybe-install-html-target-libphobos
 install-html-target: maybe-install-html-target-libtermcap
 install-html-target: maybe-install-html-target-winsup
@@ -1993,6 +2018,7 @@ installcheck-host: maybe-installcheck-itcl
 installcheck-host: maybe-installcheck-ld
 installcheck-host: maybe-installcheck-libbacktrace
 installcheck-host: maybe-installcheck-libcpp
+installcheck-host: maybe-installcheck-libcody
 installcheck-host: maybe-installcheck-libdecnumber
 installcheck-host: maybe-installcheck-libgui
 installcheck-host: maybe-installcheck-libiberty
@@ -2013,6 +2039,7 @@ installcheck-host: maybe-installcheck-guile
 installcheck-host: maybe-installcheck-tk
 installcheck-host: maybe-installcheck-libtermcap
 installcheck-host: maybe-installcheck-utils
+installcheck-host: maybe-installcheck-c++tools
 installcheck-host: maybe-installcheck-gnattools
 installcheck-host: maybe-installcheck-lto-plugin
 installcheck-host: maybe-installcheck-libcc1
@@ -2033,7 +2060,6 @@ installcheck-target: maybe-installcheck-target-libquadmath
 installcheck-target: maybe-installcheck-target-libgfortran
 installcheck-target: maybe-installcheck-target-libobjc
 installcheck-target: maybe-installcheck-target-libgo
-installcheck-target: maybe-installcheck-target-libhsail-rt
 installcheck-target: maybe-installcheck-target-libphobos
 installcheck-target: maybe-installcheck-target-libtermcap
 installcheck-target: maybe-installcheck-target-winsup
@@ -2082,6 +2108,7 @@ mostlyclean-host: maybe-mostlyclean-itcl
 mostlyclean-host: maybe-mostlyclean-ld
 mostlyclean-host: maybe-mostlyclean-libbacktrace
 mostlyclean-host: maybe-mostlyclean-libcpp
+mostlyclean-host: maybe-mostlyclean-libcody
 mostlyclean-host: maybe-mostlyclean-libdecnumber
 mostlyclean-host: maybe-mostlyclean-libgui
 mostlyclean-host: maybe-mostlyclean-libiberty
@@ -2102,6 +2129,7 @@ mostlyclean-host: maybe-mostlyclean-guile
 mostlyclean-host: maybe-mostlyclean-tk
 mostlyclean-host: maybe-mostlyclean-libtermcap
 mostlyclean-host: maybe-mostlyclean-utils
+mostlyclean-host: maybe-mostlyclean-c++tools
 mostlyclean-host: maybe-mostlyclean-gnattools
 mostlyclean-host: maybe-mostlyclean-lto-plugin
 mostlyclean-host: maybe-mostlyclean-libcc1
@@ -2122,7 +2150,6 @@ mostlyclean-target: maybe-mostlyclean-target-libquadmath
 mostlyclean-target: maybe-mostlyclean-target-libgfortran
 mostlyclean-target: maybe-mostlyclean-target-libobjc
 mostlyclean-target: maybe-mostlyclean-target-libgo
-mostlyclean-target: maybe-mostlyclean-target-libhsail-rt
 mostlyclean-target: maybe-mostlyclean-target-libphobos
 mostlyclean-target: maybe-mostlyclean-target-libtermcap
 mostlyclean-target: maybe-mostlyclean-target-winsup
@@ -2171,6 +2198,7 @@ clean-host: maybe-clean-itcl
 clean-host: maybe-clean-ld
 clean-host: maybe-clean-libbacktrace
 clean-host: maybe-clean-libcpp
+clean-host: maybe-clean-libcody
 clean-host: maybe-clean-libdecnumber
 clean-host: maybe-clean-libgui
 clean-host: maybe-clean-libiberty
@@ -2191,6 +2219,7 @@ clean-host: maybe-clean-guile
 clean-host: maybe-clean-tk
 clean-host: maybe-clean-libtermcap
 clean-host: maybe-clean-utils
+clean-host: maybe-clean-c++tools
 clean-host: maybe-clean-gnattools
 clean-host: maybe-clean-lto-plugin
 clean-host: maybe-clean-libcc1
@@ -2211,7 +2240,6 @@ clean-target: maybe-clean-target-libquadmath
 clean-target: maybe-clean-target-libgfortran
 clean-target: maybe-clean-target-libobjc
 clean-target: maybe-clean-target-libgo
-clean-target: maybe-clean-target-libhsail-rt
 clean-target: maybe-clean-target-libphobos
 clean-target: maybe-clean-target-libtermcap
 clean-target: maybe-clean-target-winsup
@@ -2260,6 +2288,7 @@ distclean-host: maybe-distclean-itcl
 distclean-host: maybe-distclean-ld
 distclean-host: maybe-distclean-libbacktrace
 distclean-host: maybe-distclean-libcpp
+distclean-host: maybe-distclean-libcody
 distclean-host: maybe-distclean-libdecnumber
 distclean-host: maybe-distclean-libgui
 distclean-host: maybe-distclean-libiberty
@@ -2280,6 +2309,7 @@ distclean-host: maybe-distclean-guile
 distclean-host: maybe-distclean-tk
 distclean-host: maybe-distclean-libtermcap
 distclean-host: maybe-distclean-utils
+distclean-host: maybe-distclean-c++tools
 distclean-host: maybe-distclean-gnattools
 distclean-host: maybe-distclean-lto-plugin
 distclean-host: maybe-distclean-libcc1
@@ -2300,7 +2330,6 @@ distclean-target: maybe-distclean-target-libquadmath
 distclean-target: maybe-distclean-target-libgfortran
 distclean-target: maybe-distclean-target-libobjc
 distclean-target: maybe-distclean-target-libgo
-distclean-target: maybe-distclean-target-libhsail-rt
 distclean-target: maybe-distclean-target-libphobos
 distclean-target: maybe-distclean-target-libtermcap
 distclean-target: maybe-distclean-target-winsup
@@ -2349,6 +2378,7 @@ maintainer-clean-host: maybe-maintainer-clean-itcl
 maintainer-clean-host: maybe-maintainer-clean-ld
 maintainer-clean-host: maybe-maintainer-clean-libbacktrace
 maintainer-clean-host: maybe-maintainer-clean-libcpp
+maintainer-clean-host: maybe-maintainer-clean-libcody
 maintainer-clean-host: maybe-maintainer-clean-libdecnumber
 maintainer-clean-host: maybe-maintainer-clean-libgui
 maintainer-clean-host: maybe-maintainer-clean-libiberty
@@ -2369,6 +2399,7 @@ maintainer-clean-host: maybe-maintainer-clean-guile
 maintainer-clean-host: maybe-maintainer-clean-tk
 maintainer-clean-host: maybe-maintainer-clean-libtermcap
 maintainer-clean-host: maybe-maintainer-clean-utils
+maintainer-clean-host: maybe-maintainer-clean-c++tools
 maintainer-clean-host: maybe-maintainer-clean-gnattools
 maintainer-clean-host: maybe-maintainer-clean-lto-plugin
 maintainer-clean-host: maybe-maintainer-clean-libcc1
@@ -2389,7 +2420,6 @@ maintainer-clean-target: maybe-maintainer-clean-target-libquadmath
 maintainer-clean-target: maybe-maintainer-clean-target-libgfortran
 maintainer-clean-target: maybe-maintainer-clean-target-libobjc
 maintainer-clean-target: maybe-maintainer-clean-target-libgo
-maintainer-clean-target: maybe-maintainer-clean-target-libhsail-rt
 maintainer-clean-target: maybe-maintainer-clean-target-libphobos
 maintainer-clean-target: maybe-maintainer-clean-target-libtermcap
 maintainer-clean-target: maybe-maintainer-clean-target-winsup
@@ -2446,8 +2476,8 @@ local-distclean:
 	-rm -f texinfo/doc/Makefile texinfo/po/POTFILES
 	-rmdir texinfo/doc texinfo/info texinfo/intl texinfo/lib 2>/dev/null
 	-rmdir texinfo/makeinfo texinfo/po texinfo/util 2>/dev/null
-	-rmdir fastjar gcc gnattools gotools libcc1 libiberty 2>/dev/null
-	-rmdir texinfo zlib 2>/dev/null
+	-rmdir c++tools fastjar gcc gnattools gotools 2>/dev/null
+	-rmdir libcc1 libiberty texinfo zlib 2>/dev/null
 	-find . -name config.cache -exec rm -f {} \; \; 2>/dev/null
 
 local-maintainer-clean:
@@ -2494,6 +2524,7 @@ check-host:  \
     maybe-check-ld \
     maybe-check-libbacktrace \
     maybe-check-libcpp \
+    maybe-check-libcody \
     maybe-check-libdecnumber \
     maybe-check-libgui \
     maybe-check-libiberty \
@@ -2514,6 +2545,7 @@ check-host:  \
     maybe-check-tk \
     maybe-check-libtermcap \
     maybe-check-utils \
+    maybe-check-c++tools \
     maybe-check-gnattools \
     maybe-check-lto-plugin \
     maybe-check-libcc1 \
@@ -2534,7 +2566,6 @@ check-target:  \
     maybe-check-target-libgfortran \
     maybe-check-target-libobjc \
     maybe-check-target-libgo \
-    maybe-check-target-libhsail-rt \
     maybe-check-target-libphobos \
     maybe-check-target-libtermcap \
     maybe-check-target-winsup \
@@ -2630,6 +2661,7 @@ install-host-nogcc:  \
     maybe-install-ld \
     maybe-install-libbacktrace \
     maybe-install-libcpp \
+    maybe-install-libcody \
     maybe-install-libdecnumber \
     maybe-install-libgui \
     maybe-install-libiberty \
@@ -2650,6 +2682,7 @@ install-host-nogcc:  \
     maybe-install-tk \
     maybe-install-libtermcap \
     maybe-install-utils \
+    maybe-install-c++tools \
     maybe-install-gnattools \
     maybe-install-lto-plugin \
     maybe-install-libcc1 \
@@ -2683,6 +2716,7 @@ install-host:  \
     maybe-install-ld \
     maybe-install-libbacktrace \
     maybe-install-libcpp \
+    maybe-install-libcody \
     maybe-install-libdecnumber \
     maybe-install-libgui \
     maybe-install-libiberty \
@@ -2703,6 +2737,7 @@ install-host:  \
     maybe-install-tk \
     maybe-install-libtermcap \
     maybe-install-utils \
+    maybe-install-c++tools \
     maybe-install-gnattools \
     maybe-install-lto-plugin \
     maybe-install-libcc1 \
@@ -2723,7 +2758,6 @@ install-target:  \
     maybe-install-target-libgfortran \
     maybe-install-target-libobjc \
     maybe-install-target-libgo \
-    maybe-install-target-libhsail-rt \
     maybe-install-target-libphobos \
     maybe-install-target-libtermcap \
     maybe-install-target-winsup \
@@ -2792,6 +2826,7 @@ install-strip-host:  \
     maybe-install-strip-ld \
     maybe-install-strip-libbacktrace \
     maybe-install-strip-libcpp \
+    maybe-install-strip-libcody \
     maybe-install-strip-libdecnumber \
     maybe-install-strip-libgui \
     maybe-install-strip-libiberty \
@@ -2812,6 +2847,7 @@ install-strip-host:  \
     maybe-install-strip-tk \
     maybe-install-strip-libtermcap \
     maybe-install-strip-utils \
+    maybe-install-strip-c++tools \
     maybe-install-strip-gnattools \
     maybe-install-strip-lto-plugin \
     maybe-install-strip-libcc1 \
@@ -2832,7 +2868,6 @@ install-strip-target:  \
     maybe-install-strip-target-libgfortran \
     maybe-install-strip-target-libobjc \
     maybe-install-strip-target-libgo \
-    maybe-install-strip-target-libhsail-rt \
     maybe-install-strip-target-libphobos \
     maybe-install-strip-target-libtermcap \
     maybe-install-strip-target-winsup \
@@ -25050,6 +25085,1000 @@ maintainer-clean-libcpp:
 
 
 
+.PHONY: configure-libcody maybe-configure-libcody
+maybe-configure-libcody:
+@if gcc-bootstrap
+configure-libcody: stage_current
+@endif gcc-bootstrap
+@if libcody
+maybe-configure-libcody: configure-libcody
+configure-libcody: 
+	@r=`${PWD_COMMAND}`; export r; \
+	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
+	test ! -f $(HOST_SUBDIR)/libcody/Makefile || exit 0; \
+	$(SHELL) $(srcdir)/mkinstalldirs $(HOST_SUBDIR)/libcody; \
+	$(HOST_EXPORTS)  \
+	echo Configuring in $(HOST_SUBDIR)/libcody; \
+	cd "$(HOST_SUBDIR)/libcody" || exit 1; \
+	case $(srcdir) in \
+	  /* | [A-Za-z]:[\\/]*) topdir=$(srcdir) ;; \
+	  *) topdir=`echo $(HOST_SUBDIR)/libcody/ | \
+		sed -e 's,\./,,g' -e 's,[^/]*/,../,g' `$(srcdir) ;; \
+	esac; \
+	module_srcdir=libcody; \
+	$(SHELL) \
+	  $$s/$$module_srcdir/configure \
+	  --srcdir=$${topdir}/$$module_srcdir \
+	  $(HOST_CONFIGARGS) --build=${build_alias} --host=${host_alias} \
+	  --target=${target_alias}  \
+	  || exit 1
+@endif libcody
+
+
+
+.PHONY: configure-stage1-libcody maybe-configure-stage1-libcody
+maybe-configure-stage1-libcody:
+@if libcody-bootstrap
+maybe-configure-stage1-libcody: configure-stage1-libcody
+configure-stage1-libcody:
+	@[ $(current_stage) = stage1 ] || $(MAKE) stage1-start
+	@$(SHELL) $(srcdir)/mkinstalldirs $(HOST_SUBDIR)/libcody
+	@r=`${PWD_COMMAND}`; export r; \
+	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
+	TFLAGS="$(STAGE1_TFLAGS)"; \
+	test ! -f $(HOST_SUBDIR)/libcody/Makefile || exit 0; \
+	$(HOST_EXPORTS) \
+	CFLAGS="$(STAGE1_CFLAGS)"; export CFLAGS; \
+	CXXFLAGS="$(STAGE1_CXXFLAGS)"; export CXXFLAGS; \
+	LIBCFLAGS="$(LIBCFLAGS)"; export LIBCFLAGS;  \
+	echo Configuring stage 1 in $(HOST_SUBDIR)/libcody; \
+	$(SHELL) $(srcdir)/mkinstalldirs $(HOST_SUBDIR)/libcody; \
+	cd $(HOST_SUBDIR)/libcody || exit 1; \
+	case $(srcdir) in \
+	  /* | [A-Za-z]:[\\/]*) topdir=$(srcdir) ;; \
+	  *) topdir=`echo $(HOST_SUBDIR)/libcody/ | \
+		sed -e 's,\./,,g' -e 's,[^/]*/,../,g' `$(srcdir) ;; \
+	esac; \
+	module_srcdir=libcody; \
+	$(SHELL) $$s/$$module_srcdir/configure \
+	  --srcdir=$${topdir}/$$module_srcdir \
+	  $(HOST_CONFIGARGS) --build=${build_alias} --host=${host_alias} \
+	  --target=${target_alias} \
+	   \
+	  $(STAGE1_CONFIGURE_FLAGS)
+@endif libcody-bootstrap
+
+.PHONY: configure-stage2-libcody maybe-configure-stage2-libcody
+maybe-configure-stage2-libcody:
+@if libcody-bootstrap
+maybe-configure-stage2-libcody: configure-stage2-libcody
+configure-stage2-libcody:
+	@[ $(current_stage) = stage2 ] || $(MAKE) stage2-start
+	@$(SHELL) $(srcdir)/mkinstalldirs $(HOST_SUBDIR)/libcody
+	@r=`${PWD_COMMAND}`; export r; \
+	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
+	TFLAGS="$(STAGE2_TFLAGS)"; \
+	test ! -f $(HOST_SUBDIR)/libcody/Makefile || exit 0; \
+	$(HOST_EXPORTS) \
+	$(POSTSTAGE1_HOST_EXPORTS) \
+	CFLAGS="$(STAGE2_CFLAGS)"; export CFLAGS; \
+	CXXFLAGS="$(STAGE2_CXXFLAGS)"; export CXXFLAGS; \
+	LIBCFLAGS="$(STAGE2_CFLAGS)"; export LIBCFLAGS;  \
+	echo Configuring stage 2 in $(HOST_SUBDIR)/libcody; \
+	$(SHELL) $(srcdir)/mkinstalldirs $(HOST_SUBDIR)/libcody; \
+	cd $(HOST_SUBDIR)/libcody || exit 1; \
+	case $(srcdir) in \
+	  /* | [A-Za-z]:[\\/]*) topdir=$(srcdir) ;; \
+	  *) topdir=`echo $(HOST_SUBDIR)/libcody/ | \
+		sed -e 's,\./,,g' -e 's,[^/]*/,../,g' `$(srcdir) ;; \
+	esac; \
+	module_srcdir=libcody; \
+	$(SHELL) $$s/$$module_srcdir/configure \
+	  --srcdir=$${topdir}/$$module_srcdir \
+	  $(HOST_CONFIGARGS) --build=${build_alias} --host=${host_alias} \
+	  --target=${target_alias} \
+	  --with-build-libsubdir=$(HOST_SUBDIR) \
+	  $(STAGE2_CONFIGURE_FLAGS)
+@endif libcody-bootstrap
+
+.PHONY: configure-stage3-libcody maybe-configure-stage3-libcody
+maybe-configure-stage3-libcody:
+@if libcody-bootstrap
+maybe-configure-stage3-libcody: configure-stage3-libcody
+configure-stage3-libcody:
+	@[ $(current_stage) = stage3 ] || $(MAKE) stage3-start
+	@$(SHELL) $(srcdir)/mkinstalldirs $(HOST_SUBDIR)/libcody
+	@r=`${PWD_COMMAND}`; export r; \
+	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
+	TFLAGS="$(STAGE3_TFLAGS)"; \
+	test ! -f $(HOST_SUBDIR)/libcody/Makefile || exit 0; \
+	$(HOST_EXPORTS) \
+	$(POSTSTAGE1_HOST_EXPORTS) \
+	CFLAGS="$(STAGE3_CFLAGS)"; export CFLAGS; \
+	CXXFLAGS="$(STAGE3_CXXFLAGS)"; export CXXFLAGS; \
+	LIBCFLAGS="$(STAGE3_CFLAGS)"; export LIBCFLAGS;  \
+	echo Configuring stage 3 in $(HOST_SUBDIR)/libcody; \
+	$(SHELL) $(srcdir)/mkinstalldirs $(HOST_SUBDIR)/libcody; \
+	cd $(HOST_SUBDIR)/libcody || exit 1; \
+	case $(srcdir) in \
+	  /* | [A-Za-z]:[\\/]*) topdir=$(srcdir) ;; \
+	  *) topdir=`echo $(HOST_SUBDIR)/libcody/ | \
+		sed -e 's,\./,,g' -e 's,[^/]*/,../,g' `$(srcdir) ;; \
+	esac; \
+	module_srcdir=libcody; \
+	$(SHELL) $$s/$$module_srcdir/configure \
+	  --srcdir=$${topdir}/$$module_srcdir \
+	  $(HOST_CONFIGARGS) --build=${build_alias} --host=${host_alias} \
+	  --target=${target_alias} \
+	  --with-build-libsubdir=$(HOST_SUBDIR) \
+	  $(STAGE3_CONFIGURE_FLAGS)
+@endif libcody-bootstrap
+
+.PHONY: configure-stage4-libcody maybe-configure-stage4-libcody
+maybe-configure-stage4-libcody:
+@if libcody-bootstrap
+maybe-configure-stage4-libcody: configure-stage4-libcody
+configure-stage4-libcody:
+	@[ $(current_stage) = stage4 ] || $(MAKE) stage4-start
+	@$(SHELL) $(srcdir)/mkinstalldirs $(HOST_SUBDIR)/libcody
+	@r=`${PWD_COMMAND}`; export r; \
+	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
+	TFLAGS="$(STAGE4_TFLAGS)"; \
+	test ! -f $(HOST_SUBDIR)/libcody/Makefile || exit 0; \
+	$(HOST_EXPORTS) \
+	$(POSTSTAGE1_HOST_EXPORTS) \
+	CFLAGS="$(STAGE4_CFLAGS)"; export CFLAGS; \
+	CXXFLAGS="$(STAGE4_CXXFLAGS)"; export CXXFLAGS; \
+	LIBCFLAGS="$(STAGE4_CFLAGS)"; export LIBCFLAGS;  \
+	echo Configuring stage 4 in $(HOST_SUBDIR)/libcody; \
+	$(SHELL) $(srcdir)/mkinstalldirs $(HOST_SUBDIR)/libcody; \
+	cd $(HOST_SUBDIR)/libcody || exit 1; \
+	case $(srcdir) in \
+	  /* | [A-Za-z]:[\\/]*) topdir=$(srcdir) ;; \
+	  *) topdir=`echo $(HOST_SUBDIR)/libcody/ | \
+		sed -e 's,\./,,g' -e 's,[^/]*/,../,g' `$(srcdir) ;; \
+	esac; \
+	module_srcdir=libcody; \
+	$(SHELL) $$s/$$module_srcdir/configure \
+	  --srcdir=$${topdir}/$$module_srcdir \
+	  $(HOST_CONFIGARGS) --build=${build_alias} --host=${host_alias} \
+	  --target=${target_alias} \
+	  --with-build-libsubdir=$(HOST_SUBDIR) \
+	  $(STAGE4_CONFIGURE_FLAGS)
+@endif libcody-bootstrap
+
+.PHONY: configure-stageprofile-libcody maybe-configure-stageprofile-libcody
+maybe-configure-stageprofile-libcody:
+@if libcody-bootstrap
+maybe-configure-stageprofile-libcody: configure-stageprofile-libcody
+configure-stageprofile-libcody:
+	@[ $(current_stage) = stageprofile ] || $(MAKE) stageprofile-start
+	@$(SHELL) $(srcdir)/mkinstalldirs $(HOST_SUBDIR)/libcody
+	@r=`${PWD_COMMAND}`; export r; \
+	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
+	TFLAGS="$(STAGEprofile_TFLAGS)"; \
+	test ! -f $(HOST_SUBDIR)/libcody/Makefile || exit 0; \
+	$(HOST_EXPORTS) \
+	$(POSTSTAGE1_HOST_EXPORTS) \
+	CFLAGS="$(STAGEprofile_CFLAGS)"; export CFLAGS; \
+	CXXFLAGS="$(STAGEprofile_CXXFLAGS)"; export CXXFLAGS; \
+	LIBCFLAGS="$(STAGEprofile_CFLAGS)"; export LIBCFLAGS;  \
+	echo Configuring stage profile in $(HOST_SUBDIR)/libcody; \
+	$(SHELL) $(srcdir)/mkinstalldirs $(HOST_SUBDIR)/libcody; \
+	cd $(HOST_SUBDIR)/libcody || exit 1; \
+	case $(srcdir) in \
+	  /* | [A-Za-z]:[\\/]*) topdir=$(srcdir) ;; \
+	  *) topdir=`echo $(HOST_SUBDIR)/libcody/ | \
+		sed -e 's,\./,,g' -e 's,[^/]*/,../,g' `$(srcdir) ;; \
+	esac; \
+	module_srcdir=libcody; \
+	$(SHELL) $$s/$$module_srcdir/configure \
+	  --srcdir=$${topdir}/$$module_srcdir \
+	  $(HOST_CONFIGARGS) --build=${build_alias} --host=${host_alias} \
+	  --target=${target_alias} \
+	  --with-build-libsubdir=$(HOST_SUBDIR) \
+	  $(STAGEprofile_CONFIGURE_FLAGS)
+@endif libcody-bootstrap
+
+.PHONY: configure-stagetrain-libcody maybe-configure-stagetrain-libcody
+maybe-configure-stagetrain-libcody:
+@if libcody-bootstrap
+maybe-configure-stagetrain-libcody: configure-stagetrain-libcody
+configure-stagetrain-libcody:
+	@[ $(current_stage) = stagetrain ] || $(MAKE) stagetrain-start
+	@$(SHELL) $(srcdir)/mkinstalldirs $(HOST_SUBDIR)/libcody
+	@r=`${PWD_COMMAND}`; export r; \
+	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
+	TFLAGS="$(STAGEtrain_TFLAGS)"; \
+	test ! -f $(HOST_SUBDIR)/libcody/Makefile || exit 0; \
+	$(HOST_EXPORTS) \
+	$(POSTSTAGE1_HOST_EXPORTS) \
+	CFLAGS="$(STAGEtrain_CFLAGS)"; export CFLAGS; \
+	CXXFLAGS="$(STAGEtrain_CXXFLAGS)"; export CXXFLAGS; \
+	LIBCFLAGS="$(STAGEtrain_CFLAGS)"; export LIBCFLAGS;  \
+	echo Configuring stage train in $(HOST_SUBDIR)/libcody; \
+	$(SHELL) $(srcdir)/mkinstalldirs $(HOST_SUBDIR)/libcody; \
+	cd $(HOST_SUBDIR)/libcody || exit 1; \
+	case $(srcdir) in \
+	  /* | [A-Za-z]:[\\/]*) topdir=$(srcdir) ;; \
+	  *) topdir=`echo $(HOST_SUBDIR)/libcody/ | \
+		sed -e 's,\./,,g' -e 's,[^/]*/,../,g' `$(srcdir) ;; \
+	esac; \
+	module_srcdir=libcody; \
+	$(SHELL) $$s/$$module_srcdir/configure \
+	  --srcdir=$${topdir}/$$module_srcdir \
+	  $(HOST_CONFIGARGS) --build=${build_alias} --host=${host_alias} \
+	  --target=${target_alias} \
+	  --with-build-libsubdir=$(HOST_SUBDIR) \
+	  $(STAGEtrain_CONFIGURE_FLAGS)
+@endif libcody-bootstrap
+
+.PHONY: configure-stagefeedback-libcody maybe-configure-stagefeedback-libcody
+maybe-configure-stagefeedback-libcody:
+@if libcody-bootstrap
+maybe-configure-stagefeedback-libcody: configure-stagefeedback-libcody
+configure-stagefeedback-libcody:
+	@[ $(current_stage) = stagefeedback ] || $(MAKE) stagefeedback-start
+	@$(SHELL) $(srcdir)/mkinstalldirs $(HOST_SUBDIR)/libcody
+	@r=`${PWD_COMMAND}`; export r; \
+	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
+	TFLAGS="$(STAGEfeedback_TFLAGS)"; \
+	test ! -f $(HOST_SUBDIR)/libcody/Makefile || exit 0; \
+	$(HOST_EXPORTS) \
+	$(POSTSTAGE1_HOST_EXPORTS) \
+	CFLAGS="$(STAGEfeedback_CFLAGS)"; export CFLAGS; \
+	CXXFLAGS="$(STAGEfeedback_CXXFLAGS)"; export CXXFLAGS; \
+	LIBCFLAGS="$(STAGEfeedback_CFLAGS)"; export LIBCFLAGS;  \
+	echo Configuring stage feedback in $(HOST_SUBDIR)/libcody; \
+	$(SHELL) $(srcdir)/mkinstalldirs $(HOST_SUBDIR)/libcody; \
+	cd $(HOST_SUBDIR)/libcody || exit 1; \
+	case $(srcdir) in \
+	  /* | [A-Za-z]:[\\/]*) topdir=$(srcdir) ;; \
+	  *) topdir=`echo $(HOST_SUBDIR)/libcody/ | \
+		sed -e 's,\./,,g' -e 's,[^/]*/,../,g' `$(srcdir) ;; \
+	esac; \
+	module_srcdir=libcody; \
+	$(SHELL) $$s/$$module_srcdir/configure \
+	  --srcdir=$${topdir}/$$module_srcdir \
+	  $(HOST_CONFIGARGS) --build=${build_alias} --host=${host_alias} \
+	  --target=${target_alias} \
+	  --with-build-libsubdir=$(HOST_SUBDIR) \
+	  $(STAGEfeedback_CONFIGURE_FLAGS)
+@endif libcody-bootstrap
+
+.PHONY: configure-stageautoprofile-libcody maybe-configure-stageautoprofile-libcody
+maybe-configure-stageautoprofile-libcody:
+@if libcody-bootstrap
+maybe-configure-stageautoprofile-libcody: configure-stageautoprofile-libcody
+configure-stageautoprofile-libcody:
+	@[ $(current_stage) = stageautoprofile ] || $(MAKE) stageautoprofile-start
+	@$(SHELL) $(srcdir)/mkinstalldirs $(HOST_SUBDIR)/libcody
+	@r=`${PWD_COMMAND}`; export r; \
+	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
+	TFLAGS="$(STAGEautoprofile_TFLAGS)"; \
+	test ! -f $(HOST_SUBDIR)/libcody/Makefile || exit 0; \
+	$(HOST_EXPORTS) \
+	$(POSTSTAGE1_HOST_EXPORTS) \
+	CFLAGS="$(STAGEautoprofile_CFLAGS)"; export CFLAGS; \
+	CXXFLAGS="$(STAGEautoprofile_CXXFLAGS)"; export CXXFLAGS; \
+	LIBCFLAGS="$(STAGEautoprofile_CFLAGS)"; export LIBCFLAGS;  \
+	echo Configuring stage autoprofile in $(HOST_SUBDIR)/libcody; \
+	$(SHELL) $(srcdir)/mkinstalldirs $(HOST_SUBDIR)/libcody; \
+	cd $(HOST_SUBDIR)/libcody || exit 1; \
+	case $(srcdir) in \
+	  /* | [A-Za-z]:[\\/]*) topdir=$(srcdir) ;; \
+	  *) topdir=`echo $(HOST_SUBDIR)/libcody/ | \
+		sed -e 's,\./,,g' -e 's,[^/]*/,../,g' `$(srcdir) ;; \
+	esac; \
+	module_srcdir=libcody; \
+	$(SHELL) $$s/$$module_srcdir/configure \
+	  --srcdir=$${topdir}/$$module_srcdir \
+	  $(HOST_CONFIGARGS) --build=${build_alias} --host=${host_alias} \
+	  --target=${target_alias} \
+	  --with-build-libsubdir=$(HOST_SUBDIR) \
+	  $(STAGEautoprofile_CONFIGURE_FLAGS)
+@endif libcody-bootstrap
+
+.PHONY: configure-stageautofeedback-libcody maybe-configure-stageautofeedback-libcody
+maybe-configure-stageautofeedback-libcody:
+@if libcody-bootstrap
+maybe-configure-stageautofeedback-libcody: configure-stageautofeedback-libcody
+configure-stageautofeedback-libcody:
+	@[ $(current_stage) = stageautofeedback ] || $(MAKE) stageautofeedback-start
+	@$(SHELL) $(srcdir)/mkinstalldirs $(HOST_SUBDIR)/libcody
+	@r=`${PWD_COMMAND}`; export r; \
+	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
+	TFLAGS="$(STAGEautofeedback_TFLAGS)"; \
+	test ! -f $(HOST_SUBDIR)/libcody/Makefile || exit 0; \
+	$(HOST_EXPORTS) \
+	$(POSTSTAGE1_HOST_EXPORTS) \
+	CFLAGS="$(STAGEautofeedback_CFLAGS)"; export CFLAGS; \
+	CXXFLAGS="$(STAGEautofeedback_CXXFLAGS)"; export CXXFLAGS; \
+	LIBCFLAGS="$(STAGEautofeedback_CFLAGS)"; export LIBCFLAGS;  \
+	echo Configuring stage autofeedback in $(HOST_SUBDIR)/libcody; \
+	$(SHELL) $(srcdir)/mkinstalldirs $(HOST_SUBDIR)/libcody; \
+	cd $(HOST_SUBDIR)/libcody || exit 1; \
+	case $(srcdir) in \
+	  /* | [A-Za-z]:[\\/]*) topdir=$(srcdir) ;; \
+	  *) topdir=`echo $(HOST_SUBDIR)/libcody/ | \
+		sed -e 's,\./,,g' -e 's,[^/]*/,../,g' `$(srcdir) ;; \
+	esac; \
+	module_srcdir=libcody; \
+	$(SHELL) $$s/$$module_srcdir/configure \
+	  --srcdir=$${topdir}/$$module_srcdir \
+	  $(HOST_CONFIGARGS) --build=${build_alias} --host=${host_alias} \
+	  --target=${target_alias} \
+	  --with-build-libsubdir=$(HOST_SUBDIR) \
+	  $(STAGEautofeedback_CONFIGURE_FLAGS)
+@endif libcody-bootstrap
+
+
+
+
+
+.PHONY: all-libcody maybe-all-libcody
+maybe-all-libcody:
+@if gcc-bootstrap
+all-libcody: stage_current
+@endif gcc-bootstrap
+@if libcody
+TARGET-libcody=all
+maybe-all-libcody: all-libcody
+all-libcody: configure-libcody
+	@r=`${PWD_COMMAND}`; export r; \
+	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
+	$(HOST_EXPORTS)  \
+	(cd $(HOST_SUBDIR)/libcody && \
+	  $(MAKE) $(BASE_FLAGS_TO_PASS) $(EXTRA_HOST_FLAGS) $(STAGE1_FLAGS_TO_PASS)  \
+		$(TARGET-libcody))
+@endif libcody
+
+
+
+.PHONY: all-stage1-libcody maybe-all-stage1-libcody
+.PHONY: clean-stage1-libcody maybe-clean-stage1-libcody
+maybe-all-stage1-libcody:
+maybe-clean-stage1-libcody:
+@if libcody-bootstrap
+maybe-all-stage1-libcody: all-stage1-libcody
+all-stage1: all-stage1-libcody
+TARGET-stage1-libcody = $(TARGET-libcody)
+all-stage1-libcody: configure-stage1-libcody
+	@[ $(current_stage) = stage1 ] || $(MAKE) stage1-start
+	@r=`${PWD_COMMAND}`; export r; \
+	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
+	TFLAGS="$(STAGE1_TFLAGS)"; \
+	$(HOST_EXPORTS)  \
+	cd $(HOST_SUBDIR)/libcody && \
+	 \
+	$(MAKE) $(BASE_FLAGS_TO_PASS) \
+		CFLAGS="$(STAGE1_CFLAGS)" \
+		GENERATOR_CFLAGS="$(STAGE1_GENERATOR_CFLAGS)" \
+		CXXFLAGS="$(STAGE1_CXXFLAGS)" \
+		LIBCFLAGS="$(LIBCFLAGS)" \
+		CFLAGS_FOR_TARGET="$(CFLAGS_FOR_TARGET)" \
+		CXXFLAGS_FOR_TARGET="$(CXXFLAGS_FOR_TARGET)" \
+		LIBCFLAGS_FOR_TARGET="$(LIBCFLAGS_FOR_TARGET)" \
+		$(EXTRA_HOST_FLAGS)  \
+		$(STAGE1_FLAGS_TO_PASS)  \
+		TFLAGS="$(STAGE1_TFLAGS)"  \
+		$(TARGET-stage1-libcody)
+
+maybe-clean-stage1-libcody: clean-stage1-libcody
+clean-stage1: clean-stage1-libcody
+clean-stage1-libcody:
+	@if [ $(current_stage) = stage1 ]; then \
+	  [ -f $(HOST_SUBDIR)/libcody/Makefile ] || exit 0; \
+	else \
+	  [ -f $(HOST_SUBDIR)/stage1-libcody/Makefile ] || exit 0; \
+	  $(MAKE) stage1-start; \
+	fi; \
+	cd $(HOST_SUBDIR)/libcody && \
+	$(MAKE) $(EXTRA_HOST_FLAGS)  \
+	$(STAGE1_FLAGS_TO_PASS)  clean
+@endif libcody-bootstrap
+
+
+.PHONY: all-stage2-libcody maybe-all-stage2-libcody
+.PHONY: clean-stage2-libcody maybe-clean-stage2-libcody
+maybe-all-stage2-libcody:
+maybe-clean-stage2-libcody:
+@if libcody-bootstrap
+maybe-all-stage2-libcody: all-stage2-libcody
+all-stage2: all-stage2-libcody
+TARGET-stage2-libcody = $(TARGET-libcody)
+all-stage2-libcody: configure-stage2-libcody
+	@[ $(current_stage) = stage2 ] || $(MAKE) stage2-start
+	@r=`${PWD_COMMAND}`; export r; \
+	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
+	TFLAGS="$(STAGE2_TFLAGS)"; \
+	$(HOST_EXPORTS) \
+	$(POSTSTAGE1_HOST_EXPORTS)  \
+	cd $(HOST_SUBDIR)/libcody && \
+	 \
+	$(MAKE) $(BASE_FLAGS_TO_PASS) \
+		CFLAGS="$(STAGE2_CFLAGS)" \
+		GENERATOR_CFLAGS="$(STAGE2_GENERATOR_CFLAGS)" \
+		CXXFLAGS="$(STAGE2_CXXFLAGS)" \
+		LIBCFLAGS="$(STAGE2_CFLAGS)" \
+		CFLAGS_FOR_TARGET="$(CFLAGS_FOR_TARGET)" \
+		CXXFLAGS_FOR_TARGET="$(CXXFLAGS_FOR_TARGET)" \
+		LIBCFLAGS_FOR_TARGET="$(LIBCFLAGS_FOR_TARGET)" \
+		$(EXTRA_HOST_FLAGS) $(POSTSTAGE1_FLAGS_TO_PASS)  \
+		TFLAGS="$(STAGE2_TFLAGS)"  \
+		$(TARGET-stage2-libcody)
+
+maybe-clean-stage2-libcody: clean-stage2-libcody
+clean-stage2: clean-stage2-libcody
+clean-stage2-libcody:
+	@if [ $(current_stage) = stage2 ]; then \
+	  [ -f $(HOST_SUBDIR)/libcody/Makefile ] || exit 0; \
+	else \
+	  [ -f $(HOST_SUBDIR)/stage2-libcody/Makefile ] || exit 0; \
+	  $(MAKE) stage2-start; \
+	fi; \
+	cd $(HOST_SUBDIR)/libcody && \
+	$(MAKE) $(EXTRA_HOST_FLAGS) $(POSTSTAGE1_FLAGS_TO_PASS)  clean
+@endif libcody-bootstrap
+
+
+.PHONY: all-stage3-libcody maybe-all-stage3-libcody
+.PHONY: clean-stage3-libcody maybe-clean-stage3-libcody
+maybe-all-stage3-libcody:
+maybe-clean-stage3-libcody:
+@if libcody-bootstrap
+maybe-all-stage3-libcody: all-stage3-libcody
+all-stage3: all-stage3-libcody
+TARGET-stage3-libcody = $(TARGET-libcody)
+all-stage3-libcody: configure-stage3-libcody
+	@[ $(current_stage) = stage3 ] || $(MAKE) stage3-start
+	@r=`${PWD_COMMAND}`; export r; \
+	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
+	TFLAGS="$(STAGE3_TFLAGS)"; \
+	$(HOST_EXPORTS) \
+	$(POSTSTAGE1_HOST_EXPORTS)  \
+	cd $(HOST_SUBDIR)/libcody && \
+	 \
+	$(MAKE) $(BASE_FLAGS_TO_PASS) \
+		CFLAGS="$(STAGE3_CFLAGS)" \
+		GENERATOR_CFLAGS="$(STAGE3_GENERATOR_CFLAGS)" \
+		CXXFLAGS="$(STAGE3_CXXFLAGS)" \
+		LIBCFLAGS="$(STAGE3_CFLAGS)" \
+		CFLAGS_FOR_TARGET="$(CFLAGS_FOR_TARGET)" \
+		CXXFLAGS_FOR_TARGET="$(CXXFLAGS_FOR_TARGET)" \
+		LIBCFLAGS_FOR_TARGET="$(LIBCFLAGS_FOR_TARGET)" \
+		$(EXTRA_HOST_FLAGS) $(POSTSTAGE1_FLAGS_TO_PASS)  \
+		TFLAGS="$(STAGE3_TFLAGS)"  \
+		$(TARGET-stage3-libcody)
+
+maybe-clean-stage3-libcody: clean-stage3-libcody
+clean-stage3: clean-stage3-libcody
+clean-stage3-libcody:
+	@if [ $(current_stage) = stage3 ]; then \
+	  [ -f $(HOST_SUBDIR)/libcody/Makefile ] || exit 0; \
+	else \
+	  [ -f $(HOST_SUBDIR)/stage3-libcody/Makefile ] || exit 0; \
+	  $(MAKE) stage3-start; \
+	fi; \
+	cd $(HOST_SUBDIR)/libcody && \
+	$(MAKE) $(EXTRA_HOST_FLAGS) $(POSTSTAGE1_FLAGS_TO_PASS)  clean
+@endif libcody-bootstrap
+
+
+.PHONY: all-stage4-libcody maybe-all-stage4-libcody
+.PHONY: clean-stage4-libcody maybe-clean-stage4-libcody
+maybe-all-stage4-libcody:
+maybe-clean-stage4-libcody:
+@if libcody-bootstrap
+maybe-all-stage4-libcody: all-stage4-libcody
+all-stage4: all-stage4-libcody
+TARGET-stage4-libcody = $(TARGET-libcody)
+all-stage4-libcody: configure-stage4-libcody
+	@[ $(current_stage) = stage4 ] || $(MAKE) stage4-start
+	@r=`${PWD_COMMAND}`; export r; \
+	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
+	TFLAGS="$(STAGE4_TFLAGS)"; \
+	$(HOST_EXPORTS) \
+	$(POSTSTAGE1_HOST_EXPORTS)  \
+	cd $(HOST_SUBDIR)/libcody && \
+	 \
+	$(MAKE) $(BASE_FLAGS_TO_PASS) \
+		CFLAGS="$(STAGE4_CFLAGS)" \
+		GENERATOR_CFLAGS="$(STAGE4_GENERATOR_CFLAGS)" \
+		CXXFLAGS="$(STAGE4_CXXFLAGS)" \
+		LIBCFLAGS="$(STAGE4_CFLAGS)" \
+		CFLAGS_FOR_TARGET="$(CFLAGS_FOR_TARGET)" \
+		CXXFLAGS_FOR_TARGET="$(CXXFLAGS_FOR_TARGET)" \
+		LIBCFLAGS_FOR_TARGET="$(LIBCFLAGS_FOR_TARGET)" \
+		$(EXTRA_HOST_FLAGS) $(POSTSTAGE1_FLAGS_TO_PASS)  \
+		TFLAGS="$(STAGE4_TFLAGS)"  \
+		$(TARGET-stage4-libcody)
+
+maybe-clean-stage4-libcody: clean-stage4-libcody
+clean-stage4: clean-stage4-libcody
+clean-stage4-libcody:
+	@if [ $(current_stage) = stage4 ]; then \
+	  [ -f $(HOST_SUBDIR)/libcody/Makefile ] || exit 0; \
+	else \
+	  [ -f $(HOST_SUBDIR)/stage4-libcody/Makefile ] || exit 0; \
+	  $(MAKE) stage4-start; \
+	fi; \
+	cd $(HOST_SUBDIR)/libcody && \
+	$(MAKE) $(EXTRA_HOST_FLAGS) $(POSTSTAGE1_FLAGS_TO_PASS)  clean
+@endif libcody-bootstrap
+
+
+.PHONY: all-stageprofile-libcody maybe-all-stageprofile-libcody
+.PHONY: clean-stageprofile-libcody maybe-clean-stageprofile-libcody
+maybe-all-stageprofile-libcody:
+maybe-clean-stageprofile-libcody:
+@if libcody-bootstrap
+maybe-all-stageprofile-libcody: all-stageprofile-libcody
+all-stageprofile: all-stageprofile-libcody
+TARGET-stageprofile-libcody = $(TARGET-libcody)
+all-stageprofile-libcody: configure-stageprofile-libcody
+	@[ $(current_stage) = stageprofile ] || $(MAKE) stageprofile-start
+	@r=`${PWD_COMMAND}`; export r; \
+	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
+	TFLAGS="$(STAGEprofile_TFLAGS)"; \
+	$(HOST_EXPORTS) \
+	$(POSTSTAGE1_HOST_EXPORTS)  \
+	cd $(HOST_SUBDIR)/libcody && \
+	 \
+	$(MAKE) $(BASE_FLAGS_TO_PASS) \
+		CFLAGS="$(STAGEprofile_CFLAGS)" \
+		GENERATOR_CFLAGS="$(STAGEprofile_GENERATOR_CFLAGS)" \
+		CXXFLAGS="$(STAGEprofile_CXXFLAGS)" \
+		LIBCFLAGS="$(STAGEprofile_CFLAGS)" \
+		CFLAGS_FOR_TARGET="$(CFLAGS_FOR_TARGET)" \
+		CXXFLAGS_FOR_TARGET="$(CXXFLAGS_FOR_TARGET)" \
+		LIBCFLAGS_FOR_TARGET="$(LIBCFLAGS_FOR_TARGET)" \
+		$(EXTRA_HOST_FLAGS) $(POSTSTAGE1_FLAGS_TO_PASS)  \
+		TFLAGS="$(STAGEprofile_TFLAGS)"  \
+		$(TARGET-stageprofile-libcody)
+
+maybe-clean-stageprofile-libcody: clean-stageprofile-libcody
+clean-stageprofile: clean-stageprofile-libcody
+clean-stageprofile-libcody:
+	@if [ $(current_stage) = stageprofile ]; then \
+	  [ -f $(HOST_SUBDIR)/libcody/Makefile ] || exit 0; \
+	else \
+	  [ -f $(HOST_SUBDIR)/stageprofile-libcody/Makefile ] || exit 0; \
+	  $(MAKE) stageprofile-start; \
+	fi; \
+	cd $(HOST_SUBDIR)/libcody && \
+	$(MAKE) $(EXTRA_HOST_FLAGS) $(POSTSTAGE1_FLAGS_TO_PASS)  clean
+@endif libcody-bootstrap
+
+
+.PHONY: all-stagetrain-libcody maybe-all-stagetrain-libcody
+.PHONY: clean-stagetrain-libcody maybe-clean-stagetrain-libcody
+maybe-all-stagetrain-libcody:
+maybe-clean-stagetrain-libcody:
+@if libcody-bootstrap
+maybe-all-stagetrain-libcody: all-stagetrain-libcody
+all-stagetrain: all-stagetrain-libcody
+TARGET-stagetrain-libcody = $(TARGET-libcody)
+all-stagetrain-libcody: configure-stagetrain-libcody
+	@[ $(current_stage) = stagetrain ] || $(MAKE) stagetrain-start
+	@r=`${PWD_COMMAND}`; export r; \
+	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
+	TFLAGS="$(STAGEtrain_TFLAGS)"; \
+	$(HOST_EXPORTS) \
+	$(POSTSTAGE1_HOST_EXPORTS)  \
+	cd $(HOST_SUBDIR)/libcody && \
+	 \
+	$(MAKE) $(BASE_FLAGS_TO_PASS) \
+		CFLAGS="$(STAGEtrain_CFLAGS)" \
+		GENERATOR_CFLAGS="$(STAGEtrain_GENERATOR_CFLAGS)" \
+		CXXFLAGS="$(STAGEtrain_CXXFLAGS)" \
+		LIBCFLAGS="$(STAGEtrain_CFLAGS)" \
+		CFLAGS_FOR_TARGET="$(CFLAGS_FOR_TARGET)" \
+		CXXFLAGS_FOR_TARGET="$(CXXFLAGS_FOR_TARGET)" \
+		LIBCFLAGS_FOR_TARGET="$(LIBCFLAGS_FOR_TARGET)" \
+		$(EXTRA_HOST_FLAGS) $(POSTSTAGE1_FLAGS_TO_PASS)  \
+		TFLAGS="$(STAGEtrain_TFLAGS)"  \
+		$(TARGET-stagetrain-libcody)
+
+maybe-clean-stagetrain-libcody: clean-stagetrain-libcody
+clean-stagetrain: clean-stagetrain-libcody
+clean-stagetrain-libcody:
+	@if [ $(current_stage) = stagetrain ]; then \
+	  [ -f $(HOST_SUBDIR)/libcody/Makefile ] || exit 0; \
+	else \
+	  [ -f $(HOST_SUBDIR)/stagetrain-libcody/Makefile ] || exit 0; \
+	  $(MAKE) stagetrain-start; \
+	fi; \
+	cd $(HOST_SUBDIR)/libcody && \
+	$(MAKE) $(EXTRA_HOST_FLAGS) $(POSTSTAGE1_FLAGS_TO_PASS)  clean
+@endif libcody-bootstrap
+
+
+.PHONY: all-stagefeedback-libcody maybe-all-stagefeedback-libcody
+.PHONY: clean-stagefeedback-libcody maybe-clean-stagefeedback-libcody
+maybe-all-stagefeedback-libcody:
+maybe-clean-stagefeedback-libcody:
+@if libcody-bootstrap
+maybe-all-stagefeedback-libcody: all-stagefeedback-libcody
+all-stagefeedback: all-stagefeedback-libcody
+TARGET-stagefeedback-libcody = $(TARGET-libcody)
+all-stagefeedback-libcody: configure-stagefeedback-libcody
+	@[ $(current_stage) = stagefeedback ] || $(MAKE) stagefeedback-start
+	@r=`${PWD_COMMAND}`; export r; \
+	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
+	TFLAGS="$(STAGEfeedback_TFLAGS)"; \
+	$(HOST_EXPORTS) \
+	$(POSTSTAGE1_HOST_EXPORTS)  \
+	cd $(HOST_SUBDIR)/libcody && \
+	 \
+	$(MAKE) $(BASE_FLAGS_TO_PASS) \
+		CFLAGS="$(STAGEfeedback_CFLAGS)" \
+		GENERATOR_CFLAGS="$(STAGEfeedback_GENERATOR_CFLAGS)" \
+		CXXFLAGS="$(STAGEfeedback_CXXFLAGS)" \
+		LIBCFLAGS="$(STAGEfeedback_CFLAGS)" \
+		CFLAGS_FOR_TARGET="$(CFLAGS_FOR_TARGET)" \
+		CXXFLAGS_FOR_TARGET="$(CXXFLAGS_FOR_TARGET)" \
+		LIBCFLAGS_FOR_TARGET="$(LIBCFLAGS_FOR_TARGET)" \
+		$(EXTRA_HOST_FLAGS) $(POSTSTAGE1_FLAGS_TO_PASS)  \
+		TFLAGS="$(STAGEfeedback_TFLAGS)"  \
+		$(TARGET-stagefeedback-libcody)
+
+maybe-clean-stagefeedback-libcody: clean-stagefeedback-libcody
+clean-stagefeedback: clean-stagefeedback-libcody
+clean-stagefeedback-libcody:
+	@if [ $(current_stage) = stagefeedback ]; then \
+	  [ -f $(HOST_SUBDIR)/libcody/Makefile ] || exit 0; \
+	else \
+	  [ -f $(HOST_SUBDIR)/stagefeedback-libcody/Makefile ] || exit 0; \
+	  $(MAKE) stagefeedback-start; \
+	fi; \
+	cd $(HOST_SUBDIR)/libcody && \
+	$(MAKE) $(EXTRA_HOST_FLAGS) $(POSTSTAGE1_FLAGS_TO_PASS)  clean
+@endif libcody-bootstrap
+
+
+.PHONY: all-stageautoprofile-libcody maybe-all-stageautoprofile-libcody
+.PHONY: clean-stageautoprofile-libcody maybe-clean-stageautoprofile-libcody
+maybe-all-stageautoprofile-libcody:
+maybe-clean-stageautoprofile-libcody:
+@if libcody-bootstrap
+maybe-all-stageautoprofile-libcody: all-stageautoprofile-libcody
+all-stageautoprofile: all-stageautoprofile-libcody
+TARGET-stageautoprofile-libcody = $(TARGET-libcody)
+all-stageautoprofile-libcody: configure-stageautoprofile-libcody
+	@[ $(current_stage) = stageautoprofile ] || $(MAKE) stageautoprofile-start
+	@r=`${PWD_COMMAND}`; export r; \
+	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
+	TFLAGS="$(STAGEautoprofile_TFLAGS)"; \
+	$(HOST_EXPORTS) \
+	$(POSTSTAGE1_HOST_EXPORTS)  \
+	cd $(HOST_SUBDIR)/libcody && \
+	$$s/gcc/config/i386/$(AUTO_PROFILE) \
+	$(MAKE) $(BASE_FLAGS_TO_PASS) \
+		CFLAGS="$(STAGEautoprofile_CFLAGS)" \
+		GENERATOR_CFLAGS="$(STAGEautoprofile_GENERATOR_CFLAGS)" \
+		CXXFLAGS="$(STAGEautoprofile_CXXFLAGS)" \
+		LIBCFLAGS="$(STAGEautoprofile_CFLAGS)" \
+		CFLAGS_FOR_TARGET="$(CFLAGS_FOR_TARGET)" \
+		CXXFLAGS_FOR_TARGET="$(CXXFLAGS_FOR_TARGET)" \
+		LIBCFLAGS_FOR_TARGET="$(LIBCFLAGS_FOR_TARGET)" \
+		$(EXTRA_HOST_FLAGS) $(POSTSTAGE1_FLAGS_TO_PASS)  \
+		TFLAGS="$(STAGEautoprofile_TFLAGS)"  \
+		$(TARGET-stageautoprofile-libcody)
+
+maybe-clean-stageautoprofile-libcody: clean-stageautoprofile-libcody
+clean-stageautoprofile: clean-stageautoprofile-libcody
+clean-stageautoprofile-libcody:
+	@if [ $(current_stage) = stageautoprofile ]; then \
+	  [ -f $(HOST_SUBDIR)/libcody/Makefile ] || exit 0; \
+	else \
+	  [ -f $(HOST_SUBDIR)/stageautoprofile-libcody/Makefile ] || exit 0; \
+	  $(MAKE) stageautoprofile-start; \
+	fi; \
+	cd $(HOST_SUBDIR)/libcody && \
+	$(MAKE) $(EXTRA_HOST_FLAGS) $(POSTSTAGE1_FLAGS_TO_PASS)  clean
+@endif libcody-bootstrap
+
+
+.PHONY: all-stageautofeedback-libcody maybe-all-stageautofeedback-libcody
+.PHONY: clean-stageautofeedback-libcody maybe-clean-stageautofeedback-libcody
+maybe-all-stageautofeedback-libcody:
+maybe-clean-stageautofeedback-libcody:
+@if libcody-bootstrap
+maybe-all-stageautofeedback-libcody: all-stageautofeedback-libcody
+all-stageautofeedback: all-stageautofeedback-libcody
+TARGET-stageautofeedback-libcody = $(TARGET-libcody)
+all-stageautofeedback-libcody: configure-stageautofeedback-libcody
+	@[ $(current_stage) = stageautofeedback ] || $(MAKE) stageautofeedback-start
+	@r=`${PWD_COMMAND}`; export r; \
+	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
+	TFLAGS="$(STAGEautofeedback_TFLAGS)"; \
+	$(HOST_EXPORTS) \
+	$(POSTSTAGE1_HOST_EXPORTS)  \
+	cd $(HOST_SUBDIR)/libcody && \
+	 \
+	$(MAKE) $(BASE_FLAGS_TO_PASS) \
+		CFLAGS="$(STAGEautofeedback_CFLAGS)" \
+		GENERATOR_CFLAGS="$(STAGEautofeedback_GENERATOR_CFLAGS)" \
+		CXXFLAGS="$(STAGEautofeedback_CXXFLAGS)" \
+		LIBCFLAGS="$(STAGEautofeedback_CFLAGS)" \
+		CFLAGS_FOR_TARGET="$(CFLAGS_FOR_TARGET)" \
+		CXXFLAGS_FOR_TARGET="$(CXXFLAGS_FOR_TARGET)" \
+		LIBCFLAGS_FOR_TARGET="$(LIBCFLAGS_FOR_TARGET)" \
+		$(EXTRA_HOST_FLAGS) $(POSTSTAGE1_FLAGS_TO_PASS)  \
+		TFLAGS="$(STAGEautofeedback_TFLAGS)" PERF_DATA=perf.data \
+		$(TARGET-stageautofeedback-libcody)
+
+maybe-clean-stageautofeedback-libcody: clean-stageautofeedback-libcody
+clean-stageautofeedback: clean-stageautofeedback-libcody
+clean-stageautofeedback-libcody:
+	@if [ $(current_stage) = stageautofeedback ]; then \
+	  [ -f $(HOST_SUBDIR)/libcody/Makefile ] || exit 0; \
+	else \
+	  [ -f $(HOST_SUBDIR)/stageautofeedback-libcody/Makefile ] || exit 0; \
+	  $(MAKE) stageautofeedback-start; \
+	fi; \
+	cd $(HOST_SUBDIR)/libcody && \
+	$(MAKE) $(EXTRA_HOST_FLAGS) $(POSTSTAGE1_FLAGS_TO_PASS)  clean
+@endif libcody-bootstrap
+
+
+
+
+
+.PHONY: check-libcody maybe-check-libcody
+maybe-check-libcody:
+@if libcody
+maybe-check-libcody: check-libcody
+
+check-libcody:
+	@: $(MAKE); $(unstage)
+	@r=`${PWD_COMMAND}`; export r; \
+	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
+	$(HOST_EXPORTS) $(EXTRA_HOST_EXPORTS) \
+	(cd $(HOST_SUBDIR)/libcody && \
+	  $(MAKE) $(FLAGS_TO_PASS)  $(EXTRA_BOOTSTRAP_FLAGS) check)
+
+@endif libcody
+
+.PHONY: install-libcody maybe-install-libcody
+maybe-install-libcody:
+@if libcody
+maybe-install-libcody: install-libcody
+
+install-libcody:
+
+@endif libcody
+
+.PHONY: install-strip-libcody maybe-install-strip-libcody
+maybe-install-strip-libcody:
+@if libcody
+maybe-install-strip-libcody: install-strip-libcody
+
+install-strip-libcody:
+
+@endif libcody
+
+# Other targets (info, dvi, pdf, etc.)
+
+.PHONY: maybe-info-libcody info-libcody
+maybe-info-libcody:
+@if libcody
+maybe-info-libcody: info-libcody
+
+# libcody doesn't support info.
+info-libcody:
+
+@endif libcody
+
+.PHONY: maybe-dvi-libcody dvi-libcody
+maybe-dvi-libcody:
+@if libcody
+maybe-dvi-libcody: dvi-libcody
+
+dvi-libcody: \
+    configure-libcody 
+	@[ -f ./libcody/Makefile ] || exit 0; \
+	r=`${PWD_COMMAND}`; export r; \
+	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
+	$(HOST_EXPORTS) \
+	for flag in $(EXTRA_HOST_FLAGS) ; do \
+	  eval `echo "$$flag" | sed -e "s|^\([^=]*\)=\(.*\)|\1='\2'; export \1|"`; \
+	done; \
+	echo "Doing dvi in libcody"; \
+	(cd $(HOST_SUBDIR)/libcody && \
+	  $(MAKE) $(BASE_FLAGS_TO_PASS) "AR=$${AR}" "AS=$${AS}" \
+	          "CC=$${CC}" "CXX=$${CXX}" "LD=$${LD}" "NM=$${NM}" \
+	          "RANLIB=$${RANLIB}" \
+	          "DLLTOOL=$${DLLTOOL}" "WINDRES=$${WINDRES}" "WINDMC=$${WINDMC}" \
+	          dvi) \
+	  || exit 1
+
+@endif libcody
+
+.PHONY: maybe-pdf-libcody pdf-libcody
+maybe-pdf-libcody:
+@if libcody
+maybe-pdf-libcody: pdf-libcody
+
+# libcody doesn't support pdf.
+pdf-libcody:
+
+@endif libcody
+
+.PHONY: maybe-html-libcody html-libcody
+maybe-html-libcody:
+@if libcody
+maybe-html-libcody: html-libcody
+
+# libcody doesn't support html.
+html-libcody:
+
+@endif libcody
+
+.PHONY: maybe-TAGS-libcody TAGS-libcody
+maybe-TAGS-libcody:
+@if libcody
+maybe-TAGS-libcody: TAGS-libcody
+
+# libcody doesn't support TAGS.
+TAGS-libcody:
+
+@endif libcody
+
+.PHONY: maybe-install-info-libcody install-info-libcody
+maybe-install-info-libcody:
+@if libcody
+maybe-install-info-libcody: install-info-libcody
+
+# libcody doesn't support install-info.
+install-info-libcody:
+
+@endif libcody
+
+.PHONY: maybe-install-pdf-libcody install-pdf-libcody
+maybe-install-pdf-libcody:
+@if libcody
+maybe-install-pdf-libcody: install-pdf-libcody
+
+# libcody doesn't support install-pdf.
+install-pdf-libcody:
+
+@endif libcody
+
+.PHONY: maybe-install-html-libcody install-html-libcody
+maybe-install-html-libcody:
+@if libcody
+maybe-install-html-libcody: install-html-libcody
+
+# libcody doesn't support install-html.
+install-html-libcody:
+
+@endif libcody
+
+.PHONY: maybe-installcheck-libcody installcheck-libcody
+maybe-installcheck-libcody:
+@if libcody
+maybe-installcheck-libcody: installcheck-libcody
+
+installcheck-libcody: \
+    configure-libcody 
+	@[ -f ./libcody/Makefile ] || exit 0; \
+	r=`${PWD_COMMAND}`; export r; \
+	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
+	$(HOST_EXPORTS) \
+	for flag in $(EXTRA_HOST_FLAGS) ; do \
+	  eval `echo "$$flag" | sed -e "s|^\([^=]*\)=\(.*\)|\1='\2'; export \1|"`; \
+	done; \
+	echo "Doing installcheck in libcody"; \
+	(cd $(HOST_SUBDIR)/libcody && \
+	  $(MAKE) $(BASE_FLAGS_TO_PASS) "AR=$${AR}" "AS=$${AS}" \
+	          "CC=$${CC}" "CXX=$${CXX}" "LD=$${LD}" "NM=$${NM}" \
+	          "RANLIB=$${RANLIB}" \
+	          "DLLTOOL=$${DLLTOOL}" "WINDRES=$${WINDRES}" "WINDMC=$${WINDMC}" \
+	          installcheck) \
+	  || exit 1
+
+@endif libcody
+
+.PHONY: maybe-mostlyclean-libcody mostlyclean-libcody
+maybe-mostlyclean-libcody:
+@if libcody
+maybe-mostlyclean-libcody: mostlyclean-libcody
+
+mostlyclean-libcody: 
+	@[ -f ./libcody/Makefile ] || exit 0; \
+	r=`${PWD_COMMAND}`; export r; \
+	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
+	$(HOST_EXPORTS) \
+	for flag in $(EXTRA_HOST_FLAGS) ; do \
+	  eval `echo "$$flag" | sed -e "s|^\([^=]*\)=\(.*\)|\1='\2'; export \1|"`; \
+	done; \
+	echo "Doing mostlyclean in libcody"; \
+	(cd $(HOST_SUBDIR)/libcody && \
+	  $(MAKE) $(BASE_FLAGS_TO_PASS) "AR=$${AR}" "AS=$${AS}" \
+	          "CC=$${CC}" "CXX=$${CXX}" "LD=$${LD}" "NM=$${NM}" \
+	          "RANLIB=$${RANLIB}" \
+	          "DLLTOOL=$${DLLTOOL}" "WINDRES=$${WINDRES}" "WINDMC=$${WINDMC}" \
+	          mostlyclean) \
+	  || exit 1
+
+@endif libcody
+
+.PHONY: maybe-clean-libcody clean-libcody
+maybe-clean-libcody:
+@if libcody
+maybe-clean-libcody: clean-libcody
+
+clean-libcody: 
+	@[ -f ./libcody/Makefile ] || exit 0; \
+	r=`${PWD_COMMAND}`; export r; \
+	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
+	$(HOST_EXPORTS) \
+	for flag in $(EXTRA_HOST_FLAGS) ; do \
+	  eval `echo "$$flag" | sed -e "s|^\([^=]*\)=\(.*\)|\1='\2'; export \1|"`; \
+	done; \
+	echo "Doing clean in libcody"; \
+	(cd $(HOST_SUBDIR)/libcody && \
+	  $(MAKE) $(BASE_FLAGS_TO_PASS) "AR=$${AR}" "AS=$${AS}" \
+	          "CC=$${CC}" "CXX=$${CXX}" "LD=$${LD}" "NM=$${NM}" \
+	          "RANLIB=$${RANLIB}" \
+	          "DLLTOOL=$${DLLTOOL}" "WINDRES=$${WINDRES}" "WINDMC=$${WINDMC}" \
+	          clean) \
+	  || exit 1
+
+@endif libcody
+
+.PHONY: maybe-distclean-libcody distclean-libcody
+maybe-distclean-libcody:
+@if libcody
+maybe-distclean-libcody: distclean-libcody
+
+distclean-libcody: 
+	@[ -f ./libcody/Makefile ] || exit 0; \
+	r=`${PWD_COMMAND}`; export r; \
+	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
+	$(HOST_EXPORTS) \
+	for flag in $(EXTRA_HOST_FLAGS) ; do \
+	  eval `echo "$$flag" | sed -e "s|^\([^=]*\)=\(.*\)|\1='\2'; export \1|"`; \
+	done; \
+	echo "Doing distclean in libcody"; \
+	(cd $(HOST_SUBDIR)/libcody && \
+	  $(MAKE) $(BASE_FLAGS_TO_PASS) "AR=$${AR}" "AS=$${AS}" \
+	          "CC=$${CC}" "CXX=$${CXX}" "LD=$${LD}" "NM=$${NM}" \
+	          "RANLIB=$${RANLIB}" \
+	          "DLLTOOL=$${DLLTOOL}" "WINDRES=$${WINDRES}" "WINDMC=$${WINDMC}" \
+	          distclean) \
+	  || exit 1
+
+@endif libcody
+
+.PHONY: maybe-maintainer-clean-libcody maintainer-clean-libcody
+maybe-maintainer-clean-libcody:
+@if libcody
+maybe-maintainer-clean-libcody: maintainer-clean-libcody
+
+maintainer-clean-libcody: 
+	@[ -f ./libcody/Makefile ] || exit 0; \
+	r=`${PWD_COMMAND}`; export r; \
+	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
+	$(HOST_EXPORTS) \
+	for flag in $(EXTRA_HOST_FLAGS) ; do \
+	  eval `echo "$$flag" | sed -e "s|^\([^=]*\)=\(.*\)|\1='\2'; export \1|"`; \
+	done; \
+	echo "Doing maintainer-clean in libcody"; \
+	(cd $(HOST_SUBDIR)/libcody && \
+	  $(MAKE) $(BASE_FLAGS_TO_PASS) "AR=$${AR}" "AS=$${AS}" \
+	          "CC=$${CC}" "CXX=$${CXX}" "LD=$${LD}" "NM=$${NM}" \
+	          "RANLIB=$${RANLIB}" \
+	          "DLLTOOL=$${DLLTOOL}" "WINDRES=$${WINDRES}" "WINDMC=$${WINDMC}" \
+	          maintainer-clean) \
+	  || exit 1
+
+@endif libcody
+
+
+
 .PHONY: configure-libdecnumber maybe-configure-libdecnumber
 maybe-configure-libdecnumber:
 @if gcc-bootstrap
@@ -25943,23 +26972,8 @@ maybe-TAGS-libdecnumber:
 @if libdecnumber
 maybe-TAGS-libdecnumber: TAGS-libdecnumber
 
-TAGS-libdecnumber: \
-    configure-libdecnumber 
-	@[ -f ./libdecnumber/Makefile ] || exit 0; \
-	r=`${PWD_COMMAND}`; export r; \
-	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
-	$(HOST_EXPORTS) \
-	for flag in $(EXTRA_HOST_FLAGS) ; do \
-	  eval `echo "$$flag" | sed -e "s|^\([^=]*\)=\(.*\)|\1='\2'; export \1|"`; \
-	done; \
-	echo "Doing TAGS in libdecnumber"; \
-	(cd $(HOST_SUBDIR)/libdecnumber && \
-	  $(MAKE) $(BASE_FLAGS_TO_PASS) "AR=$${AR}" "AS=$${AS}" \
-	          "CC=$${CC}" "CXX=$${CXX}" "LD=$${LD}" "NM=$${NM}" \
-	          "RANLIB=$${RANLIB}" \
-	          "DLLTOOL=$${DLLTOOL}" "WINDRES=$${WINDRES}" "WINDMC=$${WINDMC}" \
-	          TAGS) \
-	  || exit 1
+# libdecnumber doesn't support TAGS.
+TAGS-libdecnumber:
 
 @endif libdecnumber
 
@@ -37064,6 +38078,431 @@ maintainer-clean-utils:
 
 
 
+.PHONY: configure-c++tools maybe-configure-c++tools
+maybe-configure-c++tools:
+@if gcc-bootstrap
+configure-c++tools: stage_current
+@endif gcc-bootstrap
+@if c++tools
+maybe-configure-c++tools: configure-c++tools
+configure-c++tools: 
+	@: $(MAKE); $(unstage)
+	@r=`${PWD_COMMAND}`; export r; \
+	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
+	test ! -f $(HOST_SUBDIR)/c++tools/Makefile || exit 0; \
+	$(SHELL) $(srcdir)/mkinstalldirs $(HOST_SUBDIR)/c++tools; \
+	$(HOST_EXPORTS)  \
+	echo Configuring in $(HOST_SUBDIR)/c++tools; \
+	cd "$(HOST_SUBDIR)/c++tools" || exit 1; \
+	case $(srcdir) in \
+	  /* | [A-Za-z]:[\\/]*) topdir=$(srcdir) ;; \
+	  *) topdir=`echo $(HOST_SUBDIR)/c++tools/ | \
+		sed -e 's,\./,,g' -e 's,[^/]*/,../,g' `$(srcdir) ;; \
+	esac; \
+	module_srcdir=c++tools; \
+	$(SHELL) \
+	  $$s/$$module_srcdir/configure \
+	  --srcdir=$${topdir}/$$module_srcdir \
+	  $(HOST_CONFIGARGS) --build=${build_alias} --host=${host_alias} \
+	  --target=${target_alias}  \
+	  || exit 1
+@endif c++tools
+
+
+
+
+
+.PHONY: all-c++tools maybe-all-c++tools
+maybe-all-c++tools:
+@if gcc-bootstrap
+all-c++tools: stage_current
+@endif gcc-bootstrap
+@if c++tools
+TARGET-c++tools=all
+maybe-all-c++tools: all-c++tools
+all-c++tools: configure-c++tools
+	@: $(MAKE); $(unstage)
+	@r=`${PWD_COMMAND}`; export r; \
+	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
+	$(HOST_EXPORTS)  \
+	(cd $(HOST_SUBDIR)/c++tools && \
+	  $(MAKE) $(BASE_FLAGS_TO_PASS) $(EXTRA_HOST_FLAGS) $(STAGE1_FLAGS_TO_PASS)  \
+		$(TARGET-c++tools))
+@endif c++tools
+
+
+
+
+.PHONY: check-c++tools maybe-check-c++tools
+maybe-check-c++tools:
+@if c++tools
+maybe-check-c++tools: check-c++tools
+
+check-c++tools:
+	@: $(MAKE); $(unstage)
+	@r=`${PWD_COMMAND}`; export r; \
+	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
+	$(HOST_EXPORTS)  \
+	(cd $(HOST_SUBDIR)/c++tools && \
+	  $(MAKE) $(FLAGS_TO_PASS)  check)
+
+@endif c++tools
+
+.PHONY: install-c++tools maybe-install-c++tools
+maybe-install-c++tools:
+@if c++tools
+maybe-install-c++tools: install-c++tools
+
+install-c++tools: installdirs
+	@: $(MAKE); $(unstage)
+	@r=`${PWD_COMMAND}`; export r; \
+	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
+	$(HOST_EXPORTS) \
+	(cd $(HOST_SUBDIR)/c++tools && \
+	  $(MAKE) $(FLAGS_TO_PASS)  install)
+
+@endif c++tools
+
+.PHONY: install-strip-c++tools maybe-install-strip-c++tools
+maybe-install-strip-c++tools:
+@if c++tools
+maybe-install-strip-c++tools: install-strip-c++tools
+
+install-strip-c++tools: installdirs
+	@: $(MAKE); $(unstage)
+	@r=`${PWD_COMMAND}`; export r; \
+	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
+	$(HOST_EXPORTS) \
+	(cd $(HOST_SUBDIR)/c++tools && \
+	  $(MAKE) $(FLAGS_TO_PASS)  install-strip)
+
+@endif c++tools
+
+# Other targets (info, dvi, pdf, etc.)
+
+.PHONY: maybe-info-c++tools info-c++tools
+maybe-info-c++tools:
+@if c++tools
+maybe-info-c++tools: info-c++tools
+
+info-c++tools: \
+    configure-c++tools 
+	@: $(MAKE); $(unstage)
+	@[ -f ./c++tools/Makefile ] || exit 0; \
+	r=`${PWD_COMMAND}`; export r; \
+	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
+	$(HOST_EXPORTS) \
+	for flag in $(EXTRA_HOST_FLAGS) ; do \
+	  eval `echo "$$flag" | sed -e "s|^\([^=]*\)=\(.*\)|\1='\2'; export \1|"`; \
+	done; \
+	echo "Doing info in c++tools"; \
+	(cd $(HOST_SUBDIR)/c++tools && \
+	  $(MAKE) $(BASE_FLAGS_TO_PASS) "AR=$${AR}" "AS=$${AS}" \
+	          "CC=$${CC}" "CXX=$${CXX}" "LD=$${LD}" "NM=$${NM}" \
+	          "RANLIB=$${RANLIB}" \
+	          "DLLTOOL=$${DLLTOOL}" "WINDRES=$${WINDRES}" "WINDMC=$${WINDMC}" \
+	          info) \
+	  || exit 1
+
+@endif c++tools
+
+.PHONY: maybe-dvi-c++tools dvi-c++tools
+maybe-dvi-c++tools:
+@if c++tools
+maybe-dvi-c++tools: dvi-c++tools
+
+dvi-c++tools: \
+    configure-c++tools 
+	@: $(MAKE); $(unstage)
+	@[ -f ./c++tools/Makefile ] || exit 0; \
+	r=`${PWD_COMMAND}`; export r; \
+	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
+	$(HOST_EXPORTS) \
+	for flag in $(EXTRA_HOST_FLAGS) ; do \
+	  eval `echo "$$flag" | sed -e "s|^\([^=]*\)=\(.*\)|\1='\2'; export \1|"`; \
+	done; \
+	echo "Doing dvi in c++tools"; \
+	(cd $(HOST_SUBDIR)/c++tools && \
+	  $(MAKE) $(BASE_FLAGS_TO_PASS) "AR=$${AR}" "AS=$${AS}" \
+	          "CC=$${CC}" "CXX=$${CXX}" "LD=$${LD}" "NM=$${NM}" \
+	          "RANLIB=$${RANLIB}" \
+	          "DLLTOOL=$${DLLTOOL}" "WINDRES=$${WINDRES}" "WINDMC=$${WINDMC}" \
+	          dvi) \
+	  || exit 1
+
+@endif c++tools
+
+.PHONY: maybe-pdf-c++tools pdf-c++tools
+maybe-pdf-c++tools:
+@if c++tools
+maybe-pdf-c++tools: pdf-c++tools
+
+pdf-c++tools: \
+    configure-c++tools 
+	@: $(MAKE); $(unstage)
+	@[ -f ./c++tools/Makefile ] || exit 0; \
+	r=`${PWD_COMMAND}`; export r; \
+	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
+	$(HOST_EXPORTS) \
+	for flag in $(EXTRA_HOST_FLAGS) ; do \
+	  eval `echo "$$flag" | sed -e "s|^\([^=]*\)=\(.*\)|\1='\2'; export \1|"`; \
+	done; \
+	echo "Doing pdf in c++tools"; \
+	(cd $(HOST_SUBDIR)/c++tools && \
+	  $(MAKE) $(BASE_FLAGS_TO_PASS) "AR=$${AR}" "AS=$${AS}" \
+	          "CC=$${CC}" "CXX=$${CXX}" "LD=$${LD}" "NM=$${NM}" \
+	          "RANLIB=$${RANLIB}" \
+	          "DLLTOOL=$${DLLTOOL}" "WINDRES=$${WINDRES}" "WINDMC=$${WINDMC}" \
+	          pdf) \
+	  || exit 1
+
+@endif c++tools
+
+.PHONY: maybe-html-c++tools html-c++tools
+maybe-html-c++tools:
+@if c++tools
+maybe-html-c++tools: html-c++tools
+
+html-c++tools: \
+    configure-c++tools 
+	@: $(MAKE); $(unstage)
+	@[ -f ./c++tools/Makefile ] || exit 0; \
+	r=`${PWD_COMMAND}`; export r; \
+	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
+	$(HOST_EXPORTS) \
+	for flag in $(EXTRA_HOST_FLAGS) ; do \
+	  eval `echo "$$flag" | sed -e "s|^\([^=]*\)=\(.*\)|\1='\2'; export \1|"`; \
+	done; \
+	echo "Doing html in c++tools"; \
+	(cd $(HOST_SUBDIR)/c++tools && \
+	  $(MAKE) $(BASE_FLAGS_TO_PASS) "AR=$${AR}" "AS=$${AS}" \
+	          "CC=$${CC}" "CXX=$${CXX}" "LD=$${LD}" "NM=$${NM}" \
+	          "RANLIB=$${RANLIB}" \
+	          "DLLTOOL=$${DLLTOOL}" "WINDRES=$${WINDRES}" "WINDMC=$${WINDMC}" \
+	          html) \
+	  || exit 1
+
+@endif c++tools
+
+.PHONY: maybe-TAGS-c++tools TAGS-c++tools
+maybe-TAGS-c++tools:
+@if c++tools
+maybe-TAGS-c++tools: TAGS-c++tools
+
+# c++tools doesn't support TAGS.
+TAGS-c++tools:
+
+@endif c++tools
+
+.PHONY: maybe-install-info-c++tools install-info-c++tools
+maybe-install-info-c++tools:
+@if c++tools
+maybe-install-info-c++tools: install-info-c++tools
+
+install-info-c++tools: \
+    configure-c++tools \
+    info-c++tools 
+	@: $(MAKE); $(unstage)
+	@[ -f ./c++tools/Makefile ] || exit 0; \
+	r=`${PWD_COMMAND}`; export r; \
+	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
+	$(HOST_EXPORTS) \
+	for flag in $(EXTRA_HOST_FLAGS) ; do \
+	  eval `echo "$$flag" | sed -e "s|^\([^=]*\)=\(.*\)|\1='\2'; export \1|"`; \
+	done; \
+	echo "Doing install-info in c++tools"; \
+	(cd $(HOST_SUBDIR)/c++tools && \
+	  $(MAKE) $(BASE_FLAGS_TO_PASS) "AR=$${AR}" "AS=$${AS}" \
+	          "CC=$${CC}" "CXX=$${CXX}" "LD=$${LD}" "NM=$${NM}" \
+	          "RANLIB=$${RANLIB}" \
+	          "DLLTOOL=$${DLLTOOL}" "WINDRES=$${WINDRES}" "WINDMC=$${WINDMC}" \
+	          install-info) \
+	  || exit 1
+
+@endif c++tools
+
+.PHONY: maybe-install-pdf-c++tools install-pdf-c++tools
+maybe-install-pdf-c++tools:
+@if c++tools
+maybe-install-pdf-c++tools: install-pdf-c++tools
+
+install-pdf-c++tools: \
+    configure-c++tools \
+    pdf-c++tools 
+	@: $(MAKE); $(unstage)
+	@[ -f ./c++tools/Makefile ] || exit 0; \
+	r=`${PWD_COMMAND}`; export r; \
+	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
+	$(HOST_EXPORTS) \
+	for flag in $(EXTRA_HOST_FLAGS) ; do \
+	  eval `echo "$$flag" | sed -e "s|^\([^=]*\)=\(.*\)|\1='\2'; export \1|"`; \
+	done; \
+	echo "Doing install-pdf in c++tools"; \
+	(cd $(HOST_SUBDIR)/c++tools && \
+	  $(MAKE) $(BASE_FLAGS_TO_PASS) "AR=$${AR}" "AS=$${AS}" \
+	          "CC=$${CC}" "CXX=$${CXX}" "LD=$${LD}" "NM=$${NM}" \
+	          "RANLIB=$${RANLIB}" \
+	          "DLLTOOL=$${DLLTOOL}" "WINDRES=$${WINDRES}" "WINDMC=$${WINDMC}" \
+	          install-pdf) \
+	  || exit 1
+
+@endif c++tools
+
+.PHONY: maybe-install-html-c++tools install-html-c++tools
+maybe-install-html-c++tools:
+@if c++tools
+maybe-install-html-c++tools: install-html-c++tools
+
+install-html-c++tools: \
+    configure-c++tools \
+    html-c++tools 
+	@: $(MAKE); $(unstage)
+	@[ -f ./c++tools/Makefile ] || exit 0; \
+	r=`${PWD_COMMAND}`; export r; \
+	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
+	$(HOST_EXPORTS) \
+	for flag in $(EXTRA_HOST_FLAGS) ; do \
+	  eval `echo "$$flag" | sed -e "s|^\([^=]*\)=\(.*\)|\1='\2'; export \1|"`; \
+	done; \
+	echo "Doing install-html in c++tools"; \
+	(cd $(HOST_SUBDIR)/c++tools && \
+	  $(MAKE) $(BASE_FLAGS_TO_PASS) "AR=$${AR}" "AS=$${AS}" \
+	          "CC=$${CC}" "CXX=$${CXX}" "LD=$${LD}" "NM=$${NM}" \
+	          "RANLIB=$${RANLIB}" \
+	          "DLLTOOL=$${DLLTOOL}" "WINDRES=$${WINDRES}" "WINDMC=$${WINDMC}" \
+	          install-html) \
+	  || exit 1
+
+@endif c++tools
+
+.PHONY: maybe-installcheck-c++tools installcheck-c++tools
+maybe-installcheck-c++tools:
+@if c++tools
+maybe-installcheck-c++tools: installcheck-c++tools
+
+installcheck-c++tools: \
+    configure-c++tools 
+	@: $(MAKE); $(unstage)
+	@[ -f ./c++tools/Makefile ] || exit 0; \
+	r=`${PWD_COMMAND}`; export r; \
+	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
+	$(HOST_EXPORTS) \
+	for flag in $(EXTRA_HOST_FLAGS) ; do \
+	  eval `echo "$$flag" | sed -e "s|^\([^=]*\)=\(.*\)|\1='\2'; export \1|"`; \
+	done; \
+	echo "Doing installcheck in c++tools"; \
+	(cd $(HOST_SUBDIR)/c++tools && \
+	  $(MAKE) $(BASE_FLAGS_TO_PASS) "AR=$${AR}" "AS=$${AS}" \
+	          "CC=$${CC}" "CXX=$${CXX}" "LD=$${LD}" "NM=$${NM}" \
+	          "RANLIB=$${RANLIB}" \
+	          "DLLTOOL=$${DLLTOOL}" "WINDRES=$${WINDRES}" "WINDMC=$${WINDMC}" \
+	          installcheck) \
+	  || exit 1
+
+@endif c++tools
+
+.PHONY: maybe-mostlyclean-c++tools mostlyclean-c++tools
+maybe-mostlyclean-c++tools:
+@if c++tools
+maybe-mostlyclean-c++tools: mostlyclean-c++tools
+
+mostlyclean-c++tools: 
+	@: $(MAKE); $(unstage)
+	@[ -f ./c++tools/Makefile ] || exit 0; \
+	r=`${PWD_COMMAND}`; export r; \
+	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
+	$(HOST_EXPORTS) \
+	for flag in $(EXTRA_HOST_FLAGS) ; do \
+	  eval `echo "$$flag" | sed -e "s|^\([^=]*\)=\(.*\)|\1='\2'; export \1|"`; \
+	done; \
+	echo "Doing mostlyclean in c++tools"; \
+	(cd $(HOST_SUBDIR)/c++tools && \
+	  $(MAKE) $(BASE_FLAGS_TO_PASS) "AR=$${AR}" "AS=$${AS}" \
+	          "CC=$${CC}" "CXX=$${CXX}" "LD=$${LD}" "NM=$${NM}" \
+	          "RANLIB=$${RANLIB}" \
+	          "DLLTOOL=$${DLLTOOL}" "WINDRES=$${WINDRES}" "WINDMC=$${WINDMC}" \
+	          mostlyclean) \
+	  || exit 1
+
+@endif c++tools
+
+.PHONY: maybe-clean-c++tools clean-c++tools
+maybe-clean-c++tools:
+@if c++tools
+maybe-clean-c++tools: clean-c++tools
+
+clean-c++tools: 
+	@: $(MAKE); $(unstage)
+	@[ -f ./c++tools/Makefile ] || exit 0; \
+	r=`${PWD_COMMAND}`; export r; \
+	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
+	$(HOST_EXPORTS) \
+	for flag in $(EXTRA_HOST_FLAGS) ; do \
+	  eval `echo "$$flag" | sed -e "s|^\([^=]*\)=\(.*\)|\1='\2'; export \1|"`; \
+	done; \
+	echo "Doing clean in c++tools"; \
+	(cd $(HOST_SUBDIR)/c++tools && \
+	  $(MAKE) $(BASE_FLAGS_TO_PASS) "AR=$${AR}" "AS=$${AS}" \
+	          "CC=$${CC}" "CXX=$${CXX}" "LD=$${LD}" "NM=$${NM}" \
+	          "RANLIB=$${RANLIB}" \
+	          "DLLTOOL=$${DLLTOOL}" "WINDRES=$${WINDRES}" "WINDMC=$${WINDMC}" \
+	          clean) \
+	  || exit 1
+
+@endif c++tools
+
+.PHONY: maybe-distclean-c++tools distclean-c++tools
+maybe-distclean-c++tools:
+@if c++tools
+maybe-distclean-c++tools: distclean-c++tools
+
+distclean-c++tools: 
+	@: $(MAKE); $(unstage)
+	@[ -f ./c++tools/Makefile ] || exit 0; \
+	r=`${PWD_COMMAND}`; export r; \
+	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
+	$(HOST_EXPORTS) \
+	for flag in $(EXTRA_HOST_FLAGS) ; do \
+	  eval `echo "$$flag" | sed -e "s|^\([^=]*\)=\(.*\)|\1='\2'; export \1|"`; \
+	done; \
+	echo "Doing distclean in c++tools"; \
+	(cd $(HOST_SUBDIR)/c++tools && \
+	  $(MAKE) $(BASE_FLAGS_TO_PASS) "AR=$${AR}" "AS=$${AS}" \
+	          "CC=$${CC}" "CXX=$${CXX}" "LD=$${LD}" "NM=$${NM}" \
+	          "RANLIB=$${RANLIB}" \
+	          "DLLTOOL=$${DLLTOOL}" "WINDRES=$${WINDRES}" "WINDMC=$${WINDMC}" \
+	          distclean) \
+	  || exit 1
+
+@endif c++tools
+
+.PHONY: maybe-maintainer-clean-c++tools maintainer-clean-c++tools
+maybe-maintainer-clean-c++tools:
+@if c++tools
+maybe-maintainer-clean-c++tools: maintainer-clean-c++tools
+
+maintainer-clean-c++tools: 
+	@: $(MAKE); $(unstage)
+	@[ -f ./c++tools/Makefile ] || exit 0; \
+	r=`${PWD_COMMAND}`; export r; \
+	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
+	$(HOST_EXPORTS) \
+	for flag in $(EXTRA_HOST_FLAGS) ; do \
+	  eval `echo "$$flag" | sed -e "s|^\([^=]*\)=\(.*\)|\1='\2'; export \1|"`; \
+	done; \
+	echo "Doing maintainer-clean in c++tools"; \
+	(cd $(HOST_SUBDIR)/c++tools && \
+	  $(MAKE) $(BASE_FLAGS_TO_PASS) "AR=$${AR}" "AS=$${AS}" \
+	          "CC=$${CC}" "CXX=$${CXX}" "LD=$${LD}" "NM=$${NM}" \
+	          "RANLIB=$${RANLIB}" \
+	          "DLLTOOL=$${DLLTOOL}" "WINDRES=$${WINDRES}" "WINDMC=$${WINDMC}" \
+	          maintainer-clean) \
+	  || exit 1
+
+@endif c++tools
+
+
+
 .PHONY: configure-gnattools maybe-configure-gnattools
 maybe-configure-gnattools:
 @if gcc-bootstrap
@@ -40257,6 +41696,12 @@ maybe-check-libctf:
 maybe-check-libctf: check-libctf
 
 check-libctf:
+	@: $(MAKE); $(unstage)
+	@r=`${PWD_COMMAND}`; export r; \
+	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
+	$(HOST_EXPORTS) $(EXTRA_HOST_EXPORTS) \
+	(cd $(HOST_SUBDIR)/libctf && \
+	  $(MAKE) $(FLAGS_TO_PASS)  $(EXTRA_BOOTSTRAP_FLAGS) check)
 
 @endif libctf
 
@@ -40265,7 +41710,13 @@ maybe-install-libctf:
 @if libctf
 maybe-install-libctf: install-libctf
 
-install-libctf:
+install-libctf: installdirs
+	@: $(MAKE); $(unstage)
+	@r=`${PWD_COMMAND}`; export r; \
+	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
+	$(HOST_EXPORTS) \
+	(cd $(HOST_SUBDIR)/libctf && \
+	  $(MAKE) $(FLAGS_TO_PASS)  install)
 
 @endif libctf
 
@@ -40274,7 +41725,13 @@ maybe-install-strip-libctf:
 @if libctf
 maybe-install-strip-libctf: install-strip-libctf
 
-install-strip-libctf:
+install-strip-libctf: installdirs
+	@: $(MAKE); $(unstage)
+	@r=`${PWD_COMMAND}`; export r; \
+	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
+	$(HOST_EXPORTS) \
+	(cd $(HOST_SUBDIR)/libctf && \
+	  $(MAKE) $(FLAGS_TO_PASS)  install-strip)
 
 @endif libctf
 
@@ -46722,24 +48179,8 @@ maybe-TAGS-target-libgcc:
 @if target-libgcc
 maybe-TAGS-target-libgcc: TAGS-target-libgcc
 
-TAGS-target-libgcc: \
-    configure-target-libgcc 
-	@: $(MAKE); $(unstage)
-	@[ -f $(TARGET_SUBDIR)/libgcc/Makefile ] || exit 0; \
-	r=`${PWD_COMMAND}`; export r; \
-	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
-	$(NORMAL_TARGET_EXPORTS) \
-	echo "Doing TAGS in $(TARGET_SUBDIR)/libgcc"; \
-	for flag in $(EXTRA_TARGET_FLAGS); do \
-	  eval `echo "$$flag" | sed -e "s|^\([^=]*\)=\(.*\)|\1='\2'; export \1|"`; \
-	done; \
-	(cd $(TARGET_SUBDIR)/libgcc && \
-	  $(MAKE) $(BASE_FLAGS_TO_PASS) "AR=$${AR}" "AS=$${AS}" \
-	          "CC=$${CC}" "CXX=$${CXX}" "LD=$${LD}" "NM=$${NM}" \
-	          "RANLIB=$${RANLIB}" \
-	          "DLLTOOL=$${DLLTOOL}" "WINDRES=$${WINDRES}" "WINDMC=$${WINDMC}" \
-	           TAGS) \
-	  || exit 1
+# libgcc doesn't support TAGS.
+TAGS-target-libgcc:
 
 @endif target-libgcc
 
@@ -48554,24 +49995,8 @@ maybe-TAGS-target-libobjc:
 @if target-libobjc
 maybe-TAGS-target-libobjc: TAGS-target-libobjc
 
-TAGS-target-libobjc: \
-    configure-target-libobjc 
-	@: $(MAKE); $(unstage)
-	@[ -f $(TARGET_SUBDIR)/libobjc/Makefile ] || exit 0; \
-	r=`${PWD_COMMAND}`; export r; \
-	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
-	$(NORMAL_TARGET_EXPORTS) \
-	echo "Doing TAGS in $(TARGET_SUBDIR)/libobjc"; \
-	for flag in $(EXTRA_TARGET_FLAGS); do \
-	  eval `echo "$$flag" | sed -e "s|^\([^=]*\)=\(.*\)|\1='\2'; export \1|"`; \
-	done; \
-	(cd $(TARGET_SUBDIR)/libobjc && \
-	  $(MAKE) $(BASE_FLAGS_TO_PASS) "AR=$${AR}" "AS=$${AS}" \
-	          "CC=$${CC}" "CXX=$${CXX}" "LD=$${LD}" "NM=$${NM}" \
-	          "RANLIB=$${RANLIB}" \
-	          "DLLTOOL=$${DLLTOOL}" "WINDRES=$${WINDRES}" "WINDMC=$${WINDMC}" \
-	           TAGS) \
-	  || exit 1
+# libobjc doesn't support TAGS.
+TAGS-target-libobjc:
 
 @endif target-libobjc
 
@@ -49239,464 +50664,6 @@ maintainer-clean-target-libgo:
 	  || exit 1
 
 @endif target-libgo
-
-
-
-
-
-.PHONY: configure-target-libhsail-rt maybe-configure-target-libhsail-rt
-maybe-configure-target-libhsail-rt:
-@if gcc-bootstrap
-configure-target-libhsail-rt: stage_current
-@endif gcc-bootstrap
-@if target-libhsail-rt
-maybe-configure-target-libhsail-rt: configure-target-libhsail-rt
-configure-target-libhsail-rt: 
-	@: $(MAKE); $(unstage)
-	@r=`${PWD_COMMAND}`; export r; \
-	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
-	echo "Checking multilib configuration for libhsail-rt..."; \
-	$(SHELL) $(srcdir)/mkinstalldirs $(TARGET_SUBDIR)/libhsail-rt; \
-	$(CC_FOR_TARGET) --print-multi-lib > $(TARGET_SUBDIR)/libhsail-rt/multilib.tmp 2> /dev/null; \
-	if test -r $(TARGET_SUBDIR)/libhsail-rt/multilib.out; then \
-	  if cmp -s $(TARGET_SUBDIR)/libhsail-rt/multilib.tmp $(TARGET_SUBDIR)/libhsail-rt/multilib.out; then \
-	    rm -f $(TARGET_SUBDIR)/libhsail-rt/multilib.tmp; \
-	  else \
-	    rm -f $(TARGET_SUBDIR)/libhsail-rt/Makefile; \
-	    mv $(TARGET_SUBDIR)/libhsail-rt/multilib.tmp $(TARGET_SUBDIR)/libhsail-rt/multilib.out; \
-	  fi; \
-	else \
-	  mv $(TARGET_SUBDIR)/libhsail-rt/multilib.tmp $(TARGET_SUBDIR)/libhsail-rt/multilib.out; \
-	fi; \
-	test ! -f $(TARGET_SUBDIR)/libhsail-rt/Makefile || exit 0; \
-	$(SHELL) $(srcdir)/mkinstalldirs $(TARGET_SUBDIR)/libhsail-rt; \
-	$(NORMAL_TARGET_EXPORTS)  \
-	echo Configuring in $(TARGET_SUBDIR)/libhsail-rt; \
-	cd "$(TARGET_SUBDIR)/libhsail-rt" || exit 1; \
-	case $(srcdir) in \
-	  /* | [A-Za-z]:[\\/]*) topdir=$(srcdir) ;; \
-	  *) topdir=`echo $(TARGET_SUBDIR)/libhsail-rt/ | \
-		sed -e 's,\./,,g' -e 's,[^/]*/,../,g' `$(srcdir) ;; \
-	esac; \
-	module_srcdir=libhsail-rt; \
-	rm -f no-such-file || : ; \
-	CONFIG_SITE=no-such-file $(SHELL) \
-	  $$s/$$module_srcdir/configure \
-	  --srcdir=$${topdir}/$$module_srcdir \
-	  $(TARGET_CONFIGARGS) --build=${build_alias} --host=${target_alias} \
-	  --target=${target_alias}  \
-	  || exit 1
-@endif target-libhsail-rt
-
-
-
-
-
-.PHONY: all-target-libhsail-rt maybe-all-target-libhsail-rt
-maybe-all-target-libhsail-rt:
-@if gcc-bootstrap
-all-target-libhsail-rt: stage_current
-@endif gcc-bootstrap
-@if target-libhsail-rt
-TARGET-target-libhsail-rt=all
-maybe-all-target-libhsail-rt: all-target-libhsail-rt
-all-target-libhsail-rt: configure-target-libhsail-rt
-	@: $(MAKE); $(unstage)
-	@r=`${PWD_COMMAND}`; export r; \
-	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
-	$(NORMAL_TARGET_EXPORTS)  \
-	(cd $(TARGET_SUBDIR)/libhsail-rt && \
-	  $(MAKE) $(BASE_FLAGS_TO_PASS) $(EXTRA_TARGET_FLAGS)   \
-		$(TARGET-target-libhsail-rt))
-@endif target-libhsail-rt
-
-
-
-
-
-.PHONY: check-target-libhsail-rt maybe-check-target-libhsail-rt
-maybe-check-target-libhsail-rt:
-@if target-libhsail-rt
-maybe-check-target-libhsail-rt: check-target-libhsail-rt
-
-check-target-libhsail-rt:
-	@: $(MAKE); $(unstage)
-	@r=`${PWD_COMMAND}`; export r; \
-	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
-	$(NORMAL_TARGET_EXPORTS) \
-	(cd $(TARGET_SUBDIR)/libhsail-rt && \
-	  $(MAKE) $(TARGET_FLAGS_TO_PASS)   check)
-
-@endif target-libhsail-rt
-
-.PHONY: install-target-libhsail-rt maybe-install-target-libhsail-rt
-maybe-install-target-libhsail-rt:
-@if target-libhsail-rt
-maybe-install-target-libhsail-rt: install-target-libhsail-rt
-
-install-target-libhsail-rt: installdirs
-	@: $(MAKE); $(unstage)
-	@r=`${PWD_COMMAND}`; export r; \
-	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
-	$(NORMAL_TARGET_EXPORTS) \
-	(cd $(TARGET_SUBDIR)/libhsail-rt && \
-	  $(MAKE) $(TARGET_FLAGS_TO_PASS)  install)
-
-@endif target-libhsail-rt
-
-.PHONY: install-strip-target-libhsail-rt maybe-install-strip-target-libhsail-rt
-maybe-install-strip-target-libhsail-rt:
-@if target-libhsail-rt
-maybe-install-strip-target-libhsail-rt: install-strip-target-libhsail-rt
-
-install-strip-target-libhsail-rt: installdirs
-	@: $(MAKE); $(unstage)
-	@r=`${PWD_COMMAND}`; export r; \
-	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
-	$(NORMAL_TARGET_EXPORTS) \
-	(cd $(TARGET_SUBDIR)/libhsail-rt && \
-	  $(MAKE) $(TARGET_FLAGS_TO_PASS)  install-strip)
-
-@endif target-libhsail-rt
-
-# Other targets (info, dvi, pdf, etc.)
-
-.PHONY: maybe-info-target-libhsail-rt info-target-libhsail-rt
-maybe-info-target-libhsail-rt:
-@if target-libhsail-rt
-maybe-info-target-libhsail-rt: info-target-libhsail-rt
-
-info-target-libhsail-rt: \
-    configure-target-libhsail-rt 
-	@: $(MAKE); $(unstage)
-	@[ -f $(TARGET_SUBDIR)/libhsail-rt/Makefile ] || exit 0; \
-	r=`${PWD_COMMAND}`; export r; \
-	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
-	$(NORMAL_TARGET_EXPORTS) \
-	echo "Doing info in $(TARGET_SUBDIR)/libhsail-rt"; \
-	for flag in $(EXTRA_TARGET_FLAGS); do \
-	  eval `echo "$$flag" | sed -e "s|^\([^=]*\)=\(.*\)|\1='\2'; export \1|"`; \
-	done; \
-	(cd $(TARGET_SUBDIR)/libhsail-rt && \
-	  $(MAKE) $(BASE_FLAGS_TO_PASS) "AR=$${AR}" "AS=$${AS}" \
-	          "CC=$${CC}" "CXX=$${CXX}" "LD=$${LD}" "NM=$${NM}" \
-	          "RANLIB=$${RANLIB}" \
-	          "DLLTOOL=$${DLLTOOL}" "WINDRES=$${WINDRES}" "WINDMC=$${WINDMC}" \
-	           info) \
-	  || exit 1
-
-@endif target-libhsail-rt
-
-.PHONY: maybe-dvi-target-libhsail-rt dvi-target-libhsail-rt
-maybe-dvi-target-libhsail-rt:
-@if target-libhsail-rt
-maybe-dvi-target-libhsail-rt: dvi-target-libhsail-rt
-
-dvi-target-libhsail-rt: \
-    configure-target-libhsail-rt 
-	@: $(MAKE); $(unstage)
-	@[ -f $(TARGET_SUBDIR)/libhsail-rt/Makefile ] || exit 0; \
-	r=`${PWD_COMMAND}`; export r; \
-	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
-	$(NORMAL_TARGET_EXPORTS) \
-	echo "Doing dvi in $(TARGET_SUBDIR)/libhsail-rt"; \
-	for flag in $(EXTRA_TARGET_FLAGS); do \
-	  eval `echo "$$flag" | sed -e "s|^\([^=]*\)=\(.*\)|\1='\2'; export \1|"`; \
-	done; \
-	(cd $(TARGET_SUBDIR)/libhsail-rt && \
-	  $(MAKE) $(BASE_FLAGS_TO_PASS) "AR=$${AR}" "AS=$${AS}" \
-	          "CC=$${CC}" "CXX=$${CXX}" "LD=$${LD}" "NM=$${NM}" \
-	          "RANLIB=$${RANLIB}" \
-	          "DLLTOOL=$${DLLTOOL}" "WINDRES=$${WINDRES}" "WINDMC=$${WINDMC}" \
-	           dvi) \
-	  || exit 1
-
-@endif target-libhsail-rt
-
-.PHONY: maybe-pdf-target-libhsail-rt pdf-target-libhsail-rt
-maybe-pdf-target-libhsail-rt:
-@if target-libhsail-rt
-maybe-pdf-target-libhsail-rt: pdf-target-libhsail-rt
-
-pdf-target-libhsail-rt: \
-    configure-target-libhsail-rt 
-	@: $(MAKE); $(unstage)
-	@[ -f $(TARGET_SUBDIR)/libhsail-rt/Makefile ] || exit 0; \
-	r=`${PWD_COMMAND}`; export r; \
-	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
-	$(NORMAL_TARGET_EXPORTS) \
-	echo "Doing pdf in $(TARGET_SUBDIR)/libhsail-rt"; \
-	for flag in $(EXTRA_TARGET_FLAGS); do \
-	  eval `echo "$$flag" | sed -e "s|^\([^=]*\)=\(.*\)|\1='\2'; export \1|"`; \
-	done; \
-	(cd $(TARGET_SUBDIR)/libhsail-rt && \
-	  $(MAKE) $(BASE_FLAGS_TO_PASS) "AR=$${AR}" "AS=$${AS}" \
-	          "CC=$${CC}" "CXX=$${CXX}" "LD=$${LD}" "NM=$${NM}" \
-	          "RANLIB=$${RANLIB}" \
-	          "DLLTOOL=$${DLLTOOL}" "WINDRES=$${WINDRES}" "WINDMC=$${WINDMC}" \
-	           pdf) \
-	  || exit 1
-
-@endif target-libhsail-rt
-
-.PHONY: maybe-html-target-libhsail-rt html-target-libhsail-rt
-maybe-html-target-libhsail-rt:
-@if target-libhsail-rt
-maybe-html-target-libhsail-rt: html-target-libhsail-rt
-
-html-target-libhsail-rt: \
-    configure-target-libhsail-rt 
-	@: $(MAKE); $(unstage)
-	@[ -f $(TARGET_SUBDIR)/libhsail-rt/Makefile ] || exit 0; \
-	r=`${PWD_COMMAND}`; export r; \
-	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
-	$(NORMAL_TARGET_EXPORTS) \
-	echo "Doing html in $(TARGET_SUBDIR)/libhsail-rt"; \
-	for flag in $(EXTRA_TARGET_FLAGS); do \
-	  eval `echo "$$flag" | sed -e "s|^\([^=]*\)=\(.*\)|\1='\2'; export \1|"`; \
-	done; \
-	(cd $(TARGET_SUBDIR)/libhsail-rt && \
-	  $(MAKE) $(BASE_FLAGS_TO_PASS) "AR=$${AR}" "AS=$${AS}" \
-	          "CC=$${CC}" "CXX=$${CXX}" "LD=$${LD}" "NM=$${NM}" \
-	          "RANLIB=$${RANLIB}" \
-	          "DLLTOOL=$${DLLTOOL}" "WINDRES=$${WINDRES}" "WINDMC=$${WINDMC}" \
-	           html) \
-	  || exit 1
-
-@endif target-libhsail-rt
-
-.PHONY: maybe-TAGS-target-libhsail-rt TAGS-target-libhsail-rt
-maybe-TAGS-target-libhsail-rt:
-@if target-libhsail-rt
-maybe-TAGS-target-libhsail-rt: TAGS-target-libhsail-rt
-
-TAGS-target-libhsail-rt: \
-    configure-target-libhsail-rt 
-	@: $(MAKE); $(unstage)
-	@[ -f $(TARGET_SUBDIR)/libhsail-rt/Makefile ] || exit 0; \
-	r=`${PWD_COMMAND}`; export r; \
-	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
-	$(NORMAL_TARGET_EXPORTS) \
-	echo "Doing TAGS in $(TARGET_SUBDIR)/libhsail-rt"; \
-	for flag in $(EXTRA_TARGET_FLAGS); do \
-	  eval `echo "$$flag" | sed -e "s|^\([^=]*\)=\(.*\)|\1='\2'; export \1|"`; \
-	done; \
-	(cd $(TARGET_SUBDIR)/libhsail-rt && \
-	  $(MAKE) $(BASE_FLAGS_TO_PASS) "AR=$${AR}" "AS=$${AS}" \
-	          "CC=$${CC}" "CXX=$${CXX}" "LD=$${LD}" "NM=$${NM}" \
-	          "RANLIB=$${RANLIB}" \
-	          "DLLTOOL=$${DLLTOOL}" "WINDRES=$${WINDRES}" "WINDMC=$${WINDMC}" \
-	           TAGS) \
-	  || exit 1
-
-@endif target-libhsail-rt
-
-.PHONY: maybe-install-info-target-libhsail-rt install-info-target-libhsail-rt
-maybe-install-info-target-libhsail-rt:
-@if target-libhsail-rt
-maybe-install-info-target-libhsail-rt: install-info-target-libhsail-rt
-
-install-info-target-libhsail-rt: \
-    configure-target-libhsail-rt \
-    info-target-libhsail-rt 
-	@: $(MAKE); $(unstage)
-	@[ -f $(TARGET_SUBDIR)/libhsail-rt/Makefile ] || exit 0; \
-	r=`${PWD_COMMAND}`; export r; \
-	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
-	$(NORMAL_TARGET_EXPORTS) \
-	echo "Doing install-info in $(TARGET_SUBDIR)/libhsail-rt"; \
-	for flag in $(EXTRA_TARGET_FLAGS); do \
-	  eval `echo "$$flag" | sed -e "s|^\([^=]*\)=\(.*\)|\1='\2'; export \1|"`; \
-	done; \
-	(cd $(TARGET_SUBDIR)/libhsail-rt && \
-	  $(MAKE) $(BASE_FLAGS_TO_PASS) "AR=$${AR}" "AS=$${AS}" \
-	          "CC=$${CC}" "CXX=$${CXX}" "LD=$${LD}" "NM=$${NM}" \
-	          "RANLIB=$${RANLIB}" \
-	          "DLLTOOL=$${DLLTOOL}" "WINDRES=$${WINDRES}" "WINDMC=$${WINDMC}" \
-	           install-info) \
-	  || exit 1
-
-@endif target-libhsail-rt
-
-.PHONY: maybe-install-pdf-target-libhsail-rt install-pdf-target-libhsail-rt
-maybe-install-pdf-target-libhsail-rt:
-@if target-libhsail-rt
-maybe-install-pdf-target-libhsail-rt: install-pdf-target-libhsail-rt
-
-install-pdf-target-libhsail-rt: \
-    configure-target-libhsail-rt \
-    pdf-target-libhsail-rt 
-	@: $(MAKE); $(unstage)
-	@[ -f $(TARGET_SUBDIR)/libhsail-rt/Makefile ] || exit 0; \
-	r=`${PWD_COMMAND}`; export r; \
-	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
-	$(NORMAL_TARGET_EXPORTS) \
-	echo "Doing install-pdf in $(TARGET_SUBDIR)/libhsail-rt"; \
-	for flag in $(EXTRA_TARGET_FLAGS); do \
-	  eval `echo "$$flag" | sed -e "s|^\([^=]*\)=\(.*\)|\1='\2'; export \1|"`; \
-	done; \
-	(cd $(TARGET_SUBDIR)/libhsail-rt && \
-	  $(MAKE) $(BASE_FLAGS_TO_PASS) "AR=$${AR}" "AS=$${AS}" \
-	          "CC=$${CC}" "CXX=$${CXX}" "LD=$${LD}" "NM=$${NM}" \
-	          "RANLIB=$${RANLIB}" \
-	          "DLLTOOL=$${DLLTOOL}" "WINDRES=$${WINDRES}" "WINDMC=$${WINDMC}" \
-	           install-pdf) \
-	  || exit 1
-
-@endif target-libhsail-rt
-
-.PHONY: maybe-install-html-target-libhsail-rt install-html-target-libhsail-rt
-maybe-install-html-target-libhsail-rt:
-@if target-libhsail-rt
-maybe-install-html-target-libhsail-rt: install-html-target-libhsail-rt
-
-install-html-target-libhsail-rt: \
-    configure-target-libhsail-rt \
-    html-target-libhsail-rt 
-	@: $(MAKE); $(unstage)
-	@[ -f $(TARGET_SUBDIR)/libhsail-rt/Makefile ] || exit 0; \
-	r=`${PWD_COMMAND}`; export r; \
-	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
-	$(NORMAL_TARGET_EXPORTS) \
-	echo "Doing install-html in $(TARGET_SUBDIR)/libhsail-rt"; \
-	for flag in $(EXTRA_TARGET_FLAGS); do \
-	  eval `echo "$$flag" | sed -e "s|^\([^=]*\)=\(.*\)|\1='\2'; export \1|"`; \
-	done; \
-	(cd $(TARGET_SUBDIR)/libhsail-rt && \
-	  $(MAKE) $(BASE_FLAGS_TO_PASS) "AR=$${AR}" "AS=$${AS}" \
-	          "CC=$${CC}" "CXX=$${CXX}" "LD=$${LD}" "NM=$${NM}" \
-	          "RANLIB=$${RANLIB}" \
-	          "DLLTOOL=$${DLLTOOL}" "WINDRES=$${WINDRES}" "WINDMC=$${WINDMC}" \
-	           install-html) \
-	  || exit 1
-
-@endif target-libhsail-rt
-
-.PHONY: maybe-installcheck-target-libhsail-rt installcheck-target-libhsail-rt
-maybe-installcheck-target-libhsail-rt:
-@if target-libhsail-rt
-maybe-installcheck-target-libhsail-rt: installcheck-target-libhsail-rt
-
-installcheck-target-libhsail-rt: \
-    configure-target-libhsail-rt 
-	@: $(MAKE); $(unstage)
-	@[ -f $(TARGET_SUBDIR)/libhsail-rt/Makefile ] || exit 0; \
-	r=`${PWD_COMMAND}`; export r; \
-	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
-	$(NORMAL_TARGET_EXPORTS) \
-	echo "Doing installcheck in $(TARGET_SUBDIR)/libhsail-rt"; \
-	for flag in $(EXTRA_TARGET_FLAGS); do \
-	  eval `echo "$$flag" | sed -e "s|^\([^=]*\)=\(.*\)|\1='\2'; export \1|"`; \
-	done; \
-	(cd $(TARGET_SUBDIR)/libhsail-rt && \
-	  $(MAKE) $(BASE_FLAGS_TO_PASS) "AR=$${AR}" "AS=$${AS}" \
-	          "CC=$${CC}" "CXX=$${CXX}" "LD=$${LD}" "NM=$${NM}" \
-	          "RANLIB=$${RANLIB}" \
-	          "DLLTOOL=$${DLLTOOL}" "WINDRES=$${WINDRES}" "WINDMC=$${WINDMC}" \
-	           installcheck) \
-	  || exit 1
-
-@endif target-libhsail-rt
-
-.PHONY: maybe-mostlyclean-target-libhsail-rt mostlyclean-target-libhsail-rt
-maybe-mostlyclean-target-libhsail-rt:
-@if target-libhsail-rt
-maybe-mostlyclean-target-libhsail-rt: mostlyclean-target-libhsail-rt
-
-mostlyclean-target-libhsail-rt: 
-	@: $(MAKE); $(unstage)
-	@[ -f $(TARGET_SUBDIR)/libhsail-rt/Makefile ] || exit 0; \
-	r=`${PWD_COMMAND}`; export r; \
-	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
-	$(NORMAL_TARGET_EXPORTS) \
-	echo "Doing mostlyclean in $(TARGET_SUBDIR)/libhsail-rt"; \
-	for flag in $(EXTRA_TARGET_FLAGS); do \
-	  eval `echo "$$flag" | sed -e "s|^\([^=]*\)=\(.*\)|\1='\2'; export \1|"`; \
-	done; \
-	(cd $(TARGET_SUBDIR)/libhsail-rt && \
-	  $(MAKE) $(BASE_FLAGS_TO_PASS) "AR=$${AR}" "AS=$${AS}" \
-	          "CC=$${CC}" "CXX=$${CXX}" "LD=$${LD}" "NM=$${NM}" \
-	          "RANLIB=$${RANLIB}" \
-	          "DLLTOOL=$${DLLTOOL}" "WINDRES=$${WINDRES}" "WINDMC=$${WINDMC}" \
-	           mostlyclean) \
-	  || exit 1
-
-@endif target-libhsail-rt
-
-.PHONY: maybe-clean-target-libhsail-rt clean-target-libhsail-rt
-maybe-clean-target-libhsail-rt:
-@if target-libhsail-rt
-maybe-clean-target-libhsail-rt: clean-target-libhsail-rt
-
-clean-target-libhsail-rt: 
-	@: $(MAKE); $(unstage)
-	@[ -f $(TARGET_SUBDIR)/libhsail-rt/Makefile ] || exit 0; \
-	r=`${PWD_COMMAND}`; export r; \
-	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
-	$(NORMAL_TARGET_EXPORTS) \
-	echo "Doing clean in $(TARGET_SUBDIR)/libhsail-rt"; \
-	for flag in $(EXTRA_TARGET_FLAGS); do \
-	  eval `echo "$$flag" | sed -e "s|^\([^=]*\)=\(.*\)|\1='\2'; export \1|"`; \
-	done; \
-	(cd $(TARGET_SUBDIR)/libhsail-rt && \
-	  $(MAKE) $(BASE_FLAGS_TO_PASS) "AR=$${AR}" "AS=$${AS}" \
-	          "CC=$${CC}" "CXX=$${CXX}" "LD=$${LD}" "NM=$${NM}" \
-	          "RANLIB=$${RANLIB}" \
-	          "DLLTOOL=$${DLLTOOL}" "WINDRES=$${WINDRES}" "WINDMC=$${WINDMC}" \
-	           clean) \
-	  || exit 1
-
-@endif target-libhsail-rt
-
-.PHONY: maybe-distclean-target-libhsail-rt distclean-target-libhsail-rt
-maybe-distclean-target-libhsail-rt:
-@if target-libhsail-rt
-maybe-distclean-target-libhsail-rt: distclean-target-libhsail-rt
-
-distclean-target-libhsail-rt: 
-	@: $(MAKE); $(unstage)
-	@[ -f $(TARGET_SUBDIR)/libhsail-rt/Makefile ] || exit 0; \
-	r=`${PWD_COMMAND}`; export r; \
-	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
-	$(NORMAL_TARGET_EXPORTS) \
-	echo "Doing distclean in $(TARGET_SUBDIR)/libhsail-rt"; \
-	for flag in $(EXTRA_TARGET_FLAGS); do \
-	  eval `echo "$$flag" | sed -e "s|^\([^=]*\)=\(.*\)|\1='\2'; export \1|"`; \
-	done; \
-	(cd $(TARGET_SUBDIR)/libhsail-rt && \
-	  $(MAKE) $(BASE_FLAGS_TO_PASS) "AR=$${AR}" "AS=$${AS}" \
-	          "CC=$${CC}" "CXX=$${CXX}" "LD=$${LD}" "NM=$${NM}" \
-	          "RANLIB=$${RANLIB}" \
-	          "DLLTOOL=$${DLLTOOL}" "WINDRES=$${WINDRES}" "WINDMC=$${WINDMC}" \
-	           distclean) \
-	  || exit 1
-
-@endif target-libhsail-rt
-
-.PHONY: maybe-maintainer-clean-target-libhsail-rt maintainer-clean-target-libhsail-rt
-maybe-maintainer-clean-target-libhsail-rt:
-@if target-libhsail-rt
-maybe-maintainer-clean-target-libhsail-rt: maintainer-clean-target-libhsail-rt
-
-maintainer-clean-target-libhsail-rt: 
-	@: $(MAKE); $(unstage)
-	@[ -f $(TARGET_SUBDIR)/libhsail-rt/Makefile ] || exit 0; \
-	r=`${PWD_COMMAND}`; export r; \
-	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
-	$(NORMAL_TARGET_EXPORTS) \
-	echo "Doing maintainer-clean in $(TARGET_SUBDIR)/libhsail-rt"; \
-	for flag in $(EXTRA_TARGET_FLAGS); do \
-	  eval `echo "$$flag" | sed -e "s|^\([^=]*\)=\(.*\)|\1='\2'; export \1|"`; \
-	done; \
-	(cd $(TARGET_SUBDIR)/libhsail-rt && \
-	  $(MAKE) $(BASE_FLAGS_TO_PASS) "AR=$${AR}" "AS=$${AS}" \
-	          "CC=$${CC}" "CXX=$${CXX}" "LD=$${LD}" "NM=$${NM}" \
-	          "RANLIB=$${RANLIB}" \
-	          "DLLTOOL=$${DLLTOOL}" "WINDRES=$${WINDRES}" "WINDMC=$${WINDMC}" \
-	           maintainer-clean) \
-	  || exit 1
-
-@endif target-libhsail-rt
 
 
 
@@ -55537,14 +56504,6 @@ check-gcc-go:
 	(cd gcc && $(MAKE) $(GCC_FLAGS_TO_PASS) check-go);
 check-go: check-gcc-go check-target-libgo check-gotools
 
-.PHONY: check-gcc-brig check-brig
-check-gcc-brig:
-	r=`${PWD_COMMAND}`; export r; \
-	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
-	$(HOST_EXPORTS) \
-	(cd gcc && $(MAKE) $(GCC_FLAGS_TO_PASS) check-brig);
-check-brig: check-gcc-brig check-target-libhsail-rt
-
 .PHONY: check-gcc-d check-d
 check-gcc-d:
 	r=`${PWD_COMMAND}`; export r; \
@@ -55552,6 +56511,14 @@ check-gcc-d:
 	$(HOST_EXPORTS) \
 	(cd gcc && $(MAKE) $(GCC_FLAGS_TO_PASS) check-d);
 check-d: check-gcc-d check-target-libphobos
+
+.PHONY: check-gcc-jit check-jit
+check-gcc-jit:
+	r=`${PWD_COMMAND}`; export r; \
+	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
+	$(HOST_EXPORTS) \
+	(cd gcc && $(MAKE) $(GCC_FLAGS_TO_PASS) check-jit);
+check-jit: check-gcc-jit
 
 
 # The gcc part of install-no-fixedincludes, which relies on an intimate
@@ -55705,6 +56672,11 @@ stage1-start::
 	  mkdir stage1-libcpp; \
 	mv stage1-libcpp libcpp
 @endif libcpp
+@if libcody
+	@cd $(HOST_SUBDIR); [ -d stage1-libcody ] || \
+	  mkdir stage1-libcody; \
+	mv stage1-libcody libcody
+@endif libcody
 @if libdecnumber
 	@cd $(HOST_SUBDIR); [ -d stage1-libdecnumber ] || \
 	  mkdir stage1-libdecnumber; \
@@ -55825,6 +56797,11 @@ stage1-end::
 	  cd $(HOST_SUBDIR); mv libcpp stage1-libcpp; \
 	fi
 @endif libcpp
+@if libcody
+	@if test -d $(HOST_SUBDIR)/libcody; then \
+	  cd $(HOST_SUBDIR); mv libcody stage1-libcody; \
+	fi
+@endif libcody
 @if libdecnumber
 	@if test -d $(HOST_SUBDIR)/libdecnumber; then \
 	  cd $(HOST_SUBDIR); mv libdecnumber stage1-libdecnumber; \
@@ -56004,6 +56981,12 @@ stage2-start::
 	mv stage2-libcpp libcpp; \
 	mv stage1-libcpp prev-libcpp || test -f stage1-lean 
 @endif libcpp
+@if libcody
+	@cd $(HOST_SUBDIR); [ -d stage2-libcody ] || \
+	  mkdir stage2-libcody; \
+	mv stage2-libcody libcody; \
+	mv stage1-libcody prev-libcody || test -f stage1-lean 
+@endif libcody
 @if libdecnumber
 	@cd $(HOST_SUBDIR); [ -d stage2-libdecnumber ] || \
 	  mkdir stage2-libdecnumber; \
@@ -56148,6 +57131,12 @@ stage2-end::
 	  mv prev-libcpp stage1-libcpp; : ; \
 	fi
 @endif libcpp
+@if libcody
+	@if test -d $(HOST_SUBDIR)/libcody; then \
+	  cd $(HOST_SUBDIR); mv libcody stage2-libcody; \
+	  mv prev-libcody stage1-libcody; : ; \
+	fi
+@endif libcody
 @if libdecnumber
 	@if test -d $(HOST_SUBDIR)/libdecnumber; then \
 	  cd $(HOST_SUBDIR); mv libdecnumber stage2-libdecnumber; \
@@ -56358,6 +57347,12 @@ stage3-start::
 	mv stage3-libcpp libcpp; \
 	mv stage2-libcpp prev-libcpp || test -f stage2-lean 
 @endif libcpp
+@if libcody
+	@cd $(HOST_SUBDIR); [ -d stage3-libcody ] || \
+	  mkdir stage3-libcody; \
+	mv stage3-libcody libcody; \
+	mv stage2-libcody prev-libcody || test -f stage2-lean 
+@endif libcody
 @if libdecnumber
 	@cd $(HOST_SUBDIR); [ -d stage3-libdecnumber ] || \
 	  mkdir stage3-libdecnumber; \
@@ -56502,6 +57497,12 @@ stage3-end::
 	  mv prev-libcpp stage2-libcpp; : ; \
 	fi
 @endif libcpp
+@if libcody
+	@if test -d $(HOST_SUBDIR)/libcody; then \
+	  cd $(HOST_SUBDIR); mv libcody stage3-libcody; \
+	  mv prev-libcody stage2-libcody; : ; \
+	fi
+@endif libcody
 @if libdecnumber
 	@if test -d $(HOST_SUBDIR)/libdecnumber; then \
 	  cd $(HOST_SUBDIR); mv libdecnumber stage3-libdecnumber; \
@@ -56768,6 +57769,12 @@ stage4-start::
 	mv stage4-libcpp libcpp; \
 	mv stage3-libcpp prev-libcpp || test -f stage3-lean 
 @endif libcpp
+@if libcody
+	@cd $(HOST_SUBDIR); [ -d stage4-libcody ] || \
+	  mkdir stage4-libcody; \
+	mv stage4-libcody libcody; \
+	mv stage3-libcody prev-libcody || test -f stage3-lean 
+@endif libcody
 @if libdecnumber
 	@cd $(HOST_SUBDIR); [ -d stage4-libdecnumber ] || \
 	  mkdir stage4-libdecnumber; \
@@ -56912,6 +57919,12 @@ stage4-end::
 	  mv prev-libcpp stage3-libcpp; : ; \
 	fi
 @endif libcpp
+@if libcody
+	@if test -d $(HOST_SUBDIR)/libcody; then \
+	  cd $(HOST_SUBDIR); mv libcody stage4-libcody; \
+	  mv prev-libcody stage3-libcody; : ; \
+	fi
+@endif libcody
 @if libdecnumber
 	@if test -d $(HOST_SUBDIR)/libdecnumber; then \
 	  cd $(HOST_SUBDIR); mv libdecnumber stage4-libdecnumber; \
@@ -57166,6 +58179,12 @@ stageprofile-start::
 	mv stageprofile-libcpp libcpp; \
 	mv stage1-libcpp prev-libcpp || test -f stage1-lean 
 @endif libcpp
+@if libcody
+	@cd $(HOST_SUBDIR); [ -d stageprofile-libcody ] || \
+	  mkdir stageprofile-libcody; \
+	mv stageprofile-libcody libcody; \
+	mv stage1-libcody prev-libcody || test -f stage1-lean 
+@endif libcody
 @if libdecnumber
 	@cd $(HOST_SUBDIR); [ -d stageprofile-libdecnumber ] || \
 	  mkdir stageprofile-libdecnumber; \
@@ -57310,6 +58329,12 @@ stageprofile-end::
 	  mv prev-libcpp stage1-libcpp; : ; \
 	fi
 @endif libcpp
+@if libcody
+	@if test -d $(HOST_SUBDIR)/libcody; then \
+	  cd $(HOST_SUBDIR); mv libcody stageprofile-libcody; \
+	  mv prev-libcody stage1-libcody; : ; \
+	fi
+@endif libcody
 @if libdecnumber
 	@if test -d $(HOST_SUBDIR)/libdecnumber; then \
 	  cd $(HOST_SUBDIR); mv libdecnumber stageprofile-libdecnumber; \
@@ -57497,6 +58522,12 @@ stagetrain-start::
 	mv stagetrain-libcpp libcpp; \
 	mv stageprofile-libcpp prev-libcpp || test -f stageprofile-lean 
 @endif libcpp
+@if libcody
+	@cd $(HOST_SUBDIR); [ -d stagetrain-libcody ] || \
+	  mkdir stagetrain-libcody; \
+	mv stagetrain-libcody libcody; \
+	mv stageprofile-libcody prev-libcody || test -f stageprofile-lean 
+@endif libcody
 @if libdecnumber
 	@cd $(HOST_SUBDIR); [ -d stagetrain-libdecnumber ] || \
 	  mkdir stagetrain-libdecnumber; \
@@ -57641,6 +58672,12 @@ stagetrain-end::
 	  mv prev-libcpp stageprofile-libcpp; : ; \
 	fi
 @endif libcpp
+@if libcody
+	@if test -d $(HOST_SUBDIR)/libcody; then \
+	  cd $(HOST_SUBDIR); mv libcody stagetrain-libcody; \
+	  mv prev-libcody stageprofile-libcody; : ; \
+	fi
+@endif libcody
 @if libdecnumber
 	@if test -d $(HOST_SUBDIR)/libdecnumber; then \
 	  cd $(HOST_SUBDIR); mv libdecnumber stagetrain-libdecnumber; \
@@ -57828,6 +58865,12 @@ stagefeedback-start::
 	mv stagefeedback-libcpp libcpp; \
 	mv stagetrain-libcpp prev-libcpp || test -f stagetrain-lean 
 @endif libcpp
+@if libcody
+	@cd $(HOST_SUBDIR); [ -d stagefeedback-libcody ] || \
+	  mkdir stagefeedback-libcody; \
+	mv stagefeedback-libcody libcody; \
+	mv stagetrain-libcody prev-libcody || test -f stagetrain-lean 
+@endif libcody
 @if libdecnumber
 	@cd $(HOST_SUBDIR); [ -d stagefeedback-libdecnumber ] || \
 	  mkdir stagefeedback-libdecnumber; \
@@ -57972,6 +59015,12 @@ stagefeedback-end::
 	  mv prev-libcpp stagetrain-libcpp; : ; \
 	fi
 @endif libcpp
+@if libcody
+	@if test -d $(HOST_SUBDIR)/libcody; then \
+	  cd $(HOST_SUBDIR); mv libcody stagefeedback-libcody; \
+	  mv prev-libcody stagetrain-libcody; : ; \
+	fi
+@endif libcody
 @if libdecnumber
 	@if test -d $(HOST_SUBDIR)/libdecnumber; then \
 	  cd $(HOST_SUBDIR); mv libdecnumber stagefeedback-libdecnumber; \
@@ -58182,6 +59231,12 @@ stageautoprofile-start::
 	mv stageautoprofile-libcpp libcpp; \
 	mv stage1-libcpp prev-libcpp || test -f stage1-lean 
 @endif libcpp
+@if libcody
+	@cd $(HOST_SUBDIR); [ -d stageautoprofile-libcody ] || \
+	  mkdir stageautoprofile-libcody; \
+	mv stageautoprofile-libcody libcody; \
+	mv stage1-libcody prev-libcody || test -f stage1-lean 
+@endif libcody
 @if libdecnumber
 	@cd $(HOST_SUBDIR); [ -d stageautoprofile-libdecnumber ] || \
 	  mkdir stageautoprofile-libdecnumber; \
@@ -58326,6 +59381,12 @@ stageautoprofile-end::
 	  mv prev-libcpp stage1-libcpp; : ; \
 	fi
 @endif libcpp
+@if libcody
+	@if test -d $(HOST_SUBDIR)/libcody; then \
+	  cd $(HOST_SUBDIR); mv libcody stageautoprofile-libcody; \
+	  mv prev-libcody stage1-libcody; : ; \
+	fi
+@endif libcody
 @if libdecnumber
 	@if test -d $(HOST_SUBDIR)/libdecnumber; then \
 	  cd $(HOST_SUBDIR); mv libdecnumber stageautoprofile-libdecnumber; \
@@ -58513,6 +59574,12 @@ stageautofeedback-start::
 	mv stageautofeedback-libcpp libcpp; \
 	mv stageautoprofile-libcpp prev-libcpp || test -f stageautoprofile-lean 
 @endif libcpp
+@if libcody
+	@cd $(HOST_SUBDIR); [ -d stageautofeedback-libcody ] || \
+	  mkdir stageautofeedback-libcody; \
+	mv stageautofeedback-libcody libcody; \
+	mv stageautoprofile-libcody prev-libcody || test -f stageautoprofile-lean 
+@endif libcody
 @if libdecnumber
 	@cd $(HOST_SUBDIR); [ -d stageautofeedback-libdecnumber ] || \
 	  mkdir stageautofeedback-libdecnumber; \
@@ -58657,6 +59724,12 @@ stageautofeedback-end::
 	  mv prev-libcpp stageautoprofile-libcpp; : ; \
 	fi
 @endif libcpp
+@if libcody
+	@if test -d $(HOST_SUBDIR)/libcody; then \
+	  cd $(HOST_SUBDIR); mv libcody stageautofeedback-libcody; \
+	  mv prev-libcody stageautoprofile-libcody; : ; \
+	fi
+@endif libcody
 @if libdecnumber
 	@if test -d $(HOST_SUBDIR)/libdecnumber; then \
 	  cd $(HOST_SUBDIR); mv libdecnumber stageautofeedback-libdecnumber; \
@@ -58850,7 +59923,6 @@ configure-target-libquadmath: stage_last
 configure-target-libgfortran: stage_last
 configure-target-libobjc: stage_last
 configure-target-libgo: stage_last
-configure-target-libhsail-rt: stage_last
 configure-target-libphobos: stage_last
 configure-target-libtermcap: stage_last
 configure-target-winsup: stage_last
@@ -58885,7 +59957,6 @@ configure-target-libquadmath: maybe-all-gcc
 configure-target-libgfortran: maybe-all-gcc
 configure-target-libobjc: maybe-all-gcc
 configure-target-libgo: maybe-all-gcc
-configure-target-libhsail-rt: maybe-all-gcc
 configure-target-libphobos: maybe-all-gcc
 configure-target-libtermcap: maybe-all-gcc
 configure-target-winsup: maybe-all-gcc
@@ -59185,6 +60256,16 @@ all-stagetrain-gcc: all-stagetrain-libcpp
 all-stagefeedback-gcc: all-stagefeedback-libcpp
 all-stageautoprofile-gcc: all-stageautoprofile-libcpp
 all-stageautofeedback-gcc: all-stageautofeedback-libcpp
+all-gcc: all-libcody
+all-stage1-gcc: all-stage1-libcody
+all-stage2-gcc: all-stage2-libcody
+all-stage3-gcc: all-stage3-libcody
+all-stage4-gcc: all-stage4-libcody
+all-stageprofile-gcc: all-stageprofile-libcody
+all-stagetrain-gcc: all-stagetrain-libcody
+all-stagefeedback-gcc: all-stagefeedback-libcody
+all-stageautoprofile-gcc: all-stageautoprofile-libcody
+all-stageautofeedback-gcc: all-stageautofeedback-libcody
 all-gcc: all-libdecnumber
 all-stage1-gcc: all-stage1-libdecnumber
 all-stage2-gcc: all-stage2-libdecnumber
@@ -59600,8 +60681,24 @@ all-stagetrain-binutils: maybe-all-stagetrain-libctf
 all-stagefeedback-binutils: maybe-all-stagefeedback-libctf
 all-stageautoprofile-binutils: maybe-all-stageautoprofile-libctf
 all-stageautofeedback-binutils: maybe-all-stageautofeedback-libctf
+all-ld: maybe-all-libctf
+all-stage1-ld: maybe-all-stage1-libctf
+all-stage2-ld: maybe-all-stage2-libctf
+all-stage3-ld: maybe-all-stage3-libctf
+all-stage4-ld: maybe-all-stage4-libctf
+all-stageprofile-ld: maybe-all-stageprofile-libctf
+all-stagetrain-ld: maybe-all-stagetrain-libctf
+all-stagefeedback-ld: maybe-all-stagefeedback-libctf
+all-stageautoprofile-ld: maybe-all-stageautoprofile-libctf
+all-stageautofeedback-ld: maybe-all-stageautofeedback-libctf
 install-binutils: maybe-install-opcodes
 install-strip-binutils: maybe-install-strip-opcodes
+install-libctf: maybe-install-bfd
+install-ld: maybe-install-bfd
+install-ld: maybe-install-libctf
+install-strip-libctf: maybe-install-strip-bfd
+install-strip-ld: maybe-install-strip-bfd
+install-strip-ld: maybe-install-strip-libctf
 install-opcodes: maybe-install-bfd
 install-strip-opcodes: maybe-install-strip-bfd
 configure-gas: maybe-configure-intl
@@ -59887,8 +60984,8 @@ install-sid: maybe-install-tcl
 install-strip-sid: maybe-install-strip-tcl
 install-sid: maybe-install-tk
 install-strip-sid: maybe-install-strip-tk
+configure-sim: maybe-all-gnulib
 all-sim: maybe-all-readline
-all-sim: maybe-configure-gdb
 all-fastjar: maybe-all-build-texinfo
 all-libctf: all-libiberty
 all-stage1-libctf: all-stage1-libiberty
@@ -59960,6 +61057,18 @@ configure-stagetrain-libctf: maybe-all-stagetrain-libiconv
 configure-stagefeedback-libctf: maybe-all-stagefeedback-libiconv
 configure-stageautoprofile-libctf: maybe-all-stageautoprofile-libiconv
 configure-stageautofeedback-libctf: maybe-all-stageautofeedback-libiconv
+check-libctf: maybe-all-ld
+check-stage1-libctf: maybe-all-stage1-ld
+check-stage2-libctf: maybe-all-stage2-ld
+check-stage3-libctf: maybe-all-stage3-ld
+check-stage4-libctf: maybe-all-stage4-ld
+check-stageprofile-libctf: maybe-all-stageprofile-ld
+check-stagetrain-libctf: maybe-all-stagetrain-ld
+check-stagefeedback-libctf: maybe-all-stagefeedback-ld
+check-stageautoprofile-libctf: maybe-all-stageautoprofile-ld
+check-stageautofeedback-libctf: maybe-all-stageautofeedback-ld
+distclean-gnulib: maybe-distclean-gdb
+distclean-gnulib: maybe-distclean-gdbserver
 all-bison: maybe-all-build-texinfo
 all-flex: maybe-all-build-bison
 all-flex: maybe-all-m4
@@ -60038,6 +61147,7 @@ configure-target-libgfortran: maybe-all-target-libbacktrace
 @if gcc-bootstrap
 configure-gnattools: stage_last
 configure-libcc1: stage_last
+configure-c++tools: stage_last
 configure-utils: stage_last
 configure-gdb: stage_last
 configure-gdbserver: stage_last
@@ -60055,6 +61165,7 @@ configure-m4: stage_last
 all-gnattools: maybe-all-target-libstdc++-v3
 configure-libcc1: maybe-configure-gcc
 all-libcc1: maybe-all-gcc
+all-c++tools: maybe-all-gcc
 all-utils: maybe-all-libiberty
 configure-gdb: maybe-all-intl
 configure-gdb: maybe-all-bfd
@@ -60064,6 +61175,7 @@ all-gdb: maybe-all-libiconv
 all-gdb: maybe-all-opcodes
 all-gdb: maybe-all-libdecnumber
 all-gdb: maybe-all-libctf
+all-gdb: maybe-all-libbacktrace
 all-gdbserver: maybe-all-libiberty
 configure-gdbsupport: maybe-configure-intl
 all-gdbsupport: maybe-all-intl
@@ -60087,6 +61199,7 @@ all-bison: maybe-all-intl
 all-flex: maybe-all-intl
 all-m4: maybe-all-intl
 configure-target-libgo: maybe-all-target-libstdc++-v3
+configure-target-libffi: maybe-all-target-libstdc++-v3
 configure-target-liboffloadmic: maybe-configure-target-libgomp
 all-target-liboffloadmic: maybe-all-target-libgomp
 configure-target-newlib: maybe-all-binutils
@@ -60149,7 +61262,6 @@ configure-target-libquadmath: maybe-all-target-libgcc
 configure-target-libgfortran: maybe-all-target-libgcc
 configure-target-libobjc: maybe-all-target-libgcc
 configure-target-libgo: maybe-all-target-libgcc
-configure-target-libhsail-rt: maybe-all-target-libgcc
 configure-target-libphobos: maybe-all-target-libgcc
 configure-target-libtermcap: maybe-all-target-libgcc
 configure-target-winsup: maybe-all-target-libgcc
@@ -60186,8 +61298,6 @@ configure-target-libgfortran: maybe-all-target-newlib maybe-all-target-libgloss
 configure-target-libobjc: maybe-all-target-newlib maybe-all-target-libgloss
 
 configure-target-libgo: maybe-all-target-newlib maybe-all-target-libgloss
-
-configure-target-libhsail-rt: maybe-all-target-newlib maybe-all-target-libgloss
 
 configure-target-libphobos: maybe-all-target-newlib maybe-all-target-libgloss
 

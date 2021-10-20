@@ -1,7 +1,7 @@
 /* Data structures and declarations used for reading and writing
    GIMPLE to a file stream.
 
-   Copyright (C) 2009-2020 Free Software Foundation, Inc.
+   Copyright (C) 2009-2021 Free Software Foundation, Inc.
    Contributed by Doug Kwan <dougkwan@google.com>
 
 This file is part of GCC.
@@ -26,6 +26,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "plugin-api.h"
 #include "gcov-io.h"
 #include "diagnostic.h"
+#include "version.h"
 
 /* The encoding for a function consists of the following sections:
 
@@ -120,7 +121,7 @@ along with GCC; see the file COPYING3.  If not see
      String are represented in the table as pairs, a length in ULEB128
      form followed by the data for the string.  */
 
-#define LTO_major_version 9
+#define LTO_major_version GCC_major_version
 #define LTO_minor_version 0
 
 typedef unsigned char	lto_decl_flags_t;
@@ -227,6 +228,7 @@ enum lto_section_type
   LTO_section_lto,
   LTO_section_ipa_sra,
   LTO_section_odr_types,
+  LTO_section_ipa_modref,
   LTO_N_SECTION_TYPES		/* Must be last.  */
 };
 
@@ -262,7 +264,7 @@ typedef void (lto_free_section_data_f) (struct lto_file_decl_data *,
 
 /* The location cache holds expanded locations for streamed in trees.
    This is done to reduce memory usage of libcpp linemap that strongly prefers
-   locations to be inserted in the soruce order.  */
+   locations to be inserted in the source order.  */
 
 class lto_location_cache
 {
@@ -276,9 +278,13 @@ public:
   void revert_location_cache ();
   void input_location (location_t *loc, struct bitpack_d *bp,
 		       class data_in *data_in);
+  void input_location_and_block (location_t *loc, struct bitpack_d *bp,
+				 class lto_input_block *ib,
+				 class data_in *data_in);
   lto_location_cache ()
      : loc_cache (), accepted_length (0), current_file (NULL), current_line (0),
-       current_col (0), current_sysp (false), current_loc (UNKNOWN_LOCATION)
+       current_col (0), current_sysp (false), current_loc (UNKNOWN_LOCATION),
+       current_block (NULL_TREE)
   {
     gcc_assert (!current_cache);
     current_cache = this;
@@ -304,6 +310,7 @@ private:
     location_t *loc;
     int line, col;
     bool sysp;
+    tree block;
   };
 
   /* The location cache.  */
@@ -325,6 +332,7 @@ private:
   int current_col;
   bool current_sysp;
   location_t current_loc;
+  tree current_block;
 };
 
 /* Structure used as buffer for reading an LTO file.  */
@@ -362,6 +370,7 @@ struct lto_section
   int16_t major_version;
   int16_t minor_version;
   unsigned char slim_object;
+  unsigned char _padding;
 
   /* Flags is a private field that is not defined publicly.  */
   uint16_t flags;
@@ -711,6 +720,9 @@ struct output_block
   int current_line;
   int current_col;
   bool current_sysp;
+  bool reset_locus;
+  bool emit_pwd;
+  tree current_block;
 
   /* Cache of nodes written in this section.  */
   struct streamer_tree_cache_d *writer_cache;
@@ -846,8 +858,6 @@ extern class data_in *lto_data_in_create (struct lto_file_decl_data *,
 extern void lto_data_in_delete (class data_in *);
 extern void lto_input_data_block (class lto_input_block *, void *, size_t);
 void lto_input_location (location_t *, struct bitpack_d *, class data_in *);
-location_t stream_input_location_now (struct bitpack_d *bp,
-				      class data_in *data);
 tree lto_input_tree_ref (class lto_input_block *, class data_in *,
 			 struct function *, enum LTO_tags);
 void lto_tag_check_set (enum LTO_tags, int, ...);
@@ -881,7 +891,10 @@ void lto_output_decl_state_streams (struct output_block *,
 void lto_output_decl_state_refs (struct output_block *,
 			         struct lto_output_stream *,
 			         struct lto_out_decl_state *);
-void lto_output_location (struct output_block *, struct bitpack_d *, location_t);
+void lto_output_location (struct output_block *, struct bitpack_d *,
+			  location_t);
+void lto_output_location_and_block (struct output_block *, struct bitpack_d *,
+				    location_t);
 void lto_output_init_mode_table (void);
 void lto_prepare_function_for_streaming (cgraph_node *);
 
@@ -915,6 +928,12 @@ bool reachable_from_this_partition_p (struct cgraph_node *,
 				      lto_symtab_encoder_t);
 lto_symtab_encoder_t compute_ltrans_boundary (lto_symtab_encoder_t encoder);
 void select_what_to_stream (void);
+
+/* In omp-general.c.  */
+void omp_lto_output_declare_variant_alt (lto_simple_output_block *,
+					 cgraph_node *, lto_symtab_encoder_t);
+void omp_lto_input_declare_variant_alt (lto_input_block *, cgraph_node *,
+					vec<symtab_node *>);
 
 /* In options-save.c.  */
 void cl_target_option_stream_out (struct output_block *, struct bitpack_d *,

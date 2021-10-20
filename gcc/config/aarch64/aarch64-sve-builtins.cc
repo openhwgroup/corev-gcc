@@ -1,5 +1,5 @@
 /* ACLE support for AArch64 SVE
-   Copyright (C) 2018-2020 Free Software Foundation, Inc.
+   Copyright (C) 2018-2021 Free Software Foundation, Inc.
 
    This file is part of GCC.
 
@@ -101,7 +101,7 @@ struct registered_function_hasher : nofree_ptr_hash <registered_function>
 /* Information about each single-predicate or single-vector type.  */
 static CONSTEXPR const vector_type_info vector_types[] = {
 #define DEF_SVE_TYPE(ACLE_NAME, NCHARS, ABI_NAME, SCALAR_TYPE) \
-  { #ACLE_NAME, #ABI_NAME, #NCHARS #ABI_NAME },
+  { #ACLE_NAME, #ABI_NAME, "u" #NCHARS #ABI_NAME },
 #include "aarch64-sve-builtins.def"
 };
 
@@ -564,15 +564,16 @@ static bool reported_missing_registers_p;
 
 /* Record that TYPE is an ABI-defined SVE type that contains NUM_ZR SVE vectors
    and NUM_PR SVE predicates.  MANGLED_NAME, if nonnull, is the ABI-defined
-   mangling of the type.  */
+   mangling of the type.  ACLE_NAME is the <arm_sve.h> name of the type.  */
 static void
 add_sve_type_attribute (tree type, unsigned int num_zr, unsigned int num_pr,
-			const char *mangled_name)
+			const char *mangled_name, const char *acle_name)
 {
   tree mangled_name_tree
     = (mangled_name ? get_identifier (mangled_name) : NULL_TREE);
 
-  tree value = tree_cons (NULL_TREE, mangled_name_tree, NULL_TREE);
+  tree value = tree_cons (NULL_TREE, get_identifier (acle_name), NULL_TREE);
+  value = tree_cons (NULL_TREE, mangled_name_tree, value);
   value = tree_cons (NULL_TREE, size_int (num_pr), value);
   value = tree_cons (NULL_TREE, size_int (num_zr), value);
   TYPE_ATTRIBUTES (type) = tree_cons (get_identifier ("SVE type"), value,
@@ -998,12 +999,29 @@ registered_function &
 function_builder::add_function (const function_instance &instance,
 				const char *name, tree fntype, tree attrs,
 				uint64_t required_extensions,
-				bool overloaded_p)
+				bool overloaded_p,
+				bool placeholder_p)
 {
   unsigned int code = vec_safe_length (registered_functions);
   code = (code << AARCH64_BUILTIN_SHIFT) | AARCH64_BUILTIN_SVE;
-  tree decl = simulate_builtin_function_decl (input_location, name, fntype,
-					      code, NULL, attrs);
+
+  /* We need to be able to generate placeholders to enusre that we have a
+     consistent numbering scheme for function codes between the C and C++
+     frontends, so that everything ties up in LTO.
+
+     Currently, tree-streamer-in.c:unpack_ts_function_decl_value_fields
+     validates that tree nodes returned by TARGET_BUILTIN_DECL are non-NULL and
+     some node other than error_mark_node. This is a holdover from when builtin
+     decls were streamed by code rather than by value.
+
+     Ultimately, we should be able to remove this validation of BUILT_IN_MD
+     nodes and remove the target hook. For now, however, we need to appease the
+     validation and return a non-NULL, non-error_mark_node node, so we
+     arbitrarily choose integer_zero_node.  */
+  tree decl = placeholder_p
+    ? integer_zero_node
+    : simulate_builtin_function_decl (input_location, name, fntype,
+				      code, NULL, attrs);
 
   registered_function &rfn = *ggc_alloc <registered_function> ();
   rfn.instance = instance;
@@ -1035,7 +1053,7 @@ function_builder::add_unique_function (const function_instance &instance,
 					   argument_types.address ());
   tree attrs = get_attributes (instance);
   registered_function &rfn = add_function (instance, name, fntype, attrs,
-					   required_extensions, false);
+					   required_extensions, false, false);
 
   /* Enter the function into the hash table.  */
   hashval_t hash = instance.hash ();
@@ -1046,16 +1064,14 @@ function_builder::add_unique_function (const function_instance &instance,
 
   /* Also add the function under its overloaded alias, if we want
      a separate decl for each instance of an overloaded function.  */
-  if (m_direct_overloads || force_direct_overloads)
+  char *overload_name = get_name (instance, true);
+  if (strcmp (name, overload_name) != 0)
     {
-      char *overload_name = get_name (instance, true);
-      if (strcmp (name, overload_name) != 0)
-	{
-	  /* Attribute lists shouldn't be shared.  */
-	  tree attrs = get_attributes (instance);
-	  add_function (instance, overload_name, fntype, attrs,
-			required_extensions, false);
-	}
+      /* Attribute lists shouldn't be shared.  */
+      tree attrs = get_attributes (instance);
+      bool placeholder_p = !(m_direct_overloads || force_direct_overloads);
+      add_function (instance, overload_name, fntype, attrs,
+		    required_extensions, false, placeholder_p);
     }
 
   obstack_free (&m_string_obstack, name);
@@ -1076,18 +1092,19 @@ function_builder::add_overloaded_function (const function_instance &instance,
 {
   char *name = get_name (instance, true);
   if (registered_function **map_value = m_overload_names.get (name))
-    gcc_assert ((*map_value)->instance == instance
-		&& ((*map_value)->required_extensions
-		    & ~required_extensions) == 0);
+    {
+      gcc_assert ((*map_value)->instance == instance
+		  && ((*map_value)->required_extensions
+		      & ~required_extensions) == 0);
+      obstack_free (&m_string_obstack, name);
+    }
   else
     {
       registered_function &rfn
 	= add_function (instance, name, m_overload_type, NULL_TREE,
-			required_extensions, true);
-      const char *permanent_name = IDENTIFIER_POINTER (DECL_NAME (rfn.decl));
-      m_overload_names.put (permanent_name, &rfn);
+			required_extensions, true, m_direct_overloads);
+      m_overload_names.put (name, &rfn);
     }
-  obstack_free (&m_string_obstack, name);
 }
 
 /* If we are using manual overload resolution, add one function decl
@@ -1097,9 +1114,6 @@ void
 function_builder::add_overloaded_functions (const function_group_info &group,
 					    mode_suffix_index mode)
 {
-  if (m_direct_overloads)
-    return;
-
   unsigned int explicit_type0 = (*group.shape)->explicit_type_suffix_p (0);
   unsigned int explicit_type1 = (*group.shape)->explicit_type_suffix_p (1);
   for (unsigned int pi = 0; group.preds[pi] != NUM_PREDS; ++pi)
@@ -1466,6 +1480,9 @@ function_resolver::require_vector_type (unsigned int argno,
 {
   tree expected = acle_vector_types[0][type];
   tree actual = get_argument_type (argno);
+  if (actual == error_mark_node)
+    return false;
+
   if (!matches_type_p (expected, actual))
     {
       error_at (location, "passing %qT to argument %d of %qE, which"
@@ -2579,7 +2596,7 @@ gimple_folder::fold_contiguous_base (gimple_seq &stmts, tree vectype)
 tree
 gimple_folder::load_store_cookie (tree type)
 {
-  return build_int_cst (build_pointer_type (type), TYPE_ALIGN_UNIT (type));
+  return build_int_cst (build_pointer_type (type), TYPE_ALIGN (type));
 }
 
 /* Fold the call to a call to INSTANCE, with the same arguments.  */
@@ -2792,7 +2809,7 @@ function_expander::add_output_operand (insn_code icode)
 {
   unsigned int opno = m_ops.length ();
   machine_mode mode = insn_data[icode].operand[opno].mode;
-  m_ops.safe_grow (opno + 1);
+  m_ops.safe_grow (opno + 1, true);
   create_output_operand (&m_ops.last (), possible_target, mode);
 }
 
@@ -2829,7 +2846,7 @@ function_expander::add_input_operand (insn_code icode, rtx x)
       gcc_assert (GET_MODE (x) == VNx16BImode);
       x = gen_lowpart (mode, x);
     }
-  m_ops.safe_grow (m_ops.length () + 1);
+  m_ops.safe_grow (m_ops.length () + 1, true);
   create_input_operand (&m_ops.last (), x, mode);
 }
 
@@ -2837,7 +2854,7 @@ function_expander::add_input_operand (insn_code icode, rtx x)
 void
 function_expander::add_integer_operand (HOST_WIDE_INT x)
 {
-  m_ops.safe_grow (m_ops.length () + 1);
+  m_ops.safe_grow (m_ops.length () + 1, true);
   create_integer_operand (&m_ops.last (), x);
 }
 
@@ -2861,7 +2878,7 @@ function_expander::add_mem_operand (machine_mode mode, rtx addr)
 void
 function_expander::add_address_operand (rtx x)
 {
-  m_ops.safe_grow (m_ops.length () + 1);
+  m_ops.safe_grow (m_ops.length () + 1, true);
   create_address_operand (&m_ops.last (), x);
 }
 
@@ -2870,7 +2887,7 @@ function_expander::add_address_operand (rtx x)
 void
 function_expander::add_fixed_operand (rtx x)
 {
-  m_ops.safe_grow (m_ops.length () + 1);
+  m_ops.safe_grow (m_ops.length () + 1, true);
   create_fixed_operand (&m_ops.last (), x);
 }
 
@@ -3363,7 +3380,8 @@ register_builtin_types ()
       TYPE_ARTIFICIAL (vectype) = 1;
       TYPE_INDIVISIBLE_P (vectype) = 1;
       add_sve_type_attribute (vectype, num_zr, num_pr,
-			      vector_types[i].mangled_name);
+			      vector_types[i].mangled_name,
+			      vector_types[i].acle_name);
       make_type_sizeless (vectype);
       abi_vector_types[i] = vectype;
       lang_hooks.types.register_builtin_type (vectype,
@@ -3398,6 +3416,7 @@ register_vector_type (vector_type_index type)
      installing an incorrect type.  */
   if (decl
       && TREE_CODE (decl) == TYPE_DECL
+      && TREE_TYPE (decl) != error_mark_node
       && TYPE_MAIN_VARIANT (TREE_TYPE (decl)) == vectype)
     vectype = TREE_TYPE (decl);
   acle_vector_types[0][type] = vectype;
@@ -3408,6 +3427,13 @@ static void
 register_tuple_type (unsigned int num_vectors, vector_type_index type)
 {
   tree tuple_type = lang_hooks.types.make_type (RECORD_TYPE);
+
+  /* Work out the structure name.  */
+  char buffer[sizeof ("svbfloat16x4_t")];
+  const char *vector_type_name = vector_types[type].acle_name;
+  snprintf (buffer, sizeof (buffer), "%.*sx%d_t",
+	    (int) strlen (vector_type_name) - 2, vector_type_name,
+	    num_vectors);
 
   /* The contents of the type are opaque, so we can define them in any
      way that maps to the correct ABI type.
@@ -3432,19 +3458,12 @@ register_tuple_type (unsigned int num_vectors, vector_type_index type)
 			   get_identifier ("__val"), array_type);
   DECL_FIELD_CONTEXT (field) = tuple_type;
   TYPE_FIELDS (tuple_type) = field;
-  add_sve_type_attribute (tuple_type, num_vectors, 0, NULL);
+  add_sve_type_attribute (tuple_type, num_vectors, 0, NULL, buffer);
   make_type_sizeless (tuple_type);
   layout_type (tuple_type);
   gcc_assert (VECTOR_MODE_P (TYPE_MODE (tuple_type))
 	      && TYPE_MODE_RAW (tuple_type) == TYPE_MODE (tuple_type)
 	      && TYPE_ALIGN (tuple_type) == 128);
-
-  /* Work out the structure name.  */
-  char buffer[sizeof ("svbfloat16x4_t")];
-  const char *vector_type_name = vector_types[type].acle_name;
-  snprintf (buffer, sizeof (buffer), "%.*sx%d_t",
-	    (int) strlen (vector_type_name) - 2, vector_type_name,
-	    num_vectors);
 
   tree decl = build_decl (input_location, TYPE_DECL,
 			  get_identifier (buffer), tuple_type);
@@ -3481,7 +3500,7 @@ register_svpattern ()
 #undef PUSH
 
   acle_svpattern = lang_hooks.types.simulate_enum_decl (input_location,
-							"svpattern", values);
+							"svpattern", &values);
 }
 
 /* Register the svprfop enum.  */
@@ -3495,7 +3514,7 @@ register_svprfop ()
 #undef PUSH
 
   acle_svprfop = lang_hooks.types.simulate_enum_decl (input_location,
-						      "svprfop", values);
+						      "svprfop", &values);
 }
 
 /* Implement #pragma GCC aarch64 "arm_sve.h".  */
@@ -3646,6 +3665,29 @@ builtin_type_p (const_tree type, unsigned int *num_zr, unsigned int *num_pr)
   return false;
 }
 
+/* ATTRS is the attribute list for a sizeless SVE type.  Return the
+   attributes of the associated fixed-length SVE type, taking the
+   "SVE type" attributes from NEW_SVE_TYPE_ARGS.  */
+static tree
+get_arm_sve_vector_bits_attributes (tree old_attrs, tree new_sve_type_args)
+{
+  tree new_attrs = NULL_TREE;
+  tree *ptr = &new_attrs;
+  for (tree attr = old_attrs; attr; attr = TREE_CHAIN (attr))
+    {
+      tree name = get_attribute_name (attr);
+      if (is_attribute_p ("SVE sizeless type", name))
+	continue;
+
+      tree args = TREE_VALUE (attr);
+      if (is_attribute_p ("SVE type", name))
+	args = new_sve_type_args;
+      *ptr = tree_cons (TREE_PURPOSE (attr), args, NULL_TREE);
+      ptr = &TREE_CHAIN (*ptr);
+    }
+  return new_attrs;
+}
+
 /* An attribute callback for the "arm_sve_vector_bits" attribute.  */
 tree
 handle_arm_sve_vector_bits_attribute (tree *node, tree, tree args, int,
@@ -3654,9 +3696,24 @@ handle_arm_sve_vector_bits_attribute (tree *node, tree, tree args, int,
   *no_add_attrs = true;
 
   tree type = *node;
-  if (!VECTOR_TYPE_P (type) || !builtin_type_p (type))
+  tree attr = lookup_sve_type_attribute (type);
+  if (!attr)
     {
       error ("%qs applied to non-SVE type %qT", "arm_sve_vector_bits", type);
+      return NULL_TREE;
+    }
+
+  if (!VECTOR_TYPE_P (type))
+    {
+      error ("%qs applied to non-vector type %qT",
+	     "arm_sve_vector_bits", type);
+      return NULL_TREE;
+    }
+
+  if (!sizeless_type_p (type))
+    {
+      error ("%qs applied to type %qT, which already has a size",
+	     "arm_sve_vector_bits", type);
       return NULL_TREE;
     }
 
@@ -3675,6 +3732,23 @@ handle_arm_sve_vector_bits_attribute (tree *node, tree, tree args, int,
       return NULL_TREE;
     }
 
+  /* Construct a new list of "SVE type" attribute arguments.  */
+  tree new_sve_type_args = copy_list (TREE_VALUE (attr));
+
+  /* Mangle the type as an instance of the imaginary template:
+
+       __SVE_VLS<typename, unsigned>
+
+     where the first parameter is the SVE type and where the second
+     parameter is the SVE vector length in bits.  */
+  tree mangled_name_node = chain_index (2, new_sve_type_args);
+  const char *old_mangled_name
+    = IDENTIFIER_POINTER (TREE_VALUE (mangled_name_node));
+  char *new_mangled_name
+    = xasprintf ("9__SVE_VLSI%sLj%dEE", old_mangled_name, (int) value);
+  TREE_VALUE (mangled_name_node) = get_identifier (new_mangled_name);
+  free (new_mangled_name);
+
   /* FIXME: The type ought to be a distinct copy in all cases, but
      currently that makes the C frontend reject conversions between
      svbool_t and its fixed-length variants.  Using a type variant
@@ -3687,6 +3761,44 @@ handle_arm_sve_vector_bits_attribute (tree *node, tree, tree args, int,
   else
     new_type = build_distinct_type_copy (base_type);
 
+  /* Construct a TYPE_DECL for the new type.  This serves two purposes:
+
+     - It ensures we don't print the original TYPE_DECL in error messages.
+       Printing the original name would be confusing because there are
+       situations in which the distinction between the original type and
+       the new type matters.  For example:
+
+	   __SVInt8_t __attribute__((arm_sve_vector_bits(512))) *a;
+	   __SVInt8_t *b;
+
+	   a = b;
+
+       is invalid in C++, but without this, we'd print both types in
+       the same way.
+
+     - Having a separate TYPE_DECL is necessary to ensure that C++
+       mangling works correctly.  See mangle_builtin_type for details.
+
+     The name of the decl is something like:
+
+       svint8_t __attribute__((arm_sve_vector_bits(512)))
+
+     This is a compromise.  It would be more accurate to use something like:
+
+       __SVInt8_t __attribute__((arm_sve_vector_bits(512)))
+
+     but the <arm_sve.h> name is likely to be more meaningful.  */
+  tree acle_name_node = TREE_CHAIN (mangled_name_node);
+  const char *old_type_name = IDENTIFIER_POINTER (TREE_VALUE (acle_name_node));
+  char *new_type_name
+    = xasprintf ("%s __attribute__((arm_sve_vector_bits(%d)))",
+		 old_type_name, (int) value);
+  tree decl = build_decl (BUILTINS_LOCATION, TYPE_DECL,
+			  get_identifier (new_type_name), new_type);
+  DECL_ARTIFICIAL (decl) = 1;
+  TYPE_NAME (new_type) = decl;
+  free (new_type_name);
+
   /* Allow the GNU vector extensions to be applied to vectors.
      The extensions aren't yet defined for packed predicates,
      so continue to treat them as abstract entities for now.  */
@@ -3696,16 +3808,17 @@ handle_arm_sve_vector_bits_attribute (tree *node, tree, tree args, int,
   /* The new type is a normal sized type; it doesn't have the same
      restrictions as sizeless types.  */
   TYPE_ATTRIBUTES (new_type)
-    = remove_attribute ("SVE sizeless type",
-			copy_list (TYPE_ATTRIBUTES (new_type)));
+    = get_arm_sve_vector_bits_attributes (TYPE_ATTRIBUTES (new_type),
+					  new_sve_type_args);
 
   /* Apply the relevant attributes, qualifiers and alignment of TYPE,
      if they differ from the original (sizeless) BASE_TYPE.  */
   if (TYPE_ATTRIBUTES (base_type) != TYPE_ATTRIBUTES (type)
       || TYPE_QUALS (base_type) != TYPE_QUALS (type))
     {
-      tree attrs = remove_attribute ("SVE sizeless type",
-				     copy_list (TYPE_ATTRIBUTES (type)));
+      tree attrs
+	= get_arm_sve_vector_bits_attributes (TYPE_ATTRIBUTES (type),
+					      new_sve_type_args);
       new_type = build_type_attribute_qual_variant (new_type, attrs,
 						    TYPE_QUALS (type));
     }

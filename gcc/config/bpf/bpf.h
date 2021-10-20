@@ -1,5 +1,5 @@
 /* Definition of the eBPF target for GCC.
-   Copyright (C) 2019-2020 Free Software Foundation, Inc.
+   Copyright (C) 2019-2021 Free Software Foundation, Inc.
 
    This file is part of GCC.
 
@@ -22,7 +22,7 @@
 
 /**** Controlling the Compilation Driver.  */
 
-#define ASM_SPEC "%{mbig-endian:-EB} %{!mbig-endian:-EL}"
+#define ASM_SPEC "%{mbig-endian:-EB} %{!mbig-endian:-EL} %{mxbpf:-mxbpf}"
 #define LINK_SPEC "%{mbig-endian:-EB} %{!mbig-endian:-EL}"
 #define LIB_SPEC ""
 #define STARTFILE_SPEC ""
@@ -50,11 +50,6 @@
 	M = DImode;				\
     } while (0)
 
-/* Biggest alignment supported by the object file format of this
-   machine.  In this case this is ELF.  Use the same definition than
-   in elfos.h */
-#define MAX_OFILE_ALIGNMENT (((unsigned int) 1 << 28) * 8)
-
 /* Align argument parameters on the stack to 64-bit, at a minimum.  */
 #define PARM_BOUNDARY 64
 
@@ -62,8 +57,8 @@
    64-bit at any time.  */
 #define STACK_BOUNDARY 64
 
-/* Function entry points are aligned to 128 bits.  */
-#define FUNCTION_BOUNDARY 128
+/* Function entry points are aligned to 64 bits.  */
+#define FUNCTION_BOUNDARY 64
 
 /* Maximum alignment required by data of any type.  */
 #define BIGGEST_ALIGNMENT 64
@@ -240,8 +235,9 @@ enum reg_class
 
 /**** Debugging Info ****/
 
-/* We cannot support DWARF2 because of the limitations of eBPF.  */
-#define DBX_DEBUGGING_INFO
+/* In eBPF it is not possible to unwind frames. Disable CFA.  */
+
+#define DWARF2_FRAME_INFO 0
 
 /**** Stack Layout and Calling Conventions.  */
 
@@ -283,9 +279,6 @@ enum reg_class
    in the first five registers.  Code in bpf.c assures the stack is
    never used when passing arguments.  However, we still have to
    define the constants below.  */
-
-/* If nonzero, push insns will be used to pass outgoing arguments.  */
-#define PUSH_ARGS 0
 
 /* If nonzero, function arguments will be evaluated from last to
    first, rather than from first to last.  */
@@ -387,7 +380,6 @@ enum reg_class
 #define TEXT_SECTION_ASM_OP "\t.text"
 #define DATA_SECTION_ASM_OP "\t.data"
 #define BSS_SECTION_ASM_OP "\t.bss"
-#define COMMON_ASM_OP "\t.common\t"
 
 /**** Defining the Output Assembler Language.  */
 
@@ -413,36 +405,21 @@ enum reg_class
 
 /*** Output of Uninitialized Variables.  */
 
-/* How to output an assembler line to define a local common
-   symbol.  */
-
-#define ASM_OUTPUT_ALIGNED_COMMON(FILE, NAME, SIZE, ALIGN)		\
-  do									\
-    {									\
-      fprintf ((FILE), "%s", COMMON_ASM_OP);				\
-      assemble_name ((FILE), (NAME));					\
-      fprintf ((FILE), ",%u,%u\n", (int)(SIZE), (ALIGN) / (BITS_PER_UNIT)); \
-    }									\
-  while (0)
-
 /* A C statement (sans semicolon) to output to the stdio stream
    FILE the assembler definition of uninitialized global DECL named
    NAME whose size is SIZE bytes and alignment is ALIGN bytes.
    Try to use asm_output_aligned_bss to implement this macro.  */
 
 #define ASM_OUTPUT_ALIGNED_BSS(FILE, DECL, NAME, SIZE, ALIGN)	\
-  do {								\
-    ASM_OUTPUT_ALIGNED_LOCAL (FILE, NAME, SIZE, ALIGN);		\
-  } while (0)
-
-/* This says how to output an assembler line to define a local common
-   symbol.  */
-
-#define ASM_OUTPUT_ALIGNED_LOCAL(FILE,NAME,SIZE,ALIGN)			\
-  ( fputs ("\t.lcomm ", (FILE)),					\
-    assemble_name ((FILE), (NAME)),					\
-    fprintf ((FILE), "," HOST_WIDE_INT_PRINT_UNSIGNED "\n",		\
-	     (SIZE), ((ALIGN) / BITS_PER_UNIT)))
+  do									\
+    {									\
+      ASM_OUTPUT_TYPE_DIRECTIVE (FILE, NAME, "object");			\
+      fprintf ((FILE), "%s", "\t.lcomm\t");				\
+      assemble_name ((FILE), (NAME));					\
+      fprintf ((FILE), "," HOST_WIDE_INT_PRINT_UNSIGNED ",%u\n",	\
+	       (SIZE), (ALIGN) / BITS_PER_UNIT);			\
+    }									\
+  while (0)
 
 /*** Output and Generation of Labels.  */
 
@@ -457,11 +434,6 @@ enum reg_class
 #undef ASM_GENERATE_INTERNAL_LABEL
 #define ASM_GENERATE_INTERNAL_LABEL(LABEL,PREFIX,NUM)			\
   sprintf ((LABEL), "*%s%s%ld", (LOCAL_LABEL_PREFIX), (PREFIX), (long)(NUM))
-
-/*** Macros Controlling Initialization Routines.  */
-
-#define INIT_SECTION_ASM_OP "\t.init"
-#define FINI_SECTION_ASM_OP "\t.fini"
 
 /*** Output of Assembler Instructions.  */
 
@@ -487,11 +459,6 @@ enum reg_class
    location counter to a multiple of 2**LOG bytes.  */
 #define ASM_OUTPUT_ALIGN(STREAM,LOG)		\
   fprintf (STREAM, "\t.align\t%d\n", (LOG))
-
-/* This is how to output an assembler line
-   that says to advance the location counter by SIZE bytes.  */
-#define ASM_OUTPUT_SKIP(FILE,SIZE)		\
-  fprintf (FILE, "\t.skip\t" HOST_WIDE_INT_PRINT_UNSIGNED "\n", (SIZE))
 
 /**** Miscellaneous Parameters.  */
 

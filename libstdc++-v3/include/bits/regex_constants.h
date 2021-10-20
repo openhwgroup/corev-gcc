@@ -1,6 +1,6 @@
 // class template regex -*- C++ -*-
 
-// Copyright (C) 2010-2020 Free Software Foundation, Inc.
+// Copyright (C) 2010-2021 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -50,7 +50,7 @@ namespace regex_constants
   /**
    * @name 5.1 Regular Expression Syntax Options
    */
-  //@{
+  ///@{
   enum __syntax_option
   {
     _S_icase,
@@ -64,7 +64,7 @@ namespace regex_constants
     _S_grep,
     _S_egrep,
     _S_polynomial,
-    _S_syntax_last
+    _S_multiline
   };
 
   /**
@@ -170,6 +170,24 @@ namespace regex_constants
   _GLIBCXX17_INLINE constexpr syntax_option_type egrep =
     static_cast<syntax_option_type>(1 << _S_egrep);
 
+#if __cplusplus >= 201703L || !defined __STRICT_ANSI__
+  // _GLIBCXX_RESOLVE_LIB_DEFECTS
+  // 2503. multiline option should be added to syntax_option_type
+  /**
+   * Specifies that the `^` anchor matches at the beginning of a line,
+   * and the `$` anchor matches at the end of a line, not only at the
+   * beginning/end of the input.
+   * Valid for the ECMAScript syntax, ignored otherwise.
+   * @since C++17
+   */
+  _GLIBCXX17_INLINE constexpr syntax_option_type multiline =
+    static_cast<syntax_option_type>(1 << _S_multiline);
+#endif
+
+  /// Extension: Equivalent to regex_constants::multiline for C++11 and C++14.
+  _GLIBCXX17_INLINE constexpr syntax_option_type __multiline =
+    static_cast<syntax_option_type>(1 << _S_multiline);
+
   /**
    * Extension: Ensure both space complexity of compiled regex and
    * time complexity execution are not exponential.
@@ -216,7 +234,7 @@ namespace regex_constants
   operator^=(syntax_option_type& __a, syntax_option_type __b)
   { return __a = __a ^ __b; }
 
-  //@}
+  ///@}
 
   /**
    * @name 5.2 Matching Rules
@@ -227,7 +245,7 @@ namespace regex_constants
    * below for any bitmask elements set.
    *
    */
-  //@{
+  ///@{
 
   enum __match_flag
   {
@@ -310,9 +328,10 @@ namespace regex_constants
     static_cast<match_flag_type>(1 << _S_continuous);
 
   /**
-   * --first is a valid iterator position.  When this flag is set then the
-   * flags match_not_bol and match_not_bow are ignored by the regular
-   * expression algorithms 28.11 and iterators 28.12.
+   * `--first` is a valid iterator position.  When this flag is set then the
+   * flags `match_not_bol` and `match_not_bow` are ignored by the algorithms
+   * `regex_match`, `regex_search`, and `regex_replace`, and by the iterators
+   * `regex_iterator` and `regex_token_iterator`.
    */
   _GLIBCXX17_INLINE constexpr match_flag_type match_prev_avail =
     static_cast<match_flag_type>(1 << _S_prev_avail);
@@ -407,9 +426,9 @@ namespace regex_constants
   operator^=(match_flag_type& __a, match_flag_type __b)
   { return __a = __a ^ __b; }
 
-  //@}
+  ///@}
 } // namespace regex_constants
-/* @} */ // group regex
+/// @} group regex
 
 _GLIBCXX_END_NAMESPACE_VERSION
 } // namespace std

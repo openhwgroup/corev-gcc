@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2020, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2021, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -24,39 +24,43 @@
 ------------------------------------------------------------------------------
 
 with Alloc;
-with Aspects;  use Aspects;
-with Atree;    use Atree;
-with Debug;    use Debug;
-with Einfo;    use Einfo;
-with Elists;   use Elists;
-with Errout;   use Errout;
-with Expander; use Expander;
-with Exp_Ch6;  use Exp_Ch6;
-with Exp_Ch7;  use Exp_Ch7;
-with Exp_Tss;  use Exp_Tss;
-with Exp_Util; use Exp_Util;
-with Fname;    use Fname;
-with Fname.UF; use Fname.UF;
-with Lib;      use Lib;
-with Namet;    use Namet;
-with Nmake;    use Nmake;
-with Nlists;   use Nlists;
-with Output;   use Output;
-with Sem_Aux;  use Sem_Aux;
-with Sem_Ch8;  use Sem_Ch8;
-with Sem_Ch10; use Sem_Ch10;
-with Sem_Ch12; use Sem_Ch12;
-with Sem_Prag; use Sem_Prag;
-with Sem_Res;  use Sem_Res;
-with Sem_Util; use Sem_Util;
-with Sinfo;    use Sinfo;
-with Sinput;   use Sinput;
-with Snames;   use Snames;
-with Stand;    use Stand;
+with Aspects;        use Aspects;
+with Atree;          use Atree;
+with Debug;          use Debug;
+with Einfo;          use Einfo;
+with Einfo.Entities; use Einfo.Entities;
+with Einfo.Utils;    use Einfo.Utils;
+with Elists;         use Elists;
+with Errout;         use Errout;
+with Expander;       use Expander;
+with Exp_Ch6;        use Exp_Ch6;
+with Exp_Ch7;        use Exp_Ch7;
+with Exp_Tss;        use Exp_Tss;
+with Exp_Util;       use Exp_Util;
+with Fname;          use Fname;
+with Fname.UF;       use Fname.UF;
+with Lib;            use Lib;
+with Namet;          use Namet;
+with Nmake;          use Nmake;
+with Nlists;         use Nlists;
+with Output;         use Output;
+with Sem_Aux;        use Sem_Aux;
+with Sem_Ch8;        use Sem_Ch8;
+with Sem_Ch10;       use Sem_Ch10;
+with Sem_Ch12;       use Sem_Ch12;
+with Sem_Prag;       use Sem_Prag;
+with Sem_Res;        use Sem_Res;
+with Sem_Util;       use Sem_Util;
+with Sinfo;          use Sinfo;
+with Sinfo.Nodes;    use Sinfo.Nodes;
+with Sinfo.Utils;    use Sinfo.Utils;
+with Sinput;         use Sinput;
+with Snames;         use Snames;
+with Stand;          use Stand;
 with Table;
-with Tbuild;   use Tbuild;
-with Uintp;    use Uintp;
-with Uname;    use Uname;
+with Tbuild;         use Tbuild;
+with Uintp;          use Uintp;
+with Uname;          use Uname;
 
 with GNAT.HTable;
 
@@ -317,6 +321,7 @@ package body Inline is
    --    Refined_Global
    --    Refined_Depends
    --    Refined_Post
+   --    Subprogram_Variant
    --    Test_Case
    --    Unmodified
    --    Unreferenced
@@ -1450,7 +1455,7 @@ package body Inline is
            --  Skip inlining if the function returns an unconstrained type
            --  using an extended return statement, since this part of the
            --  new inlining model is not yet supported by the current
-           --  implementation. ???
+           --  implementation.
 
            or else (Returns_Unconstrained_Type (Spec_Id)
                      and then Has_Extended_Return)
@@ -1468,7 +1473,7 @@ package body Inline is
       end if;
 
       Set_Body_To_Inline (Decl, Original_Body);
-      Set_Ekind (Defining_Entity (Original_Body), Ekind (Spec_Id));
+      Mutate_Ekind (Defining_Entity (Original_Body), Ekind (Spec_Id));
       Set_Is_Inlined (Spec_Id);
    end Build_Body_To_Inline;
 
@@ -1530,7 +1535,6 @@ package body Inline is
 
       function Is_Unit_Subprogram (Id : Entity_Id) return Boolean;
       --  Return True if subprogram Id defines a compilation unit
-      --  Shouldn't this be in Sem_Aux???
 
       function In_Package_Spec (Id : Entity_Id) return Boolean;
       --  Return True if subprogram Id is defined in the package specification,
@@ -1944,10 +1948,11 @@ package body Inline is
    -------------------
 
    procedure Cannot_Inline
-     (Msg        : String;
-      N          : Node_Id;
-      Subp       : Entity_Id;
-      Is_Serious : Boolean := False)
+     (Msg           : String;
+      N             : Node_Id;
+      Subp          : Entity_Id;
+      Is_Serious    : Boolean := False;
+      Suppress_Info : Boolean := False)
    is
    begin
       --  In GNATprove mode, inlining is the technical means by which the
@@ -1970,7 +1975,7 @@ package body Inline is
             New_Msg (1 .. Len2) := "info: no contextual analysis of";
             New_Msg (Len2 + 1 .. Msg'Length + Len2 - Len1) :=
               Msg (Msg'First + Len1 .. Msg'Last);
-            Cannot_Inline (New_Msg, N, Subp, Is_Serious);
+            Cannot_Inline (New_Msg, N, Subp, Is_Serious, Suppress_Info);
             return;
          end;
       end if;
@@ -1991,14 +1996,14 @@ package body Inline is
          then
             null;
 
-         --  In GNATprove mode, issue a warning when -gnatd_f is set, and
-         --  indicate that the subprogram is not always inlined by setting
-         --  flag Is_Inlined_Always to False.
+         --  In GNATprove mode, issue an info message when -gnatd_f is set and
+         --  Suppress_Info is False, and indicate that the subprogram is not
+         --  always inlined by setting flag Is_Inlined_Always to False.
 
          elsif GNATprove_Mode then
             Set_Is_Inlined_Always (Subp, False);
 
-            if Debug_Flag_Underscore_F then
+            if Debug_Flag_Underscore_F and not Suppress_Info then
                Error_Msg_NE (Msg, N, Subp);
             end if;
 
@@ -2021,14 +2026,14 @@ package body Inline is
 
          Error_Msg_NE (Msg (Msg'First .. Msg'Last - 1), N, Subp);
 
-      --  In GNATprove mode, issue a warning when -gnatd_f is set, and
-      --  indicate that the subprogram is not always inlined by setting
-      --  flag Is_Inlined_Always to False.
+      --  In GNATprove mode, issue an info message when -gnatd_f is set and
+      --  Suppress_Info is False, and indicate that the subprogram is not
+      --  always inlined by setting flag Is_Inlined_Always to False.
 
       elsif GNATprove_Mode then
          Set_Is_Inlined_Always (Subp, False);
 
-         if Debug_Flag_Underscore_F then
+         if Debug_Flag_Underscore_F and not Suppress_Info then
             Error_Msg_NE (Msg, N, Subp);
          end if;
 
@@ -2159,10 +2164,7 @@ package body Inline is
                Body_To_Inline :=
                  Copy_Generic_Node (N, Empty, Instantiating => True);
             else
-               --  ??? Shouldn't this use New_Copy_Tree? What about global
-               --  references captured in the body to inline?
-
-               Body_To_Inline := Copy_Separate_Tree (N);
+               Body_To_Inline := New_Copy_Tree (N);
             end if;
 
             --  Remove aspects/pragmas that have no meaning in an inlined body
@@ -2249,7 +2251,7 @@ package body Inline is
 
          pragma Assert (No (Body_To_Inline (Decl)));
          Set_Body_To_Inline (Decl, Original_Body);
-         Set_Ekind (Defining_Entity (Original_Body), Ekind (Spec_Id));
+         Mutate_Ekind (Defining_Entity (Original_Body), Ekind (Spec_Id));
       end Build_Body_To_Inline;
 
       --------------------------------
@@ -2825,7 +2827,7 @@ package body Inline is
       -------------------------
 
       function Formal_Is_Used_Once (Formal : Entity_Id) return Boolean is
-         Use_Counter : Int := 0;
+         Use_Counter : Nat := 0;
 
          function Count_Uses (N : Node_Id) return Traverse_Result;
          --  Traverse the tree and count the uses of the formal parameter.
@@ -2854,13 +2856,10 @@ package body Inline is
             then
                Use_Counter := Use_Counter + 1;
 
+               --  If this is a second use then abandon the traversal
+
                if Use_Counter > 1 then
-
-                  --  Denote more than one use and abandon the traversal
-
-                  Use_Counter := 2;
                   return Abandon;
-
                end if;
             end if;
 
@@ -2916,7 +2915,24 @@ package body Inline is
          --  formal in the inlined code.
 
          if Is_Entity_Name (A) and then Ekind (F) /= E_In_Parameter then
-            Set_Last_Assignment (Entity (A), Empty);
+
+            --  In GNATprove mode a protected component acting as an actual
+            --  subprogram parameter will appear as inlined-for-proof. However,
+            --  its E_Component entity is not an assignable object, so the
+            --  assertion in Set_Last_Assignment will fail. We just omit the
+            --  call to Set_Last_Assignment, because GNATprove flags useless
+            --  assignments with its own flow analysis.
+            --
+            --  In GNAT mode such a problem does not occur, because protected
+            --  components are inlined via object renamings whose entity kind
+            --  E_Variable is assignable.
+
+            if Is_Assignable (Entity (A)) then
+               Set_Last_Assignment (Entity (A), Empty);
+            else
+               pragma Assert
+                 (GNATprove_Mode and then Is_Protected_Component (Entity (A)));
+            end if;
          end if;
 
          --  If the argument may be a controlling argument in a call within
@@ -2992,10 +3008,7 @@ package body Inline is
             if Nkind (A) = N_Type_Conversion
               and then Ekind (F) /= E_In_Parameter
             then
-               New_A :=
-                 Make_Unchecked_Type_Conversion (Loc,
-                   Subtype_Mark => New_Occurrence_Of (Etype (F), Loc),
-                   Expression   => Relocate_Node (Expression (A)));
+               New_A := Unchecked_Convert_To (Etype (F), Expression (A));
 
             --  In GNATprove mode, keep the most precise type of the actual for
             --  the temporary variable, when the formal type is unconstrained.
@@ -3538,7 +3551,6 @@ package body Inline is
       procedure Reset_Dispatching_Calls (N : Node_Id) is
 
          function Do_Reset (N : Node_Id) return Traverse_Result;
-         --  Comment required ???
 
          --------------
          -- Do_Reset --
@@ -3559,17 +3571,10 @@ package body Inline is
             return OK;
          end Do_Reset;
 
-         function Do_Reset_Calls is new Traverse_Func (Do_Reset);
-
-         --  Local variables
-
-         Dummy : constant Traverse_Result := Do_Reset_Calls (N);
-         pragma Unreferenced (Dummy);
-
-         --  Start of processing for Reset_Dispatching_Calls
+         procedure Do_Reset_Calls is new Traverse_Proc (Do_Reset);
 
       begin
-         null;
+         Do_Reset_Calls (N);
       end Reset_Dispatching_Calls;
 
       ---------------------------
@@ -3611,7 +3616,6 @@ package body Inline is
 
          --  If the context is an assignment, and the left-hand side is free of
          --  side-effects, the replacement is also safe.
-         --  Can this be generalized further???
 
          elsif Nkind (Parent (N)) = N_Assignment_Statement
            and then
@@ -3728,8 +3732,8 @@ package body Inline is
          return;
       end if;
 
-      if Nkind (Orig_Bod) = N_Defining_Identifier
-        or else Nkind (Orig_Bod) = N_Defining_Operator_Symbol
+      if Nkind (Orig_Bod) in N_Defining_Identifier
+                           | N_Defining_Operator_Symbol
       then
          --  Subprogram is renaming_as_body. Calls occurring after the renaming
          --  can be replaced with calls to the renamed entity directly, because
@@ -4211,8 +4215,6 @@ package body Inline is
      (Subp  : Entity_Id;
       Decls : List_Id) return Boolean
    is
-      D : Node_Id;
-
       function Is_Unchecked_Conversion (D : Node_Id) return Boolean;
       --  Nested subprograms make a given body ineligible for inlining, but
       --  we make an exception for instantiations of unchecked conversion.
@@ -4246,6 +4248,10 @@ package body Inline is
            and then Is_Intrinsic_Subprogram (Conv);
       end Is_Unchecked_Conversion;
 
+      --  Local variables
+
+      Decl : Node_Id;
+
    --  Start of processing for Has_Excluded_Declaration
 
    begin
@@ -4255,19 +4261,19 @@ package body Inline is
          return False;
       end if;
 
-      D := First (Decls);
-      while Present (D) loop
+      Decl := First (Decls);
+      while Present (Decl) loop
 
          --  First declarations universally excluded
 
-         if Nkind (D) = N_Package_Declaration then
+         if Nkind (Decl) = N_Package_Declaration then
             Cannot_Inline
-              ("cannot inline & (nested package declaration)?", D, Subp);
+              ("cannot inline & (nested package declaration)?", Decl, Subp);
             return True;
 
-         elsif Nkind (D) = N_Package_Instantiation then
+         elsif Nkind (Decl) = N_Package_Instantiation then
             Cannot_Inline
-              ("cannot inline & (nested package instantiation)?", D, Subp);
+              ("cannot inline & (nested package instantiation)?", Decl, Subp);
             return True;
          end if;
 
@@ -4276,51 +4282,50 @@ package body Inline is
          if Back_End_Inlining then
             null;
 
-         elsif Nkind (D) = N_Task_Type_Declaration
-           or else Nkind (D) = N_Single_Task_Declaration
+         elsif Nkind (Decl) = N_Task_Type_Declaration
+           or else Nkind (Decl) = N_Single_Task_Declaration
          then
             Cannot_Inline
-              ("cannot inline & (nested task type declaration)?", D, Subp);
+              ("cannot inline & (nested task type declaration)?", Decl, Subp);
             return True;
 
-         elsif Nkind (D) = N_Protected_Type_Declaration
-           or else Nkind (D) = N_Single_Protected_Declaration
+         elsif Nkind (Decl) in N_Protected_Type_Declaration
+                             | N_Single_Protected_Declaration
          then
             Cannot_Inline
               ("cannot inline & (nested protected type declaration)?",
-               D, Subp);
+               Decl, Subp);
             return True;
 
-         elsif Nkind (D) = N_Subprogram_Body then
+         elsif Nkind (Decl) = N_Subprogram_Body then
             Cannot_Inline
-              ("cannot inline & (nested subprogram)?", D, Subp);
+              ("cannot inline & (nested subprogram)?", Decl, Subp);
             return True;
 
-         elsif Nkind (D) = N_Function_Instantiation
-           and then not Is_Unchecked_Conversion (D)
+         elsif Nkind (Decl) = N_Function_Instantiation
+           and then not Is_Unchecked_Conversion (Decl)
          then
             Cannot_Inline
-              ("cannot inline & (nested function instantiation)?", D, Subp);
+              ("cannot inline & (nested function instantiation)?", Decl, Subp);
             return True;
 
-         elsif Nkind (D) = N_Procedure_Instantiation then
+         elsif Nkind (Decl) = N_Procedure_Instantiation then
             Cannot_Inline
-              ("cannot inline & (nested procedure instantiation)?", D, Subp);
+              ("cannot inline & (nested procedure instantiation)?",
+               Decl, Subp);
             return True;
 
          --  Subtype declarations with predicates will generate predicate
          --  functions, i.e. nested subprogram bodies, so inlining is not
          --  possible.
 
-         elsif Nkind (D) = N_Subtype_Declaration
-           and then Present (Aspect_Specifications (D))
-         then
+         elsif Nkind (Decl) = N_Subtype_Declaration then
             declare
                A    : Node_Id;
                A_Id : Aspect_Id;
 
             begin
-               A := First (Aspect_Specifications (D));
+               A := First (Aspect_Specifications (Decl));
                while Present (A) loop
                   A_Id := Get_Aspect_Id (Chars (Identifier (A)));
 
@@ -4330,7 +4335,7 @@ package body Inline is
                   then
                      Cannot_Inline
                        ("cannot inline & (subtype declaration with "
-                        & "predicate)?", D, Subp);
+                        & "predicate)?", Decl, Subp);
                      return True;
                   end if;
 
@@ -4339,7 +4344,7 @@ package body Inline is
             end;
          end if;
 
-         Next (D);
+         Next (Decl);
       end loop;
 
       return False;
@@ -4802,7 +4807,7 @@ package body Inline is
          end if;
       end Instantiate_Body;
 
-      J, K  : Nat;
+      J, K : Nat;
       Info : Pending_Body_Info;
 
    --  Start of processing for Instantiate_Bodies
@@ -5119,6 +5124,7 @@ package body Inline is
                                         | Name_Refined_Global
                                         | Name_Refined_Depends
                                         | Name_Refined_Post
+                                        | Name_Subprogram_Variant
                                         | Name_Test_Case
                                         | Name_Unmodified
                                         | Name_Unreferenced
@@ -5148,17 +5154,12 @@ package body Inline is
    --------------------------
 
    procedure Remove_Dead_Instance (N : Node_Id) is
-      J : Int;
-
    begin
-      J := 0;
-      while J <= Pending_Instantiations.Last loop
+      for J in 0 .. Pending_Instantiations.Last loop
          if Pending_Instantiations.Table (J).Inst_Node = N then
             Pending_Instantiations.Table (J).Inst_Node := Empty;
             return;
          end if;
-
-         J := J + 1;
       end loop;
    end Remove_Dead_Instance;
 

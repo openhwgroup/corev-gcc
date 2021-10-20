@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---          Copyright (C) 1992-2020, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2021, Free Software Foundation, Inc.         --
 --                                                                          --
 -- This specification is derived from the Ada Reference Manual for use with --
 -- GNAT. The copyright notice above, and the license provisions that follow --
@@ -43,7 +43,7 @@
 private generic
    type Num is digits <>;
 
-package Ada.Text_IO.Float_IO is
+package Ada.Text_IO.Float_IO with SPARK_Mode => On is
 
    Default_Fore : Field := 2;
    Default_Aft  : Field := Num'Digits - 1;

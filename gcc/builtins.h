@@ -1,5 +1,5 @@
 /* Expand builtin functions.
-   Copyright (C) 1988-2020 Free Software Foundation, Inc.
+   Copyright (C) 1988-2021 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -109,8 +109,12 @@ extern void expand_builtin_setjmp_receiver (rtx);
 extern void expand_builtin_update_setjmp_buf (rtx);
 extern tree mathfn_built_in (tree, enum built_in_function fn);
 extern tree mathfn_built_in (tree, combined_fn);
-extern rtx builtin_strncpy_read_str (void *, HOST_WIDE_INT, scalar_int_mode);
-extern rtx builtin_memset_read_str (void *, HOST_WIDE_INT, scalar_int_mode);
+extern tree mathfn_built_in_type (combined_fn);
+extern rtx builtin_strncpy_read_str (void *, void *, HOST_WIDE_INT,
+				     fixed_size_mode);
+extern rtx builtin_memset_read_str (void *, void *, HOST_WIDE_INT,
+				    fixed_size_mode);
+extern rtx expand_builtin_memset (tree, rtx, machine_mode);
 extern rtx expand_builtin_saveregs (void);
 extern tree std_build_builtin_va_list (void);
 extern tree std_fn_abi_va_list (tree);
@@ -127,19 +131,13 @@ extern tree fold_call_expr (location_t, tree, bool);
 extern tree fold_builtin_call_array (location_t, tree, tree, int, tree *);
 extern bool validate_gimple_arglist (const gcall *, ...);
 extern rtx default_expand_builtin (tree, rtx, rtx, machine_mode, int);
+extern void maybe_emit_call_builtin___clear_cache (rtx, rtx);
 extern bool fold_builtin_next_arg (tree, bool);
 extern tree do_mpc_arg2 (tree, tree, tree, int, int (*)(mpc_ptr, mpc_srcptr, mpc_srcptr, mpc_rnd_t));
 extern tree fold_call_stmt (gcall *, bool);
 extern void set_builtin_user_assembler_name (tree decl, const char *asmspec);
 extern bool is_simple_builtin (tree);
 extern bool is_inexpensive_builtin (tree);
-
-class vr_values;
-tree gimple_call_alloc_size (gimple *, wide_int[2] = NULL,
-			     const vr_values * = NULL);
-extern tree compute_objsize (tree, int, tree * = NULL, tree * = NULL,
-			     const vr_values * = NULL);
-
 extern bool readonly_data_expr (tree exp);
 extern bool init_target_chars (void);
 extern unsigned HOST_WIDE_INT target_newline;
@@ -148,43 +146,11 @@ extern char target_percent_s[3];
 extern char target_percent_c[3];
 extern char target_percent_s_newline[4];
 extern bool target_char_cst_p (tree t, char *p);
+extern rtx get_memory_rtx (tree exp, tree len);
 
 extern internal_fn associated_internal_fn (tree);
 extern internal_fn replacement_internal_fn (gcall *);
 
-extern bool check_nul_terminated_array (tree, tree, tree = NULL_TREE);
-extern void warn_string_no_nul (location_t, const char *, tree, tree);
-extern tree unterminated_array (tree, tree * = NULL, bool * = NULL);
 extern bool builtin_with_linkage_p (tree);
-
-/* Describes a reference to an object used in an access.  */
-struct access_ref
-{
-  access_ref (): ref ()
-  {
-    /* Set to valid.  */
-    offrng[0] = offrng[1] = 0;
-    /* Invalidate.   */
-    sizrng[0] = sizrng[1] = -1;
-  }
-
-  /* Reference to the object.  */
-  tree ref;
-
-  /* Range of offsets into and sizes of the object(s).  */
-  offset_int offrng[2];
-  offset_int sizrng[2];
-};
-
-/* Describes a pair of references used in an access by built-in
-   functions like memcpy.  */
-struct access_data
-{
-  /* Destination and source of the access.  */
-  access_ref dst, src;
-};
-
-extern bool check_access (tree, tree, tree, tree, tree, tree, tree,
-			  bool = true, const access_data * = NULL);
 
 #endif /* GCC_BUILTINS_H */

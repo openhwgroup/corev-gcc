@@ -3,7 +3,7 @@
    building RTL.  These routines are used both during actual parsing
    and during the instantiation of template functions.
 
-   Copyright (C) 1998-2020 Free Software Foundation, Inc.
+   Copyright (C) 1998-2021 Free Software Foundation, Inc.
 
    This file is part of GCC.
 
@@ -41,6 +41,7 @@ build_lambda_expr (void)
   LAMBDA_EXPR_DEFAULT_CAPTURE_MODE (lambda) = CPLD_NONE;
   LAMBDA_EXPR_CAPTURE_LIST         (lambda) = NULL_TREE;
   LAMBDA_EXPR_THIS_CAPTURE         (lambda) = NULL_TREE;
+  LAMBDA_EXPR_REGEN_INFO           (lambda) = NULL_TREE;
   LAMBDA_EXPR_PENDING_PROXIES      (lambda) = NULL;
   LAMBDA_EXPR_MUTABLE_P            (lambda) = false;
   return lambda;
@@ -134,8 +135,7 @@ begin_lambda_type (tree lambda)
   IDENTIFIER_LAMBDA_P (name) = true;
 
   /* Create the new RECORD_TYPE for this lambda.  */
-  tree type = xref_tag (/*tag_code=*/record_type, name,
-			/*scope=*/ts_lambda, /*template_header_p=*/false);
+  tree type = xref_tag (/*tag_code=*/record_type, name);
   if (type == error_mark_node)
     return error_mark_node;
 
@@ -158,24 +158,6 @@ begin_lambda_type (tree lambda)
   type = begin_class_definition (type);
 
   return type;
-}
-
-/* Returns the type to use for the return type of the operator() of a
-   closure class.  */
-
-tree
-lambda_return_type (tree expr)
-{
-  if (expr == NULL_TREE)
-    return void_type_node;
-  if (type_unknown_p (expr)
-      || BRACE_ENCLOSED_INITIALIZER_P (expr))
-    {
-      cxx_incomplete_type_error (expr, TREE_TYPE (expr));
-      return error_mark_node;
-    }
-  gcc_checking_assert (!type_dependent_expression_p (expr));
-  return cv_unqualified (type_decays_to (unlowered_expr_type (expr)));
 }
 
 /* Given a LAMBDA_EXPR or closure type LAMBDA, return the op() of the
@@ -476,7 +458,7 @@ static GTY(()) tree max_id;
 static tree
 vla_capture_type (tree array_type)
 {
-  tree type = xref_tag (record_type, make_anon_name (), ts_current, false);
+  tree type = xref_tag (record_type, make_anon_name ());
   xref_basetypes (type, NULL_TREE);
   type = begin_class_definition (type);
   if (!ptr_id)
@@ -607,8 +589,11 @@ add_capture (tree lambda, tree id, tree orig_init, bool by_reference_p,
 	   parameter pack in this context.  We will want as many fields as we
 	   have elements in the expansion of the initializer, so use its packs
 	   instead.  */
-	PACK_EXPANSION_PARAMETER_PACKS (type)
-	  = uses_parameter_packs (initializer);
+	{
+	  PACK_EXPANSION_PARAMETER_PACKS (type)
+	    = uses_parameter_packs (initializer);
+	  PACK_EXPANSION_AUTO_P (type) = true;
+	}
     }
 
   /* Make member variable.  */
@@ -1115,6 +1100,8 @@ maybe_add_lambda_conv_op (tree type)
     while (src)
       {
 	tree new_node = copy_node (src);
+	/* We set DECL_CONTEXT of NEW_NODE to the statfn below.
+	   Notice this is creating a recursive type!  */
 
 	/* Clear TREE_ADDRESSABLE on thunk arguments.  */
 	TREE_ADDRESSABLE (new_node) = 0;
@@ -1189,6 +1176,8 @@ maybe_add_lambda_conv_op (tree type)
   tree name = make_conv_op_name (rettype);
   tree thistype = cp_build_qualified_type (type, TYPE_QUAL_CONST);
   tree fntype = build_method_type_directly (thistype, rettype, void_list_node);
+  /* DR 1722: The conversion function should be noexcept.  */
+  fntype = build_exception_variant (fntype, noexcept_true_spec);
   tree convfn = build_lang_decl (FUNCTION_DECL, name, fntype);
   SET_DECL_LANGUAGE (convfn, lang_cplusplus);
   tree fn = convfn;
@@ -1324,6 +1313,13 @@ lambda_static_thunk_p (tree fn)
 	  && LAMBDA_TYPE_P (CP_DECL_CONTEXT (fn)));
 }
 
+bool
+call_from_lambda_thunk_p (tree call)
+{
+  return (CALL_FROM_THUNK_P (call)
+	  && lambda_static_thunk_p (current_function_decl));
+}
+
 /* Returns true iff VAL is a lambda-related declaration which should
    be ignored by unqualified lookup.  */
 
@@ -1342,8 +1338,9 @@ is_lambda_ignored_entity (tree val)
 
   /* None of the lookups that use qualify_lookup want the op() from the
      lambda; they want the one from the enclosing class.  */
-  if (TREE_CODE (val) == FUNCTION_DECL && LAMBDA_FUNCTION_P (val))
-    return true;
+  if (tree fns = maybe_get_fns (val))
+    if (LAMBDA_FUNCTION_P (OVL_FIRST (fns)))
+      return true;
 
   return false;
 }
@@ -1385,6 +1382,12 @@ record_lambda_scope (tree lambda)
 {
   LAMBDA_EXPR_EXTRA_SCOPE (lambda) = lambda_scope;
   LAMBDA_EXPR_DISCRIMINATOR (lambda) = lambda_count++;
+  if (lambda_scope)
+    {
+      tree closure = LAMBDA_EXPR_CLOSURE (lambda);
+      gcc_checking_assert (closure);
+      maybe_attach_decl (lambda_scope, TYPE_NAME (closure));
+    }
 }
 
 /* This lambda is an instantiation of a lambda in a template default argument

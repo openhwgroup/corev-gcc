@@ -1,5 +1,5 @@
 /* UndefinedBehaviorSanitizer, undefined behavior detector.
-   Copyright (C) 2013-2020 Free Software Foundation, Inc.
+   Copyright (C) 2013-2021 Free Software Foundation, Inc.
    Contributed by Marek Polacek <polacek@redhat.com>
 
 This file is part of GCC.
@@ -405,10 +405,12 @@ ubsan_type_descriptor (tree type, enum ubsan_print_style pstyle)
     /* We weren't able to determine the type name.  */
     tname = "<unknown>";
 
+  pp_quote (&pretty_name);
+
   tree eltype = type;
   if (pstyle == UBSAN_PRINT_POINTER)
     {
-      pp_printf (&pretty_name, "'%s%s%s%s%s%s%s",
+      pp_printf (&pretty_name, "%s%s%s%s%s%s%s",
 		 TYPE_VOLATILE (type2) ? "volatile " : "",
 		 TYPE_READONLY (type2) ? "const " : "",
 		 TYPE_RESTRICT (type2) ? "restrict " : "",
@@ -420,14 +422,14 @@ ubsan_type_descriptor (tree type, enum ubsan_print_style pstyle)
 		 deref_depth == 0 ? "" : " ");
       while (deref_depth-- > 0)
 	pp_star (&pretty_name);
-      pp_quote (&pretty_name);
     }
   else if (pstyle == UBSAN_PRINT_ARRAY)
     {
       /* Pretty print the array dimensions.  */
       gcc_assert (TREE_CODE (type) == ARRAY_TYPE);
       tree t = type;
-      pp_printf (&pretty_name, "'%s ", tname);
+      pp_string (&pretty_name, tname);
+      pp_space (&pretty_name);
       while (deref_depth-- > 0)
 	pp_star (&pretty_name);
       while (TREE_CODE (t) == ARRAY_TYPE)
@@ -453,13 +455,14 @@ ubsan_type_descriptor (tree type, enum ubsan_print_style pstyle)
 	  pp_right_bracket (&pretty_name);
 	  t = TREE_TYPE (t);
 	}
-      pp_quote (&pretty_name);
 
       /* Save the tree with stripped types.  */
       eltype = t;
     }
   else
-    pp_printf (&pretty_name, "'%s'", tname);
+    pp_string (&pretty_name, tname);
+
+  pp_quote (&pretty_name);
 
   switch (TREE_CODE (eltype))
     {
@@ -1440,7 +1443,10 @@ maybe_instrument_pointer_overflow (gimple_stmt_iterator *gsi, tree t)
   tree base;
   if (decl_p)
     {
-      if (DECL_REGISTER (inner))
+      if ((VAR_P (inner)
+	   || TREE_CODE (inner) == PARM_DECL
+	   || TREE_CODE (inner) == RESULT_DECL)
+	  && DECL_REGISTER (inner))
 	return;
       base = inner;
       /* If BASE is a fixed size automatic variable or
@@ -1780,7 +1786,7 @@ ubsan_use_new_style_p (location_t loc)
     return false;
 
   expanded_location xloc = expand_location (loc);
-  if (xloc.file == NULL || strncmp (xloc.file, "\1", 2) == 0
+  if (xloc.file == NULL || startswith (xloc.file, "\1")
       || xloc.file[0] == '\0' || xloc.file[0] == '\xff'
       || xloc.file[1] == '\xff')
     return false;
@@ -1887,8 +1893,16 @@ ubsan_instrument_float_cast (location_t loc, tree type, tree expr)
   else
     return NULL_TREE;
 
-  t = fold_build2 (UNLE_EXPR, boolean_type_node, expr, min);
-  tt = fold_build2 (UNGE_EXPR, boolean_type_node, expr, max);
+  if (HONOR_NANS (mode))
+    {
+      t = fold_build2 (UNLE_EXPR, boolean_type_node, expr, min);
+      tt = fold_build2 (UNGE_EXPR, boolean_type_node, expr, max);
+    }
+  else
+    {
+      t = fold_build2 (LE_EXPR, boolean_type_node, expr, min);
+      tt = fold_build2 (GE_EXPR, boolean_type_node, expr, max);
+    }
   t = fold_build2 (TRUTH_OR_EXPR, boolean_type_node, t, tt);
   if (integer_zerop (t))
     return NULL_TREE;
@@ -2104,7 +2118,10 @@ instrument_object_size (gimple_stmt_iterator *gsi, tree t, bool is_lhs)
   tree base;
   if (decl_p)
     {
-      if (DECL_REGISTER (inner))
+      if ((VAR_P (inner)
+	   || TREE_CODE (inner) == PARM_DECL
+	   || TREE_CODE (inner) == RESULT_DECL)
+	  && DECL_REGISTER (inner))
 	return;
       base = inner;
     }

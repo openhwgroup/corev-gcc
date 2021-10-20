@@ -3,6 +3,7 @@ archive/zip
 bufio
 bytes
 cmd/go/internal/cache
+cmd/go/internal/fsys
 cmd/go/internal/generate
 cmd/go/internal/get
 cmd/go/internal/imports
@@ -16,12 +17,15 @@ cmd/go/internal/modload
 cmd/go/internal/mvs
 cmd/go/internal/par
 cmd/go/internal/search
+cmd/go/internal/str
 cmd/go/internal/test
 cmd/go/internal/txtar
+cmd/go/internal/vcs
 cmd/go/internal/work
 cmd/internal/buildid
 cmd/internal/edit
 cmd/internal/objabi
+cmd/internal/pkgpath
 cmd/internal/test2json
 compress/bzip2
 compress/flate
@@ -39,7 +43,10 @@ crypto/des
 crypto/dsa
 crypto/ecdsa
 crypto/ed25519
+crypto/ed25519/internal/edwards25519
+crypto/ed25519/internal/edwards25519/field
 crypto/elliptic
+crypto/elliptic/internal/fiat
 crypto/hmac
 crypto/internal/subtle
 crypto/md5
@@ -76,6 +83,7 @@ flag
 fmt
 go/ast
 go/build
+go/build/constraint
 go/constant
 go/doc
 go/format
@@ -103,7 +111,9 @@ image/jpeg
 image/png
 index/suffixarray
 internal/cpu
+internal/execabs
 internal/fmtsort
+internal/itoa
 internal/poll
 internal/profile
 internal/reflectlite
@@ -112,6 +122,7 @@ internal/trace
 internal/unsafeheader
 internal/xcoff
 io
+io/fs
 io/ioutil
 log
 log/syslog
@@ -132,6 +143,7 @@ net/http/httptest
 net/http/httptrace
 net/http/httputil
 net/http/internal
+net/http/internal/ascii
 net/http/pprof
 net/internal/socktest
 net/mail
@@ -150,10 +162,12 @@ reflect
 regexp
 regexp/syntax
 runtime
+runtime/cgo
 runtime/debug
 runtime/internal/atomic
 runtime/internal/math
 runtime/internal/sys
+runtime/metrics
 runtime/pprof
 runtime/trace
 sort
@@ -163,6 +177,7 @@ sync
 sync/atomic
 syscall
 testing
+testing/fstest
 testing/iotest
 testing/quick
 text/scanner

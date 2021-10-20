@@ -1,5 +1,5 @@
 /* Generate code from machine description to recognize rtl as insns.
-   Copyright (C) 1987-2020 Free Software Foundation, Inc.
+   Copyright (C) 1987-2021 Free Software Foundation, Inc.
 
    This file is part of GCC.
 
@@ -694,13 +694,11 @@ validate_pattern (rtx pattern, md_rtx_info *info, rtx set, int set_code)
 	  error_at (info->loc, "mode mismatch in set: %smode vs %smode",
 		    GET_MODE_NAME (dmode), GET_MODE_NAME (smode));
 
-	/* If only one of the operands is VOIDmode, and PC or CC0 is
-	   not involved, it's probably a mistake.  */
+	/* If only one of the operands is VOIDmode, and PC is not involved,
+	   it's probably a mistake.  */
 	else if (dmode != smode
 		 && GET_CODE (dest) != PC
-		 && GET_CODE (dest) != CC0
 		 && GET_CODE (src) != PC
-		 && GET_CODE (src) != CC0
 		 && !CONST_INT_P (src)
 		 && !CONST_WIDE_INT_P (src)
 		 && GET_CODE (src) != CALL)
@@ -2214,8 +2212,8 @@ optimize_subroutine_group (const char *type, state *root)
   if (cse_tests_p)
     {
       known_conditions kc;
-      kc.position_tests.safe_grow_cleared (num_positions);
-      kc.set_operands.safe_grow_cleared (num_operands);
+      kc.position_tests.safe_grow_cleared (num_positions, true);
+      kc.set_operands.safe_grow_cleared (num_operands, true);
       kc.peep2_count = 1;
       cse_tests (&root_pos, root, &kc);
     }
@@ -2337,7 +2335,7 @@ merge_pattern_info::merge_pattern_info (unsigned int num_transitions)
     num_results (0),
     routine (0)
 {
-  transitions.safe_grow_cleared (num_transitions);
+  transitions.safe_grow_cleared (num_transitions, true);
 }
 
 /* Describes one way of matching a particular state to a particular
@@ -3667,7 +3665,7 @@ merge_into_decision (decision *d1, state *s2, const int_set *exclude,
     {
       transition *trans1 = intersecting[i];
       next->truncate (0);
-      next->safe_grow (trans1->labels.length () + combined->length ());
+      next->safe_grow (trans1->labels.length () + combined->length (), true);
       int_set::iterator end
 	= std::set_union (trans1->labels.begin (), trans1->labels.end (),
 			  combined->begin (), combined->end (),
@@ -5148,7 +5146,7 @@ print_subroutine_start (output_state *os, state *s, position *root)
 	}
 
       /* Say that x1 is valid and the rest aren't.  */
-      os->seen_vars.safe_grow_cleared (num_vars);
+      os->seen_vars.safe_grow_cleared (num_vars, true);
       os->seen_vars[1] = true;
     }
   if (os->type == SUBPATTERN || os->type == RECOG)
@@ -5421,7 +5419,7 @@ main (int argc, const char **argv)
   optimize_subroutine_group ("peephole2_insns", &peephole2_root);
 
   output_state os;
-  os.id_to_var.safe_grow_cleared (num_positions);
+  os.id_to_var.safe_grow_cleared (num_positions, true);
 
   if (use_pattern_routines_p)
     {

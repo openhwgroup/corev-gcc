@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+//go:build !aix && !darwin && !dragonfly && !freebsd && !hurd && !linux && !netbsd && !openbsd && !solaris
 // +build !aix,!darwin,!dragonfly,!freebsd,!hurd,!linux,!netbsd,!openbsd,!solaris
 
 package os
@@ -23,7 +24,7 @@ func removeAll(path string) error {
 	// so we don't permit it to remain consistent with the
 	// "at" implementation of RemoveAll.
 	if endsWithDot(path) {
-		return &PathError{"RemoveAll", path, syscall.EINVAL}
+		return &PathError{Op: "RemoveAll", Path: path, Err: syscall.EINVAL}
 	}
 
 	// Simple case: if Remove works, we're done.

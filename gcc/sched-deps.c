@@ -1,6 +1,6 @@
 /* Instruction scheduling pass.  This file computes dependencies between
    instructions.
-   Copyright (C) 1992-2020 Free Software Foundation, Inc.
+   Copyright (C) 1992-2021 Free Software Foundation, Inc.
    Contributed by Michael Tiemann (tiemann@cygnus.com) Enhanced by,
    and currently maintained by, Jim Wilson (wilson@cygnus.com)
 
@@ -2579,21 +2579,6 @@ sched_analyze_2 (class deps_desc *deps, rtx x, rtx_insn *insn)
 
       return;
 
-    case CC0:
-      if (!HAVE_cc0)
-	gcc_unreachable ();
-
-      /* User of CC0 depends on immediately preceding insn.  */
-      SCHED_GROUP_P (insn) = 1;
-       /* Don't move CC0 setter to another block (it can set up the
-        same flag for previous CC0 users which is safe).  */
-      CANT_MOVE (prev_nonnote_insn (insn)) = 1;
-
-      if (cslr_p && sched_deps_info->finish_rhs)
-	sched_deps_info->finish_rhs ();
-
-      return;
-
     case REG:
       {
 	int regno = REGNO (x);
@@ -4072,7 +4057,7 @@ init_deps_data_vector (void)
 {
   int reserve = (sched_max_luid + 1 - h_d_i_d.length ());
   if (reserve > 0 && ! h_d_i_d.space (reserve))
-    h_d_i_d.safe_grow_cleared (3 * sched_max_luid / 2);
+    h_d_i_d.safe_grow_cleared (3 * sched_max_luid / 2, true);
 }
 
 /* If it is profitable to use them, initialize or extend (depending on

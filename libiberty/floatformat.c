@@ -1,5 +1,5 @@
 /* IEEE floating point support routines, for GDB, the GNU Debugger.
-   Copyright (C) 1991-2020 Free Software Foundation, Inc.
+   Copyright (C) 1991-2021 Free Software Foundation, Inc.
 
 This file is part of GDB.
 
@@ -389,7 +389,24 @@ const struct floatformat floatformat_ibm_long_double_little =
   floatformat_ibm_long_double_is_valid,
   &floatformat_ieee_double_little
 };
-
+
+const struct floatformat floatformat_bfloat16_big =
+{
+  floatformat_big, 16, 0, 1, 8, 127, 255, 9, 7,
+  floatformat_intbit_no,
+  "floatformat_bfloat16_big",
+  floatformat_always_valid,
+  NULL
+};
+
+const struct floatformat floatformat_bfloat16_little =
+{
+  floatformat_little, 16, 0, 1, 8, 127, 255, 9, 7,
+  floatformat_intbit_no,
+  "floatformat_bfloat16_little",
+  floatformat_always_valid,
+  NULL
+};
 
 #ifndef min
 #define min(a, b) ((a) < (b) ? (a) : (b))

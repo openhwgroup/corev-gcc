@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2020, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2021, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -260,11 +260,14 @@ begin
                Replace (M, Translate (A, Xlate_U_Und));
                Translate (Name0, Lower_Case_Map);
 
-            elsif not Match (Name0, "Op_", "") then
-               Translate (Name0, Lower_Case_Map);
+            elsif Match (Name0, "UP_", "") then
+               Translate (Name0, Upper_Case_Map);
+
+            elsif Match (Name0, "Op_", "") then
+               Name0 := 'O' & Translate (Name0, Lower_Case_Map);
 
             else
-               Name0 := 'O' & Translate (Name0, Lower_Case_Map);
+               Translate (Name0, Lower_Case_Map);
             end if;
 
             if not Match (Name0, Chk_Low) then

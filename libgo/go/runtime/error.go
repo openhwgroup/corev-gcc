@@ -118,6 +118,26 @@ func NewErrorCString(s uintptr, ret *interface{}) {
 	*ret = errorCString{s}
 }
 
+type errorAddressString struct {
+	msg  string  // error message
+	addr uintptr // memory address where the error occurred
+}
+
+func (e errorAddressString) RuntimeError() {}
+
+func (e errorAddressString) Error() string {
+	return "runtime error: " + e.msg
+}
+
+// Addr returns the memory address where a fault occurred.
+// The address provided is best-effort.
+// The veracity of the result may depend on the platform.
+// Errors providing this method will only be returned as
+// a result of using runtime/debug.SetPanicOnFault.
+func (e errorAddressString) Addr() uintptr {
+	return e.addr
+}
+
 // plainError represents a runtime error described a string without
 // the prefix "runtime error: " after invoking errorString.Error().
 // See Issue #14965.
@@ -155,6 +175,7 @@ const (
 	boundsSlice3B    // s[?:x:y], 0 <= x <= y failed (but boundsSlice3A didn't happen)
 	boundsSlice3C    // s[x:y:?], 0 <= x <= y failed (but boundsSlice3A/B didn't happen)
 
+	boundsConvert // (*[x]T)(s), 0 <= x <= len(s) failed
 	// Note: in the above, len(s) and cap(s) are stored in y
 )
 
@@ -170,6 +191,7 @@ var boundsErrorFmts = [...]string{
 	boundsSlice3Acap: "slice bounds out of range [::%x] with capacity %y",
 	boundsSlice3B:    "slice bounds out of range [:%x:%y]",
 	boundsSlice3C:    "slice bounds out of range [%x:%y:]",
+	boundsConvert:    "cannot convert slice with length %y to pointer to array with length %x",
 }
 
 // boundsNegErrorFmts are overriding formats if x is negative. In this case there's no need to report y.

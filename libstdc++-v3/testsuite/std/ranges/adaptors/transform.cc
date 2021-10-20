@@ -1,4 +1,4 @@
-// Copyright (C) 2020 Free Software Foundation, Inc.
+// Copyright (C) 2020-2021 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -122,6 +122,59 @@ test05()
   b = ranges::end(v);
 }
 
+struct Y
+{
+  using Iter = __gnu_test::forward_iterator_wrapper<Y>;
+
+  friend auto operator-(Iter l, Iter r) { return l.ptr - r.ptr; }
+};
+
+void
+test06()
+{
+  using ranges::next;
+  using ranges::begin;
+
+  // LWG 3483
+  Y y[3];
+  __gnu_test::test_forward_range<Y> r(y);
+  auto v = views::transform(r, std::identity{});
+  auto b = begin(v);
+  static_assert( !ranges::random_access_range<decltype(r)> );
+  static_assert( std::sized_sentinel_for<decltype(b), decltype(b)> );
+  VERIFY( (next(b, 1) - b) == 1 );
+  const auto v_const = v;
+  auto b_const = begin(v_const);
+  VERIFY( (next(b_const, 2) - b_const) == 2 );
+}
+
+void
+test07()
+{
+  int x[] = {1,2,3,4,5};
+  auto v1 = views::transform([] (auto& x) { return &x; });
+  auto v2 = views::transform([] (auto x) { return *x; });
+  auto v = x | (v1 | v2);
+  VERIFY( ranges::equal(v, x) );
+}
+
+template<auto transform = views::transform>
+void
+test08()
+{
+  // Verify SFINAE behavior.
+  extern int x[5];
+  auto f = [] (int* e) { return e; };
+  static_assert(!requires { transform(); });
+  static_assert(!requires { transform(x, f, f); });
+  static_assert(!requires { transform(x, f); });
+  static_assert(!requires { transform(f)(x); });
+  static_assert(!requires { x | (transform(f) | views::all); });
+  static_assert(!requires { (transform(f) | views::all)(x); });
+  static_assert(!requires { transform | views::all; });
+  static_assert(!requires { views::all | transform; });
+}
+
 int
 main()
 {
@@ -130,4 +183,7 @@ main()
   test03();
   test04();
   test05();
+  test06();
+  test07();
+  test08();
 }

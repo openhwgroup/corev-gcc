@@ -1,6 +1,6 @@
 // <experimental/any> -*- C++ -*-
 
-// Copyright (C) 2014-2020 Free Software Foundation, Inc.
+// Copyright (C) 2014-2021 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -36,8 +36,8 @@
 
 #include <typeinfo>
 #include <new>
-#include <utility>
 #include <type_traits>
+#include <bits/move.h>
 #include <experimental/bits/lfts_config.h>
 
 namespace std _GLIBCXX_VISIBILITY(default)
@@ -115,9 +115,9 @@ inline namespace fundamentals_v1
       struct _Manager_external; // creates contained object on the heap
 
     template<typename _Tp>
-      using _Manager = conditional_t<_Internal<_Tp>::value,
-				     _Manager_internal<_Tp>,
-				     _Manager_external<_Tp>>;
+      using _Manager = __conditional_t<_Internal<_Tp>::value,
+				       _Manager_internal<_Tp>,
+				       _Manager_external<_Tp>>;
 
     template<typename _Tp, typename _Decayed = decay_t<_Tp>>
       using _Decay = enable_if_t<!is_same<_Decayed, any>::value, _Decayed>;
@@ -412,7 +412,7 @@ inline namespace fundamentals_v1
 	return std::move(*__p);
       __throw_bad_any_cast();
     }
-  // @}
+  /// @}
 
   /// @cond undocumented
   template<typename _Tp>
@@ -430,8 +430,8 @@ inline namespace fundamentals_v1
       // If the type _Tp could never be stored in an any we don't want to
       // instantiate _Manager<_Tp>, so use _Manager<any::_Op> instead, which
       // is explicitly specialized and has a no-op _S_manage function.
-      using _Vp = conditional_t<__and_<__does_not_decay, __is_copyable>::value,
-				_Up, any::_Op>;
+      using _Vp = __conditional_t<__and_<__does_not_decay, __is_copyable>{},
+				  _Up, any::_Op>;
       // First try comparing function addresses, which works without RTTI
       if (__any->_M_manager == &any::_Manager<_Vp>::_S_manage
 #if __cpp_rtti
@@ -479,7 +479,7 @@ inline namespace fundamentals_v1
 	return static_cast<_ValueType*>(__any_caster<_ValueType>(__any));
       return nullptr;
     }
-  // @}
+  /// @}
 
   template<typename _Tp>
     void
@@ -555,7 +555,7 @@ inline namespace fundamentals_v1
       _S_manage(_Op, const any*, _Arg*) { }
     };
 
-  // @} group any
+  /// @} group any
 } // namespace fundamentals_v1
 } // namespace experimental
 

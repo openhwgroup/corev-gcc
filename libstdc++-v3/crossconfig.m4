@@ -204,6 +204,7 @@ case "${host}" in
     GLIBCXX_CHECK_STDLIB_SUPPORT
     AC_CHECK_FUNCS(aligned_alloc posix_memalign memalign _aligned_malloc)
     AC_CHECK_FUNCS(_wfopen)
+    GCC_CHECK_TLS
     ;;
   *-netbsd* | *-openbsd*)
     SECTION_FLAGS='-ffunction-sections -fdata-sections'
@@ -276,7 +277,7 @@ case "${host}" in
     GLIBCXX_CHECK_MATH_SUPPORT
     GLIBCXX_CHECK_STDLIB_SUPPORT
     ;;
-  *-vxworks)
+  *-vxworks*)
     AC_DEFINE(HAVE_ACOSF)
     AC_DEFINE(HAVE_ASINF)
     AC_DEFINE(HAVE_ATAN2F)

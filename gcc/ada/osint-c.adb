@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 2001-2020, Free Software Foundation, Inc.         --
+--          Copyright (C) 2001-2021, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -475,14 +475,14 @@ package body Osint.C is
 
    begin
       --  Make sure that the object file has the expected extension
+      --  Allow for either .o or .c (for C code generation)
 
       if NL <= EL
          or else
-          (Name (NL - EL + Name'First .. Name'Last) /= Ext
+          (not Generate_Asm
+             and then Name (NL - EL + Name'First .. Name'Last) /= Ext
              and then Name (NL - 2 + Name'First .. Name'Last) /= ".o"
-             and then
-               (not Generate_C_Code
-                  or else Name (NL - 2 + Name'First .. Name'Last) /= ".c"))
+             and then Name (NL - 2 + Name'First .. Name'Last) /= ".c")
       then
          Fail ("incorrect object file extension");
       end if;
@@ -519,10 +519,6 @@ package body Osint.C is
 
 begin
    Adjust_OS_Resource_Limits;
-
-   Opt.Create_Repinfo_File_Access := Create_Repinfo_File'Access;
-   Opt.Write_Repinfo_Line_Access  := Write_Repinfo_Line'Access;
-   Opt.Close_Repinfo_File_Access  := Close_Repinfo_File'Access;
 
    Opt.Create_List_File_Access := Create_List_File'Access;
    Opt.Write_List_Info_Access  := Write_List_Info'Access;

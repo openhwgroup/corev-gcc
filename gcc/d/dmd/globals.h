@@ -1,6 +1,6 @@
 
 /* Compiler implementation of the D programming language
- * Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved
+ * Copyright (C) 1999-2021 by The D Language Foundation, All Rights Reserved
  * written by Walter Bright
  * http://www.digitalmars.com
  * Distributed under the Boost Software License, Version 1.0.
@@ -126,8 +126,6 @@ struct Param
     bool betterC;       // be a "better C" compiler; no dependency on D runtime
     bool addMain;       // add a default main() function
     bool allInst;       // generate code for all template instantiations
-    bool check10378;    // check for issues transitioning to 10738
-    bool bug10378;      // use pre-bugzilla 10378 search strategy
     bool vsafe;         // use enhanced @safe checking
     unsigned cplusplus;     // version of C++ name mangling to support
     bool showGaggedErrors;  // print gagged errors anyway
@@ -244,6 +242,8 @@ struct Global
     Array<class Identifier*>* versionids; // command line versions and predefined versions
     Array<class Identifier*>* debugids;   // command line debug versions and predefined versions
 
+    enum { recursionLimit = 500 }; // number of recursive template expansions before abort
+
     /* Start gagging. Return the current number of gagged errors
      */
     unsigned startGagging();
@@ -284,7 +284,7 @@ typedef uint64_t                d_uns64;
 // file location
 struct Loc
 {
-    const char *filename;
+    const char *filename; // either absolute or relative to cwd
     unsigned linnum;
     unsigned charnum;
 
@@ -308,7 +308,6 @@ enum LINK
     LINKc,
     LINKcpp,
     LINKwindows,
-    LINKpascal,
     LINKobjc,
     LINKsystem
 };

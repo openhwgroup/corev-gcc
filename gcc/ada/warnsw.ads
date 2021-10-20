@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---          Copyright (C) 1999-2020, Free Software Foundation, Inc.         --
+--          Copyright (C) 1999-2021, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -57,6 +57,13 @@ package Warnsw is
    --  clause specifies a size that overrides a size for the type which was
    --  set with an explicit size clause. Off by default, modified by use of
    --  -gnatw.s/.S (but not -gnatwa).
+
+   Warn_On_Pedantic_Checks : Boolean := False;
+   --  Warn for violation of miscellaneous pedantic rules (such as when the
+   --  subtype of a formal parameter given in a subprogram body's specification
+   --  comes from a different subtype declaration that the subtype of the
+   --  formal in the subprogram declaration). Off by default, and set by
+   --  -gnatw_p (but not -gnatwa).
 
    Warn_On_Questionable_Layout : Boolean := False;
    --  Warn when default layout of a record type is questionable for run-time
@@ -128,6 +135,7 @@ package Warnsw is
       Warn_On_Overlap                      : Boolean;
       Warn_On_Overridden_Size              : Boolean;
       Warn_On_Parameter_Order              : Boolean;
+      Warn_On_Pedantic_Checks              : Boolean;
       Warn_On_Questionable_Layout          : Boolean;
       Warn_On_Questionable_Missing_Parens  : Boolean;
       Warn_On_Record_Holes                 : Boolean;

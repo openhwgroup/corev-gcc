@@ -1,5 +1,5 @@
 /* Implementation of selftests.
-   Copyright (C) 2015-2020 Free Software Foundation, Inc.
+   Copyright (C) 2015-2021 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -79,6 +79,7 @@ selftest::run_tests ()
   optinfo_emit_json_cc_tests ();
   opt_problem_cc_tests ();
   ordered_hash_map_tests_cc_tests ();
+  splay_tree_cc_tests ();
 
   /* Mid-level data structures.  */
   input_c_tests ();
@@ -90,6 +91,7 @@ selftest::run_tests ()
   read_rtl_function_c_tests ();
   digraph_cc_tests ();
   tristate_cc_tests ();
+  ipa_modref_tree_c_tests ();
 
   /* Higher-level tests, or for components that other selftests don't
      rely on.  */
@@ -126,7 +128,7 @@ selftest::run_tests ()
      issues.  For example, if any GC-managed items have buggy (or missing)
      finalizers, this last collection will ensure that things that were
      failed to be finalized can be detected by valgrind.  */
-  forcibly_ggc_collect ();
+  ggc_collect (GGC_COLLECT_FORCE);
 
   /* Finished running tests; the test_runner dtor will print a summary.  */
 }

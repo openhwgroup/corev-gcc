@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+//go:build !gccgo
 // +build !gccgo
 
 package main
@@ -62,7 +63,6 @@ import "C"
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"runtime"
 	"runtime/pprof"
@@ -77,7 +77,7 @@ func init() {
 func CgoPprof() {
 	runtime.SetCgoTraceback(0, unsafe.Pointer(C.pprofCgoTraceback), nil, nil)
 
-	f, err := ioutil.TempFile("", "prof")
+	f, err := os.CreateTemp("", "prof")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)

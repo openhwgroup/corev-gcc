@@ -10,15 +10,16 @@ import (
 	"bytes"
 	"fmt"
 	"go/build"
+	"internal/buildcfg"
 	"internal/cfg"
-	"io/ioutil"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
 
-	"cmd/internal/objabi"
+	"cmd/go/internal/fsys"
 )
 
 // These are general "build flags" used by build and other commands.
@@ -26,17 +27,18 @@ var (
 	BuildA                 bool   // -a flag
 	BuildBuildmode         string // -buildmode flag
 	BuildContext           = defaultContext()
-	BuildMod               string             // -mod flag
-	BuildModReason         string             // reason -mod flag is set, if set by default
-	BuildI                 bool               // -i flag
-	BuildLinkshared        bool               // -linkshared flag
-	BuildMSan              bool               // -msan flag
-	BuildN                 bool               // -n flag
-	BuildO                 string             // -o flag
-	BuildP                 = runtime.NumCPU() // -p flag
-	BuildPkgdir            string             // -pkgdir flag
-	BuildRace              bool               // -race flag
-	BuildToolexec          []string           // -toolexec flag
+	BuildMod               string                  // -mod flag
+	BuildModExplicit       bool                    // whether -mod was set explicitly
+	BuildModReason         string                  // reason -mod was set, if set by default
+	BuildI                 bool                    // -i flag
+	BuildLinkshared        bool                    // -linkshared flag
+	BuildMSan              bool                    // -msan flag
+	BuildN                 bool                    // -n flag
+	BuildO                 string                  // -o flag
+	BuildP                 = runtime.GOMAXPROCS(0) // -p flag
+	BuildPkgdir            string                  // -pkgdir flag
+	BuildRace              bool                    // -race flag
+	BuildToolexec          []string                // -toolexec flag
 	BuildToolchainName     string
 	BuildToolchainCompiler func() string
 	BuildToolchainLinker   func() string
@@ -51,6 +53,7 @@ var (
 	CmdName string // "build", "install", "list", "mod tidy", etc.
 
 	DebugActiongraph string // -debug-actiongraph flag (undocumented, unstable)
+	DebugTrace       string // -debug-trace flag
 )
 
 func defaultContext() build.Context {
@@ -73,6 +76,14 @@ func defaultContext() build.Context {
 	// from go environment configuration file, if known.
 	ctxt.GOOS = envOr("GOOS", ctxt.GOOS)
 	ctxt.GOARCH = envOr("GOARCH", ctxt.GOARCH)
+
+	// The experiments flags are based on GOARCH, so they may
+	// need to change.  TODO: This should be cleaned up.
+	buildcfg.UpdateExperiments(ctxt.GOOS, ctxt.GOARCH, envOr("GOEXPERIMENT", buildcfg.DefaultGOEXPERIMENT))
+	ctxt.ToolTags = nil
+	for _, exp := range buildcfg.EnabledExperiments() {
+		ctxt.ToolTags = append(ctxt.ToolTags, "goexperiment."+exp)
+	}
 
 	// The go/build rule for whether cgo is enabled is:
 	//	1. If $CGO_ENABLED is set, respect it.
@@ -98,6 +109,15 @@ func defaultContext() build.Context {
 		// So ctxt.CgoEnabled (== go/build.Default.CgoEnabled) is correct
 		// as is and can be left unmodified.
 		// Nothing to do here.
+	}
+
+	ctxt.OpenFile = func(path string) (io.ReadCloser, error) {
+		return fsys.Open(path)
+	}
+	ctxt.ReadDir = fsys.ReadDir
+	ctxt.IsDir = func(path string) bool {
+		isDir, err := fsys.IsDir(path)
+		return err == nil && isDir
 	}
 
 	return ctxt
@@ -171,7 +191,7 @@ func initEnvCache() {
 	if file == "" {
 		return
 	}
-	data, err := ioutil.ReadFile(file)
+	data, err := os.ReadFile(file)
 	if err != nil {
 		return
 	}
@@ -239,12 +259,12 @@ var (
 	GOMODCACHE   = envOr("GOMODCACHE", gopathDir("pkg/mod"))
 
 	// Used in envcmd.MkEnv and build ID computations.
-	GOARM    = envOr("GOARM", fmt.Sprint(objabi.GOARM))
-	GO386    = envOr("GO386", objabi.GO386)
-	GOMIPS   = envOr("GOMIPS", objabi.GOMIPS)
-	GOMIPS64 = envOr("GOMIPS64", objabi.GOMIPS64)
-	GOPPC64  = envOr("GOPPC64", fmt.Sprintf("%s%d", "power", objabi.GOPPC64))
-	GOWASM   = envOr("GOWASM", fmt.Sprint(objabi.GOWASM))
+	GOARM    = envOr("GOARM", fmt.Sprint(buildcfg.GOARM))
+	GO386    = envOr("GO386", buildcfg.GO386)
+	GOMIPS   = envOr("GOMIPS", buildcfg.GOMIPS)
+	GOMIPS64 = envOr("GOMIPS64", buildcfg.GOMIPS64)
+	GOPPC64  = envOr("GOPPC64", fmt.Sprintf("%s%d", "power", buildcfg.GOPPC64))
+	GOWASM   = envOr("GOWASM", fmt.Sprint(buildcfg.GOWASM))
 
 	GOPROXY    = envOr("GOPROXY", "https://proxy.golang.org,direct")
 	GOSUMDB    = envOr("GOSUMDB", "sum.golang.org")
@@ -252,6 +272,7 @@ var (
 	GONOPROXY  = envOr("GONOPROXY", GOPRIVATE)
 	GONOSUMDB  = envOr("GONOSUMDB", GOPRIVATE)
 	GOINSECURE = Getenv("GOINSECURE")
+	GOVCS      = Getenv("GOVCS")
 )
 
 var SumdbDir = gopathDir("pkg/sumdb")

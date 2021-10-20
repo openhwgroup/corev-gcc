@@ -1,5 +1,5 @@
 /* expr.cc -- Lower D frontend expressions to GCC trees.
-   Copyright (C) 2015-2020 Free Software Foundation, Inc.
+   Copyright (C) 2015-2021 Free Software Foundation, Inc.
 
 GCC is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -101,8 +101,6 @@ binary_op (tree_code code, tree type, tree arg0, tree arg1)
   tree t1 = TREE_TYPE (arg1);
   tree ret = NULL_TREE;
 
-  bool unsignedp = TYPE_UNSIGNED (t0) || TYPE_UNSIGNED (t1);
-
   /* Deal with float mod expressions immediately.  */
   if (code == FLOAT_MOD_EXPR)
     return build_float_modulus (type, arg0, arg1);
@@ -130,12 +128,6 @@ binary_op (tree_code code, tree type, tree arg0, tree arg1)
       else
 	ret = fold_build2 (POINTER_DIFF_EXPR, ptrtype, arg0, arg1);
     }
-  else if (INTEGRAL_TYPE_P (type) && (TYPE_UNSIGNED (type) != unsignedp))
-    {
-      tree inttype = (unsignedp)
-	? d_unsigned_type (type) : d_signed_type (type);
-      ret = fold_build2 (code, inttype, arg0, arg1);
-    }
   else
     {
       /* If the operation needs excess precision.  */
@@ -157,7 +149,7 @@ binary_op (tree_code code, tree type, tree arg0, tree arg1)
 	  eptype = type;
 	}
 
-      ret = fold_build2 (code, eptype, arg0, arg1);
+      ret = build2 (code, eptype, arg0, arg1);
     }
 
   return d_convert (type, ret);
@@ -838,62 +830,81 @@ public:
     Type *tb2 = e->e2->type->toBasetype ();
     Type *etype = tb1->nextOf ()->toBasetype ();
 
+    /* Save the address of `e1', so it can be evaluated first.
+       As all D run-time library functions for concat assignments update `e1'
+       in-place and then return its value, the saved address can also be used as
+       the result of this expression as well.  */
+    tree lhs = build_expr (e->e1);
+    tree lexpr = stabilize_expr (&lhs);
+    tree ptr = d_save_expr (build_address (lhs));
+    tree result = NULL_TREE;
+
     if (tb1->ty == Tarray && tb2->ty == Tdchar
 	&& (etype->ty == Tchar || etype->ty == Twchar))
       {
-	/* Append a dchar to a char[] or wchar[]  */
+	/* Append a dchar to a char[] or wchar[]:
+	   The assignment is handled by the D run-time library, so only
+	   need to call `_d_arrayappend[cw]d(&e1, e2)'  */
 	libcall_fn libcall = (etype->ty == Tchar)
 	  ? LIBCALL_ARRAYAPPENDCD : LIBCALL_ARRAYAPPENDWD;
 
-	this->result_ = build_libcall (libcall, e->type, 2,
-				       build_address (build_expr (e->e1)),
-				       build_expr (e->e2));
+	result = build_libcall (libcall, e->type, 2,
+				ptr, build_expr (e->e2));
       }
     else
       {
 	gcc_assert (tb1->ty == Tarray || tb2->ty == Tsarray);
 
-	tree tinfo = build_typeinfo (e->loc, e->type);
-	tree ptr = build_address (build_expr (e->e1));
-
 	if ((tb2->ty == Tarray || tb2->ty == Tsarray)
 	    && same_type_p (etype, tb2->nextOf ()->toBasetype ()))
 	  {
-	    /* Append an array.  */
-	    this->result_ = build_libcall (LIBCALL_ARRAYAPPENDT, e->type, 3,
-					   tinfo, ptr, d_array_convert (e->e2));
-
+	    /* Append an array to another array:
+	       The assignment is handled by the D run-time library, so only
+	       need to call `_d_arrayappendT(ti, &e1, e2)'  */
+	    result = build_libcall (LIBCALL_ARRAYAPPENDT, e->type, 3,
+				    build_typeinfo (e->loc, e->type),
+				    ptr, d_array_convert (e->e2));
 	  }
 	else if (same_type_p (etype, tb2))
 	  {
-	    /* Append an element.  */
-	    tree result = build_libcall (LIBCALL_ARRAYAPPENDCTX, e->type, 3,
-					 tinfo, ptr, size_one_node);
-	    result = d_save_expr (result);
+	    /* Append an element to an array:
+	       The assignment is generated inline, so need to handle temporaries
+	       here, and ensure that they are evaluated in the correct order.
+
+	       The generated code should end up being equivalent to:
+		    _d_arrayappendcTX(ti, &e1, 1)[e1.length - 1] = e2
+	     */
+	    tree callexp = build_libcall (LIBCALL_ARRAYAPPENDCTX, e->type, 3,
+					  build_typeinfo (e->loc, e->type),
+					  ptr, size_one_node);
+	    callexp = d_save_expr (callexp);
 
 	    /* Assign e2 to last element.  */
-	    tree offexp = d_array_length (result);
+	    tree offexp = d_array_length (callexp);
 	    offexp = build2 (MINUS_EXPR, TREE_TYPE (offexp),
 			     offexp, size_one_node);
-	    offexp = d_save_expr (offexp);
 
-	    tree ptrexp = d_array_ptr (result);
+	    tree ptrexp = d_array_ptr (callexp);
 	    ptrexp = void_okay_p (ptrexp);
 	    ptrexp = build_array_index (ptrexp, offexp);
 
 	    /* Evaluate expression before appending.  */
-	    tree t2 = build_expr (e->e2);
-	    tree expr = stabilize_expr (&t2);
+	    tree rhs = build_expr (e->e2);
+	    tree rexpr = stabilize_expr (&rhs);
 
-	    t2 = d_save_expr (t2);
-	    result = modify_expr (build_deref (ptrexp), t2);
-	    result = compound_expr (t2, result);
+	    if (TREE_CODE (rhs) == CALL_EXPR)
+	      rhs = force_target_expr (rhs);
 
-	    this->result_ = compound_expr (expr, result);
+	    result = modify_expr (build_deref (ptrexp), rhs);
+	    result = compound_expr (rexpr, result);
 	  }
 	else
 	  gcc_unreachable ();
       }
+
+    /* Construct in order: ptr = &e1, _d_arrayappend(ptr, e2), *ptr;  */
+    result = compound_expr (compound_expr (lexpr, ptr), result);
+    this->result_ = compound_expr (result, build_deref (ptr));
   }
 
   /* Build an assignment expression.  The right operand is implicitly
@@ -1144,9 +1155,9 @@ public:
 	bool destructor = needs_dtor (etype);
 	bool lvalue = lvalue_p (e->e2);
 
-	/* Even if the elements in rhs are all rvalues and don't have
-	   to call postblits, this assignment should call dtors on old
-	   assigned elements.  */
+	/* Optimize static array assignment with array literal.  Even if the
+	   elements in rhs are all rvalues and don't have to call postblits,
+	   this assignment should call dtors on old assigned elements.  */
 	if ((!postblit && !destructor)
 	    || (e->op == TOKconstruct && e->e2->op == TOKarrayliteral)
 	    || (e->op == TOKconstruct && !lvalue && postblit)
@@ -1293,8 +1304,8 @@ public:
 
 	/* If it's a static array and the index is constant, the front end has
 	   already checked the bounds.  */
-	if (tb1->ty != Tpointer && !e->indexIsInBounds)
-	  index = build_bounds_condition (e->e2->loc, index, length, false);
+	if (tb1->ty != Tpointer)
+	  index = build_bounds_index_condition (e, index, length);
 
 	/* Index the .ptr.  */
 	ptr = void_okay_p (ptr);
@@ -1401,8 +1412,6 @@ public:
 	ptr = build_array_index (void_okay_p (ptr), lwr_tree);
 	ptr = build_nop (ptrtype, ptr);
       }
-    else
-      lwr_tree = NULL_TREE;
 
     /* Nothing more to do for static arrays, their bounds checking has been
        done at compile-time.  */
@@ -1415,46 +1424,8 @@ public:
       gcc_assert (tb->ty == Tarray);
 
     /* Generate bounds checking code.  */
-    tree newlength;
-
-    if (!e->upperIsInBounds)
-      {
-	if (length)
-	  {
-	    newlength = build_bounds_condition (e->upr->loc, upr_tree,
-						length, true);
-	  }
-	else
-	  {
-	    /* Still need to check bounds lwr <= upr for pointers.  */
-	    gcc_assert (tb1->ty == Tpointer);
-	    newlength = upr_tree;
-	  }
-      }
-    else
-      newlength = upr_tree;
-
-    if (lwr_tree)
-      {
-	/* Enforces lwr <= upr.  No need to check lwr <= length as
-	   we've already ensured that upr <= length.  */
-	if (!e->lowerIsLessThanUpper)
-	  {
-	    tree cond = build_bounds_condition (e->lwr->loc, lwr_tree,
-						upr_tree, true);
-
-	    /* When bounds checking is off, the index value is
-	       returned directly.  */
-	    if (cond != lwr_tree)
-	      newlength = compound_expr (cond, newlength);
-	  }
-
-	/* Need to ensure lwr always gets evaluated first, as it may be a
-	   function call.  Generates (lwr, upr) - lwr.  */
-	newlength = fold_build2 (MINUS_EXPR, TREE_TYPE (newlength),
-				 compound_expr (lwr_tree, newlength), lwr_tree);
-      }
-
+    tree newlength = build_bounds_slice_condition (e, lwr_tree, upr_tree,
+						   length);
     tree result = d_array_value (build_ctype (e->type), newlength, ptr);
     this->result_ = compound_expr (array, result);
   }
@@ -1472,7 +1443,7 @@ public:
     if (tbtype->ty == Tvoid)
       this->result_ = build_nop (build_ctype (tbtype), result);
     else
-      this->result_ = convert_expr (result, ebtype, tbtype);
+      this->result_ = convert_for_rvalue (result, ebtype, tbtype);
   }
 
   /* Build a delete expression.  */
@@ -1732,6 +1703,7 @@ public:
     tree callee = NULL_TREE;
     tree object = NULL_TREE;
     tree cleanup = NULL_TREE;
+    tree returnvalue = NULL_TREE;
     TypeFunction *tf = NULL;
 
     /* Calls to delegates can sometimes look like this.  */
@@ -1782,6 +1754,9 @@ public:
 		    thisexp = TREE_OPERAND (thisexp, 1);
 		  }
 
+		if (TREE_CODE (thisexp) == CONSTRUCTOR)
+		  thisexp = force_target_expr (thisexp);
+
 		/* Want reference to `this' object.  */
 		if (!POINTER_TYPE_P (TREE_TYPE (thisexp)))
 		  thisexp = build_address (thisexp);
@@ -1796,6 +1771,15 @@ public:
 		  }
 		else
 		  fndecl = build_address (fndecl);
+
+		/* C++ constructors return void, even though front-end semantic
+		   treats them as implicitly returning `this'.  Set returnvalue
+		   to override the result of this expression.  */
+		if (fd->isCtorDeclaration () && fd->linkage == LINKcpp)
+		  {
+		    thisexp = d_save_expr (thisexp);
+		    returnvalue = thisexp;
+		  }
 
 		callee = build_method_call (fndecl, thisexp, fd->type);
 	      }
@@ -1863,6 +1847,9 @@ public:
        build the call expression.  */
     tree exp = d_build_call (tf, callee, object, e->arguments);
 
+    if (returnvalue != NULL_TREE)
+      exp = compound_expr (exp, returnvalue);
+
     if (tf->isref)
       exp = build_deref (exp);
 
@@ -1872,15 +1859,10 @@ public:
       exp = d_convert (build_ctype (e->type), exp);
 
     /* If this call was found to be a constructor for a temporary with a
-       cleanup, then move the call inside the TARGET_EXPR.  The original
-       initializer is turned into an assignment, to keep its side effect.  */
+       cleanup, then move the call inside the TARGET_EXPR.  */
     if (cleanup != NULL_TREE)
       {
 	tree init = TARGET_EXPR_INITIAL (cleanup);
-	tree slot = TARGET_EXPR_SLOT (cleanup);
-	d_mark_addressable (slot);
-	init = build_assign (INIT_EXPR, slot, init);
-
 	TARGET_EXPR_INITIAL (cleanup) = compound_expr (init, exp);
 	exp = cleanup;
       }
@@ -2001,8 +1983,7 @@ public:
     tree assert_pass = void_node;
     tree assert_fail;
 
-    if (global.params.useAssert == CHECKENABLEon
-	&& global.params.checkAction == CHECKACTION_D)
+    if (global.params.useAssert == CHECKENABLEon && !checkaction_trap_p ())
       {
 	/* Generate: ((bool) e1  ? (void)0 : _d_assert (...))
 		 or: (e1 != null ? e1._invariant() : _d_assert (...))  */
@@ -2015,10 +1996,10 @@ public:
 	    libcall = unittest_p ? LIBCALL_UNITTEST_MSG : LIBCALL_ASSERT_MSG;
 	  }
 	else
-	  libcall = unittest_p ? LIBCALL_UNITTEST : LIBCALL_ASSERT;
+	  libcall = unittest_p ? LIBCALL_UNITTESTP : LIBCALL_ASSERTP;
 
 	/* Build a call to _d_assert().  */
-	assert_fail = d_assert_call (e->loc, libcall, tmsg);
+	assert_fail = build_assert_call (e->loc, libcall, tmsg);
 
 	if (global.params.useInvariants == CHECKENABLEon)
 	  {
@@ -2046,8 +2027,7 @@ public:
 	      }
 	  }
       }
-    else if (global.params.useAssert == CHECKENABLEon
-	     && global.params.checkAction == CHECKACTION_C)
+    else if (global.params.useAssert == CHECKENABLEon && checkaction_trap_p ())
       {
 	/* Generate: __builtin_trap()  */
 	tree fn = builtin_decl_explicit (BUILT_IN_TRAP);
@@ -2055,15 +2035,9 @@ public:
       }
     else
       {
-	/* Assert contracts are turned off, if the contract condition has no
-	   side effects can still use it as a predicate for the optimizer.  */
-	if (TREE_SIDE_EFFECTS (arg))
-	  {
-	    this->result_ = void_node;
-	    return;
-	  }
-
-	assert_fail = build_predict_expr (PRED_NORETURN, NOT_TAKEN);
+	/* Assert contracts are turned off.  */
+	this->result_ = void_node;
+	return;
       }
 
     /* Build condition that we are asserting in this contract.  */
@@ -2886,7 +2860,16 @@ public:
        processing has complete.  Build the static initializer now.  */
     if (e->useStaticInit && !this->constp_)
       {
-	this->result_ = aggregate_initializer_decl (e->sd);
+	tree init = aggregate_initializer_decl (e->sd);
+
+	/* If initializing a symbol, don't forget to set it.  */
+	if (e->sym != NULL)
+	  {
+	    tree var = build_deref (e->sym);
+	    init = compound_expr (modify_expr (var, init), var);
+	  }
+
+	this->result_ = init;
 	return;
       }
 
@@ -3143,11 +3126,14 @@ build_return_dtor (Expression *e, Type *type, TypeFunction *tf)
   tree result = build_expr (e);
 
   /* Convert for initializing the DECL_RESULT.  */
-  result = convert_expr (result, e->type, type);
-
-  /* If we are returning a reference, take the address.  */
   if (tf->isref)
-    result = build_address (result);
+    {
+      /* If we are returning a reference, take the address.  */
+      result = convert_expr (result, e->type, type);
+      result = build_address (result);
+    }
+  else
+    result = convert_for_rvalue (result, e->type, type);
 
   /* The decl to store the return expression.  */
   tree decl = DECL_RESULT (cfun->decl);

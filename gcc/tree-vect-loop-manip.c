@@ -1,5 +1,5 @@
 /* Vectorizer Specific Loop Manipulations
-   Copyright (C) 2003-2020 Free Software Foundation, Inc.
+   Copyright (C) 2003-2021 Free Software Foundation, Inc.
    Contributed by Dorit Naishlos <dorit@il.ibm.com>
    and Ira Rosen <irar@il.ibm.com>
 
@@ -609,11 +609,8 @@ vect_set_loop_controls_directly (class loop *loop, loop_vec_info loop_vinfo,
 	    }
 
 	  if (use_masks_p)
-	    {
-	      init_ctrl = make_temp_ssa_name (ctrl_type, NULL, "max_mask");
-	      gimple *tmp_stmt = vect_gen_while (init_ctrl, start, end);
-	      gimple_seq_add_stmt (preheader_seq, tmp_stmt);
-	    }
+	    init_ctrl = vect_gen_while (preheader_seq, ctrl_type,
+					start, end, "max_mask");
 	  else
 	    {
 	      init_ctrl = make_temp_ssa_name (compare_type, NULL, "max_len");
@@ -652,9 +649,10 @@ vect_set_loop_controls_directly (class loop *loop, loop_vec_info loop_vinfo,
       /* Get the control value for the next iteration of the loop.  */
       if (use_masks_p)
 	{
-	  next_ctrl = make_temp_ssa_name (ctrl_type, NULL, "next_mask");
-	  gcall *call = vect_gen_while (next_ctrl, test_index, this_test_limit);
-	  gsi_insert_before (test_gsi, call, GSI_SAME_STMT);
+	  gimple_seq stmts = NULL;
+	  next_ctrl = vect_gen_while (&stmts, ctrl_type, test_index,
+				      this_test_limit, "next_mask");
+	  gsi_insert_seq_before (test_gsi, stmts, GSI_SAME_STMT);
 	}
       else
 	{
@@ -1083,6 +1081,33 @@ slpeel_tree_duplicate_loop_to_edge_cfg (class loop *loop,
 	    at_exit ? loop->latch : e->src, true);
   exit = single_exit (loop);
   basic_block new_preheader = new_bbs[0];
+
+  /* Before installing PHI arguments make sure that the edges
+     into them match that of the scalar loop we analyzed.  This
+     makes sure the SLP tree matches up between the main vectorized
+     loop and the epilogue vectorized copies.  */
+  if (single_succ_edge (preheader)->dest_idx
+      != single_succ_edge (new_bbs[0])->dest_idx)
+    {
+      basic_block swap_bb = new_bbs[1];
+      gcc_assert (EDGE_COUNT (swap_bb->preds) == 2);
+      std::swap (EDGE_PRED (swap_bb, 0), EDGE_PRED (swap_bb, 1));
+      EDGE_PRED (swap_bb, 0)->dest_idx = 0;
+      EDGE_PRED (swap_bb, 1)->dest_idx = 1;
+    }
+  if (duplicate_outer_loop)
+    {
+      class loop *new_inner_loop = get_loop_copy (scalar_loop->inner);
+      if (loop_preheader_edge (scalar_loop)->dest_idx
+	  != loop_preheader_edge (new_inner_loop)->dest_idx)
+	{
+	  basic_block swap_bb = new_inner_loop->header;
+	  gcc_assert (EDGE_COUNT (swap_bb->preds) == 2);
+	  std::swap (EDGE_PRED (swap_bb, 0), EDGE_PRED (swap_bb, 1));
+	  EDGE_PRED (swap_bb, 0)->dest_idx = 0;
+	  EDGE_PRED (swap_bb, 1)->dest_idx = 1;
+	}
+    }
 
   add_phi_args_after_copy (new_bbs, scalar_loop->num_nodes + 1, NULL);
 
@@ -2007,13 +2032,29 @@ vect_gen_vector_loop_niters (loop_vec_info loop_vinfo, tree niters,
       niters_vector = force_gimple_operand (niters_vector, &stmts, true, var);
       gsi_insert_seq_on_edge_immediate (pe, stmts);
       /* Peeling algorithm guarantees that vector loop bound is at least ONE,
-	 we set range information to make niters analyzer's life easier.  */
+	 we set range information to make niters analyzer's life easier.
+	 Note the number of latch iteration value can be TYPE_MAX_VALUE so
+	 we have to represent the vector niter TYPE_MAX_VALUE + 1 >> log_vf.  */
       if (stmts != NULL && log_vf)
-	set_range_info (niters_vector, VR_RANGE,
-			wi::to_wide (build_int_cst (type, 1)),
-			wi::to_wide (fold_build2 (RSHIFT_EXPR, type,
-						  TYPE_MAX_VALUE (type),
-						  log_vf)));
+	{
+	  if (niters_no_overflow)
+	    set_range_info (niters_vector, VR_RANGE,
+			    wi::one (TYPE_PRECISION (type)),
+			    wi::rshift (wi::max_value (TYPE_PRECISION (type),
+						       TYPE_SIGN (type)),
+					exact_log2 (const_vf),
+					TYPE_SIGN (type)));
+	  /* For VF == 1 the vector IV might also overflow so we cannot
+	     assert a minimum value of 1.  */
+	  else if (const_vf > 1)
+	    set_range_info (niters_vector, VR_RANGE,
+			    wi::one (TYPE_PRECISION (type)),
+			    wi::rshift (wi::max_value (TYPE_PRECISION (type),
+						       TYPE_SIGN (type))
+					- (const_vf - 1),
+					exact_log2 (const_vf), TYPE_SIGN (type))
+			    + 1);
+	}
     }
   *niters_vector_ptr = niters_vector;
   *step_vector_ptr = step_vector;
@@ -2386,6 +2427,56 @@ slpeel_update_phi_nodes_for_lcssa (class loop *epilog)
     rename_use_op (PHI_ARG_DEF_PTR_FROM_EDGE (gsi.phi (), e));
 }
 
+/* EPILOGUE_VINFO is an epilogue loop that we now know would need to
+   iterate exactly CONST_NITERS times.  Make a final decision about
+   whether the epilogue loop should be used, returning true if so.  */
+
+static bool
+vect_update_epilogue_niters (loop_vec_info epilogue_vinfo,
+			     unsigned HOST_WIDE_INT const_niters)
+{
+  /* Avoid wrap-around when computing const_niters - 1.  Also reject
+     using an epilogue loop for a single scalar iteration, even if
+     we could in principle implement that using partial vectors.  */
+  unsigned int gap_niters = LOOP_VINFO_PEELING_FOR_GAPS (epilogue_vinfo);
+  if (const_niters <= gap_niters + 1)
+    return false;
+
+  /* Install the number of iterations.  */
+  tree niters_type = TREE_TYPE (LOOP_VINFO_NITERS (epilogue_vinfo));
+  tree niters_tree = build_int_cst (niters_type, const_niters);
+  tree nitersm1_tree = build_int_cst (niters_type, const_niters - 1);
+
+  LOOP_VINFO_NITERS (epilogue_vinfo) = niters_tree;
+  LOOP_VINFO_NITERSM1 (epilogue_vinfo) = nitersm1_tree;
+
+  /* Decide what to do if the number of epilogue iterations is not
+     a multiple of the epilogue loop's vectorization factor.  */
+  return vect_determine_partial_vectors_and_peeling (epilogue_vinfo, true);
+}
+
+/* LOOP_VINFO is an epilogue loop whose corresponding main loop can be skipped.
+   Return a value that equals:
+
+   - MAIN_LOOP_VALUE when LOOP_VINFO is entered from the main loop and
+   - SKIP_VALUE when the main loop is skipped.  */
+
+tree
+vect_get_main_loop_result (loop_vec_info loop_vinfo, tree main_loop_value,
+			   tree skip_value)
+{
+  gcc_assert (loop_vinfo->main_loop_edge);
+
+  tree phi_result = make_ssa_name (TREE_TYPE (main_loop_value));
+  basic_block bb = loop_vinfo->main_loop_edge->dest;
+  gphi *new_phi = create_phi_node (phi_result, bb);
+  add_phi_arg (new_phi, main_loop_value, loop_vinfo->main_loop_edge,
+	       UNKNOWN_LOCATION);
+  add_phi_arg (new_phi, skip_value,
+	       loop_vinfo->skip_main_loop_edge, UNKNOWN_LOCATION);
+  return phi_result;
+}
+
 /* Function vect_do_peeling.
 
    Input:
@@ -2493,6 +2584,7 @@ vect_do_peeling (loop_vec_info loop_vinfo, tree niters, tree nitersm1,
   int estimated_vf;
   int prolog_peeling = 0;
   bool vect_epilogues = loop_vinfo->epilogue_vinfos.length () > 0;
+  bool vect_epilogues_updated_niters = false;
   /* We currently do not support prolog peeling if the target alignment is not
      known at compile time.  'vect_gen_prolog_loop_niters' depends on the
      target alignment being constant.  */
@@ -2516,6 +2608,45 @@ vect_do_peeling (loop_vec_info loop_vinfo, tree niters, tree nitersm1,
   if (!prolog_peeling && !epilog_peeling)
     return NULL;
 
+  /* Before doing any peeling make sure to reset debug binds outside of
+     the loop refering to defs not in LC SSA.  */
+  class loop *loop = LOOP_VINFO_LOOP (loop_vinfo);
+  for (unsigned i = 0; i < loop->num_nodes; ++i)
+    {
+      basic_block bb = LOOP_VINFO_BBS (loop_vinfo)[i];
+      imm_use_iterator ui;
+      gimple *use_stmt;
+      for (gphi_iterator gsi = gsi_start_phis (bb); !gsi_end_p (gsi);
+	   gsi_next (&gsi))
+	{
+	  FOR_EACH_IMM_USE_STMT (use_stmt, ui, gimple_phi_result (gsi.phi ()))
+	    if (gimple_debug_bind_p (use_stmt)
+		&& loop != gimple_bb (use_stmt)->loop_father
+		&& !flow_loop_nested_p (loop,
+					gimple_bb (use_stmt)->loop_father))
+	      {
+		gimple_debug_bind_reset_value (use_stmt);
+		update_stmt (use_stmt);
+	      }
+	}
+      for (gimple_stmt_iterator gsi = gsi_start_bb (bb); !gsi_end_p (gsi);
+	   gsi_next (&gsi))
+	{
+	  ssa_op_iter op_iter;
+	  def_operand_p def_p;
+	  FOR_EACH_SSA_DEF_OPERAND (def_p, gsi_stmt (gsi), op_iter, SSA_OP_DEF)
+	    FOR_EACH_IMM_USE_STMT (use_stmt, ui, DEF_FROM_PTR (def_p))
+	      if (gimple_debug_bind_p (use_stmt)
+		  && loop != gimple_bb (use_stmt)->loop_father
+		  && !flow_loop_nested_p (loop,
+					  gimple_bb (use_stmt)->loop_father))
+		{
+		  gimple_debug_bind_reset_value (use_stmt);
+		  update_stmt (use_stmt);
+		}
+	}
+    }
+
   prob_vector = profile_probability::guessed_always ().apply_scale (9, 10);
   estimated_vf = vect_vf_for_cost (loop_vinfo);
   if (estimated_vf == 2)
@@ -2523,7 +2654,7 @@ vect_do_peeling (loop_vec_info loop_vinfo, tree niters, tree nitersm1,
   prob_prolog = prob_epilog = profile_probability::guessed_always ()
 			.apply_scale (estimated_vf - 1, estimated_vf);
 
-  class loop *prolog, *epilog = NULL, *loop = LOOP_VINFO_LOOP (loop_vinfo);
+  class loop *prolog, *epilog = NULL;
   class loop *first_loop = loop;
   bool irred_flag = loop_preheader_edge (loop)->flags & EDGE_IRREDUCIBLE_LOOP;
 
@@ -2601,8 +2732,7 @@ vect_do_peeling (loop_vec_info loop_vinfo, tree niters, tree nitersm1,
   if (vect_epilogues
       && LOOP_VINFO_NITERS_KNOWN_P (loop_vinfo)
       && prolog_peeling >= 0
-      && known_eq (vf, lowest_vf)
-      && !LOOP_VINFO_USING_PARTIAL_VECTORS_P (epilogue_vinfo))
+      && known_eq (vf, lowest_vf))
     {
       unsigned HOST_WIDE_INT eiters
 	= (LOOP_VINFO_INT_NITERS (loop_vinfo)
@@ -2612,13 +2742,7 @@ vect_do_peeling (loop_vec_info loop_vinfo, tree niters, tree nitersm1,
       eiters
 	= eiters % lowest_vf + LOOP_VINFO_PEELING_FOR_GAPS (loop_vinfo);
 
-      unsigned int ratio;
-      unsigned int epilogue_gaps
-	= LOOP_VINFO_PEELING_FOR_GAPS (epilogue_vinfo);
-      while (!(constant_multiple_p
-	       (GET_MODE_SIZE (loop_vinfo->vector_mode),
-		GET_MODE_SIZE (epilogue_vinfo->vector_mode), &ratio)
-	       && eiters >= lowest_vf / ratio + epilogue_gaps))
+      while (!vect_update_epilogue_niters (epilogue_vinfo, eiters))
 	{
 	  delete epilogue_vinfo;
 	  epilogue_vinfo = NULL;
@@ -2629,8 +2753,8 @@ vect_do_peeling (loop_vec_info loop_vinfo, tree niters, tree nitersm1,
 	    }
 	  epilogue_vinfo = loop_vinfo->epilogue_vinfos[0];
 	  loop_vinfo->epilogue_vinfos.ordered_remove (0);
-	  epilogue_gaps = LOOP_VINFO_PEELING_FOR_GAPS (epilogue_vinfo);
 	}
+      vect_epilogues_updated_niters = true;
     }
   /* Prolog loop may be skipped.  */
   bool skip_prolog = (prolog_peeling != 0);
@@ -2882,6 +3006,8 @@ vect_do_peeling (loop_vec_info loop_vinfo, tree niters, tree nitersm1,
 					   skip_vector ? anchor : guard_bb,
 					   prob_epilog.invert (),
 					   irred_flag);
+	  if (vect_epilogues)
+	    epilogue_vinfo->skip_this_loop_edge = guard_e;
 	  slpeel_update_phi_nodes_for_guard2 (loop, epilog, guard_e,
 					      single_exit (epilog));
 	  /* Only need to handle basic block before epilog loop if it's not
@@ -2928,7 +3054,9 @@ vect_do_peeling (loop_vec_info loop_vinfo, tree niters, tree nitersm1,
 	 skip_e edge.  */
       if (skip_vector)
 	{
-	  gcc_assert (update_e != NULL && skip_e != NULL);
+	  gcc_assert (update_e != NULL
+		      && skip_e != NULL
+		      && !vect_epilogues_updated_niters);
 	  gphi *new_phi = create_phi_node (make_ssa_name (TREE_TYPE (niters)),
 					   update_e->dest);
 	  tree new_ssa = make_ssa_name (TREE_TYPE (niters));
@@ -2951,27 +3079,36 @@ vect_do_peeling (loop_vec_info loop_vinfo, tree niters, tree nitersm1,
 	  add_phi_arg (new_phi, build_zero_cst (TREE_TYPE (niters)), skip_e,
 		       UNKNOWN_LOCATION);
 	  niters = PHI_RESULT (new_phi);
+	  epilogue_vinfo->main_loop_edge = update_e;
+	  epilogue_vinfo->skip_main_loop_edge = skip_e;
 	}
-
-      /* Subtract the number of iterations performed by the vectorized loop
-	 from the number of total iterations.  */
-      tree epilogue_niters = fold_build2 (MINUS_EXPR, TREE_TYPE (niters),
-					  before_loop_niters,
-					  niters);
-
-      LOOP_VINFO_NITERS (epilogue_vinfo) = epilogue_niters;
-      LOOP_VINFO_NITERSM1 (epilogue_vinfo)
-	= fold_build2 (MINUS_EXPR, TREE_TYPE (epilogue_niters),
-		       epilogue_niters,
-		       build_one_cst (TREE_TYPE (epilogue_niters)));
 
       /* Set ADVANCE to the number of iterations performed by the previous
 	 loop and its prologue.  */
       *advance = niters;
 
-      /* Redo the peeling for niter analysis as the NITERs and alignment
-	 may have been updated to take the main loop into account.  */
-      determine_peel_for_niter (epilogue_vinfo);
+      if (!vect_epilogues_updated_niters)
+	{
+	  /* Subtract the number of iterations performed by the vectorized loop
+	     from the number of total iterations.  */
+	  tree epilogue_niters = fold_build2 (MINUS_EXPR, TREE_TYPE (niters),
+					      before_loop_niters,
+					      niters);
+
+	  LOOP_VINFO_NITERS (epilogue_vinfo) = epilogue_niters;
+	  LOOP_VINFO_NITERSM1 (epilogue_vinfo)
+	    = fold_build2 (MINUS_EXPR, TREE_TYPE (epilogue_niters),
+			   epilogue_niters,
+			   build_one_cst (TREE_TYPE (epilogue_niters)));
+
+	  /* Decide what to do if the number of epilogue iterations is not
+	     a multiple of the epilogue loop's vectorization factor.
+	     We should have rejected the loop during the analysis phase
+	     if this fails.  */
+	  if (!vect_determine_partial_vectors_and_peeling (epilogue_vinfo,
+							   true))
+	    gcc_unreachable ();
+	}
     }
 
   adjust_vec.release ();
@@ -3055,7 +3192,7 @@ vect_create_cond_for_align_checks (loop_vec_info loop_vinfo,
                                    tree *cond_expr,
 				   gimple_seq *cond_expr_stmt_list)
 {
-  vec<stmt_vec_info> may_misalign_stmts
+  const vec<stmt_vec_info> &may_misalign_stmts
     = LOOP_VINFO_MAY_MISALIGN_STMTS (loop_vinfo);
   stmt_vec_info stmt_info;
   int mask = LOOP_VINFO_PTR_MASK (loop_vinfo);
@@ -3146,7 +3283,8 @@ vect_create_cond_for_align_checks (loop_vec_info loop_vinfo,
 static void
 vect_create_cond_for_unequal_addrs (loop_vec_info loop_vinfo, tree *cond_expr)
 {
-  vec<vec_object_pair> pairs = LOOP_VINFO_CHECK_UNEQUAL_ADDRS (loop_vinfo);
+  const vec<vec_object_pair> &pairs
+    = LOOP_VINFO_CHECK_UNEQUAL_ADDRS (loop_vinfo);
   unsigned int i;
   vec_object_pair *pair;
   FOR_EACH_VEC_ELT (pairs, i, pair)
@@ -3165,7 +3303,8 @@ vect_create_cond_for_unequal_addrs (loop_vec_info loop_vinfo, tree *cond_expr)
 static void
 vect_create_cond_for_lower_bounds (loop_vec_info loop_vinfo, tree *cond_expr)
 {
-  vec<vec_lower_bound> lower_bounds = LOOP_VINFO_LOWER_BOUNDS (loop_vinfo);
+  const vec<vec_lower_bound> &lower_bounds
+    = LOOP_VINFO_LOWER_BOUNDS (loop_vinfo);
   for (unsigned int i = 0; i < lower_bounds.length (); ++i)
     {
       tree expr = lower_bounds[i].expr;
@@ -3207,7 +3346,7 @@ vect_create_cond_for_lower_bounds (loop_vec_info loop_vinfo, tree *cond_expr)
 void
 vect_create_cond_for_alias_checks (loop_vec_info loop_vinfo, tree * cond_expr)
 {
-  vec<dr_with_seg_len_pair_t> comp_alias_ddrs =
+  const vec<dr_with_seg_len_pair_t> &comp_alias_ddrs =
     LOOP_VINFO_COMP_ALIAS_DDRS (loop_vinfo);
 
   if (comp_alias_ddrs.is_empty ())
@@ -3484,8 +3623,6 @@ vect_loop_versioning (loop_vec_info loop_vinfo,
 	 niter information which is copied from the original loop.  */
       gcc_assert (loop_constraint_set_p (loop, LOOP_C_FINITE));
       vect_free_loop_info_assumptions (nloop);
-      /* And set constraint LOOP_C_INFINITE for niter analyzer.  */
-      loop_constraint_set (loop, LOOP_C_INFINITE);
     }
 
   if (LOCATION_LOCUS (vect_location.get_location_t ()) != UNKNOWN_LOCATION

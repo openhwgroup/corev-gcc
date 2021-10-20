@@ -1,4 +1,4 @@
-#  Copyright (C) 2003-2020 Free Software Foundation, Inc.
+#  Copyright (C) 2003-2021 Free Software Foundation, Inc.
 #  Contributed by Kelley Cook, June 2004.
 #  Original code from Neil Booth, May 2003.
 #
@@ -71,6 +71,7 @@ BEGIN {
 			n_target_save++
 
 			extra_target_vars[n_extra_target_vars] = name
+			extra_target_var_types[n_extra_target_vars] = type
 			n_extra_target_vars++
 		}
 		else if ($1 == "HeaderInclude") {

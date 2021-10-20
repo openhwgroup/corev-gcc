@@ -1,5 +1,5 @@
 /* intrinsics.cc -- D language compiler intrinsics.
-   Copyright (C) 2006-2020 Free Software Foundation, Inc.
+   Copyright (C) 2006-2021 Free Software Foundation, Inc.
 
 GCC is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -62,7 +62,7 @@ struct intrinsic_decl
 static const intrinsic_decl intrinsic_decls[] =
 {
 #define DEF_D_INTRINSIC(CODE, BUILTIN, NAME, MODULE, DECO, CTFE) \
-    { INTRINSIC_ ## CODE, BUILT_IN_ ## BUILTIN, NAME, MODULE, DECO, CTFE },
+    { CODE, BUILTIN, NAME, MODULE, DECO, CTFE },
 
 #include "intrinsics.def"
 
@@ -81,7 +81,7 @@ maybe_set_intrinsic (FuncDeclaration *decl)
 
   /* The builtin flag is updated only if we can evaluate the intrinsic
      at compile-time.  Such as the math or bitop intrinsics.  */
-  decl->builtin = BUILTINno;
+  decl->builtin = BUILTINunimp;
 
   /* Check if it's a compiler intrinsic.  We only require that any
      internally recognised intrinsics are declared in a module with
@@ -177,12 +177,12 @@ maybe_set_intrinsic (FuncDeclaration *decl)
 		 built-in function.  It could be `int pow(int, int)'.  */
 	      tree rettype = TREE_TYPE (TREE_TYPE (decl->csym));
 	      if (mathfn_built_in (rettype, BUILT_IN_POW) != NULL_TREE)
-		decl->builtin = BUILTINyes;
+		decl->builtin = BUILTINgcc;
 	      break;
 	    }
 
 	    default:
-	      decl->builtin = BUILTINyes;
+	      decl->builtin = BUILTINgcc;
 	      break;
 	    }
 
@@ -303,7 +303,7 @@ expand_intrinsic_bt (intrinsic_code intrinsic, tree callexp)
   tree type = TREE_TYPE (TREE_TYPE (ptr));
 
   /* size_t bitsize = sizeof(*ptr) * BITS_PER_UNIT;  */
-  tree bitsize = fold_convert (type, TYPE_SIZE (type));
+  tree bitsize = fold_convert (type, TYPE_SIZE (TREE_TYPE (ptr)));
 
   /* ptr[bitnum / bitsize]  */
   ptr = build_array_index (ptr, fold_build2 (TRUNC_DIV_EXPR, type,
@@ -312,14 +312,15 @@ expand_intrinsic_bt (intrinsic_code intrinsic, tree callexp)
 
   /* mask = 1 << (bitnum % bitsize);  */
   bitnum = fold_build2 (TRUNC_MOD_EXPR, type, bitnum, bitsize);
-  bitnum = fold_build2 (LSHIFT_EXPR, type, size_one_node, bitnum);
+  bitnum = fold_build2 (LSHIFT_EXPR, type, build_one_cst (type), bitnum);
 
   /* cond = ptr[bitnum / size] & mask;  */
   tree cond = fold_build2 (BIT_AND_EXPR, type, ptr, bitnum);
 
   /* cond ? -1 : 0;  */
   cond = build_condition (TREE_TYPE (callexp), d_truthvalue_conversion (cond),
-			 integer_minus_one_node, integer_zero_node);
+			  build_minus_one_cst (TREE_TYPE (callexp)),
+			  build_zero_cst (TREE_TYPE (callexp)));
 
   /* Update the bit as needed, only testing the bit for bt().  */
   tree_code code;
@@ -465,11 +466,14 @@ expand_intrinsic_copysign (tree callexp)
     from = fold_convert (type, from);
 
   /* Which variant of __builtin_copysign* should we call?  */
-  tree builtin = mathfn_built_in (type, BUILT_IN_COPYSIGN);
-  gcc_assert (builtin != NULL_TREE);
+  built_in_function code = (type == float_type_node) ? BUILT_IN_COPYSIGNF
+    : (type == double_type_node) ? BUILT_IN_COPYSIGN
+    : (type == long_double_type_node) ? BUILT_IN_COPYSIGNL
+    : END_BUILTINS;
 
-  return call_builtin_fn (callexp, DECL_FUNCTION_CODE (builtin), 2,
-			  to, from);
+  gcc_assert (code != END_BUILTINS);
+
+  return call_builtin_fn (callexp, code, 2, to, from);
 }
 
 /* Expand a front-end intrinsic call to pow().  This takes two arguments, the
@@ -561,7 +565,7 @@ expand_intrinsic_vaarg (tree callexp)
     }
 
   /* (T) VA_ARG_EXP<ap>;  */
-  tree exp = build1 (VA_ARG_EXPR, type, ap);
+  tree exp = build1_loc (EXPR_LOCATION (callexp), VA_ARG_EXPR, type, ap);
 
   /* parmn = (T) VA_ARG_EXP<ap>;  */
   if (parmn != NULL_TREE)
@@ -805,15 +809,20 @@ maybe_expand_intrinsic (tree callexp)
     case INTRINSIC_ROR_TIARG:
       return expand_intrinsic_rotate (intrinsic, callexp);
 
+    case INTRINSIC_BSWAP16:
     case INTRINSIC_BSWAP32:
     case INTRINSIC_BSWAP64:
     case INTRINSIC_CEIL:
     case INTRINSIC_CEILF:
     case INTRINSIC_CEILL:
+    case INTRINSIC_COS:
+    case INTRINSIC_COSF:
     case INTRINSIC_COSL:
     case INTRINSIC_EXP:
     case INTRINSIC_EXP2:
     case INTRINSIC_EXPM1:
+    case INTRINSIC_FABS:
+    case INTRINSIC_FABSF:
     case INTRINSIC_FABSL:
     case INTRINSIC_FLOOR:
     case INTRINSIC_FLOORF:
@@ -824,9 +833,15 @@ maybe_expand_intrinsic (tree callexp)
     case INTRINSIC_LOG:
     case INTRINSIC_LOG10:
     case INTRINSIC_LOG2:
+    case INTRINSIC_RINT:
+    case INTRINSIC_RINTF:
     case INTRINSIC_RINTL:
+    case INTRINSIC_RNDTOL:
+    case INTRINSIC_RNDTOLF:
     case INTRINSIC_RNDTOLL:
     case INTRINSIC_ROUND:
+    case INTRINSIC_SIN:
+    case INTRINSIC_SINF:
     case INTRINSIC_SINL:
     case INTRINSIC_SQRT:
     case INTRINSIC_SQRTF:
@@ -840,6 +855,8 @@ maybe_expand_intrinsic (tree callexp)
 
     case INTRINSIC_FMAX:
     case INTRINSIC_FMIN:
+    case INTRINSIC_LDEXP:
+    case INTRINSIC_LDEXPF:
     case INTRINSIC_LDEXPL:
       code = intrinsic_decls[intrinsic].built_in;
       gcc_assert (code != BUILT_IN_NONE);

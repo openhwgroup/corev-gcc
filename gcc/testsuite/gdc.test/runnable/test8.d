@@ -696,7 +696,7 @@ void test38()
        printf("Count: %d\n", count);
         assert(count == 1028);
     }
-    catch
+    catch(Throwable)
     {
        printf("Exception: %d\n", k);
         assert(0);
@@ -746,19 +746,19 @@ int foo42(const(char) *x, ...)
     va_list ap;
 
     va_start!(typeof(x))(ap, x);
-    //printf("&x = %p, ap = %p\n", &x, ap);     // XBUG: static array va_lists (eg: x86_64) cannot be passed as vararg.
+    assert(ap != va_list.init);
 
     int i;
     i = va_arg!(typeof(i))(ap);
-    printf("i = %d\n", i);
+    assert(i == 3);
 
     long l;
     l = va_arg!(typeof(l))(ap);
-    printf("l = %lld\n", l);
+    assert(l == 23);
 
     uint k;
     k = va_arg!(typeof(k))(ap);
-    printf("k = %u\n", k);
+    assert(k == 4);
 
     va_end(ap);
 

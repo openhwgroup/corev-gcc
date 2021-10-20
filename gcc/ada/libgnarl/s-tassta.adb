@@ -6,7 +6,7 @@
 --                                                                          --
 --                                  B o d y                                 --
 --                                                                          --
---         Copyright (C) 1992-2020, Free Software Foundation, Inc.          --
+--         Copyright (C) 1992-2021, Free Software Foundation, Inc.          --
 --                                                                          --
 -- GNARL is free software; you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -29,16 +29,13 @@
 --                                                                          --
 ------------------------------------------------------------------------------
 
-pragma Polling (Off);
---  Turn off polling, we do not want ATC polling to take place during tasking
---  operations. It causes infinite loops and other problems.
-
 pragma Partition_Elaboration_Policy (Concurrent);
 --  This package only implements the concurrent elaboration policy. This pragma
 --  will enforce it (and detect conflicts with user specified policy).
 
 with Ada.Exceptions;
 with Ada.Unchecked_Deallocation;
+with Ada.Task_Initialization;
 
 with System.Interrupt_Management;
 with System.Tasking.Debug;
@@ -582,7 +579,7 @@ package body System.Tasking.Stages is
 
          --  ??? Should never get here
 
-         pragma Assert (False);
+         pragma Assert (Standard.False);
          raise Standard'Abort_Signal;
       end if;
 
@@ -914,11 +911,11 @@ package body System.Tasking.Stages is
       Self_Id : constant Task_Id := Self;
 
    begin
+      Initialization.Task_Lock (Self_Id);
+
       if T.Common.State = Terminated then
 
          --  It is not safe to call Abort_Defer or Write_Lock at this stage
-
-         Initialization.Task_Lock (Self_Id);
 
          Lock_RTS;
          Initialization.Finalize_Attributes (T);
@@ -934,6 +931,7 @@ package body System.Tasking.Stages is
          --  upon termination.
 
          T.Free_On_Termination := True;
+         Initialization.Task_Unlock (Self_Id);
       end if;
    end Free_Task;
 
@@ -1100,11 +1098,10 @@ package body System.Tasking.Stages is
             --  stack analysis.
 
             Big_Overflow_Guard : constant := 64 * 1024 + 8 * 1024;
-            Small_Stack_Limit  : constant := 64 * 1024;
-            --  ??? These three values are experimental, and seem to work on
-            --  most platforms. They still need to be analyzed further. They
-            --  also need documentation, what are they and why does the logic
-            --  differ depending on whether the stack is large or small???
+            --  These two values are experimental, and seem to work on most
+            --  platforms. They still need to be analyzed further. They also
+            --  need documentation, what are they and why does the logic differ
+            --  depending on whether the stack is large or small???
 
             Pattern_Size : Natural :=
                              Natural (Self_ID.Common.
@@ -1127,7 +1124,7 @@ package body System.Tasking.Stages is
                --  Adjustments for inner frames
 
                Pattern_Size := Pattern_Size -
-                 (if Pattern_Size < Small_Stack_Limit
+                 (if Pattern_Size < Big_Overflow_Guard
                     then Small_Overflow_Guard
                     else Big_Overflow_Guard);
             else
@@ -1180,6 +1177,14 @@ package body System.Tasking.Stages is
       if Global_Task_Debug_Event_Set then
          Debug.Signal_Debug_Event (Debug.Debug_Event_Run, Self_ID);
       end if;
+
+      declare
+         use Ada.Task_Initialization;
+
+         Global_Initialization_Handler : Initialization_Handler;
+         pragma Atomic (Global_Initialization_Handler);
+         pragma Import (Ada, Global_Initialization_Handler,
+                        "__gnat_global_initialization_handler");
 
       begin
          --  We are separating the following portion of the code in order to

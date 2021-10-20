@@ -1,5 +1,5 @@
 /* Common block and equivalence list handling
-   Copyright (C) 2000-2020 Free Software Foundation, Inc.
+   Copyright (C) 2000-2021 Free Software Foundation, Inc.
    Contributed by Canqun Yang <canqun@nudt.edu.cn>
 
 This file is part of GCC.
@@ -426,6 +426,8 @@ build_common_decl (gfc_common_head *com, tree union_type, bool is_init)
   /* If there is no backend_decl for the common block, build it.  */
   if (decl == NULL_TREE)
     {
+      tree omp_clauses = NULL_TREE;
+
       if (com->is_bind_c == 1 && com->binding_label)
 	decl = build_decl (input_location, VAR_DECL, identifier, union_type);
       else
@@ -460,14 +462,33 @@ build_common_decl (gfc_common_head *com, tree union_type, bool is_init)
       if (com->threadprivate)
 	set_decl_tls_model (decl, decl_default_tls_model (decl));
 
+      if (com->omp_device_type != OMP_DEVICE_TYPE_UNSET)
+	{
+	  tree c = build_omp_clause (UNKNOWN_LOCATION, OMP_CLAUSE_DEVICE_TYPE);
+	  switch (com->omp_device_type)
+	    {
+	    case OMP_DEVICE_TYPE_HOST:
+	      OMP_CLAUSE_DEVICE_TYPE_KIND (c) = OMP_CLAUSE_DEVICE_TYPE_HOST;
+	      break;
+	    case OMP_DEVICE_TYPE_NOHOST:
+	      OMP_CLAUSE_DEVICE_TYPE_KIND (c) = OMP_CLAUSE_DEVICE_TYPE_NOHOST;
+	      break;
+	    case OMP_DEVICE_TYPE_ANY:
+	      OMP_CLAUSE_DEVICE_TYPE_KIND (c) = OMP_CLAUSE_DEVICE_TYPE_ANY;
+	      break;
+	    default:
+	      gcc_unreachable ();
+	    }
+	  omp_clauses = c;
+	}
       if (com->omp_declare_target_link)
 	DECL_ATTRIBUTES (decl)
 	  = tree_cons (get_identifier ("omp declare target link"),
-		       NULL_TREE, DECL_ATTRIBUTES (decl));
+		       omp_clauses, DECL_ATTRIBUTES (decl));
       else if (com->omp_declare_target)
 	DECL_ATTRIBUTES (decl)
 	  = tree_cons (get_identifier ("omp declare target"),
-		       NULL_TREE, DECL_ATTRIBUTES (decl));
+		       omp_clauses, DECL_ATTRIBUTES (decl));
 
       /* Place the back end declaration for this common block in
          GLOBAL_BINDING_LEVEL.  */
@@ -738,10 +759,11 @@ create_common (gfc_common_head *com, segment_info *head, bool saw_equiv)
       else
 	gfc_add_decl_to_function (var_decl);
 
-      SET_DECL_VALUE_EXPR (var_decl,
-			   fold_build3_loc (input_location, COMPONENT_REF,
-					    TREE_TYPE (s->field),
-					    decl, s->field, NULL_TREE));
+      tree comp = build3_loc (input_location, COMPONENT_REF,
+			      TREE_TYPE (s->field), decl, s->field, NULL_TREE);
+      if (TREE_THIS_VOLATILE (s->field))
+	TREE_THIS_VOLATILE (comp) = 1;
+      SET_DECL_VALUE_EXPR (var_decl, comp);
       DECL_HAS_VALUE_EXPR_P (var_decl) = 1;
       GFC_DECL_COMMON_OR_EQUIV (var_decl) = 1;
 

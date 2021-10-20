@@ -1,5 +1,5 @@
 /* Prints out tree in human readable form - GCC
-   Copyright (C) 1990-2020 Free Software Foundation, Inc.
+   Copyright (C) 1990-2021 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -364,6 +364,8 @@ print_node (FILE *file, const char *prefix, tree node, int indent,
     fputs (code == CALL_EXPR ? " must-tail-call" : " static", file);
   if (TREE_DEPRECATED (node))
     fputs (" deprecated", file);
+  if (TREE_UNAVAILABLE (node))
+    fputs (" unavailable", file);
   if (TREE_VISITED (node))
     fputs (" visited", file);
 
@@ -742,20 +744,26 @@ print_node (FILE *file, const char *prefix, tree node, int indent,
 	}
       if (code == CALL_EXPR)
 	{
-	  call_expr_arg_iterator iter;
-	  tree arg;
 	  print_node (file, "fn", CALL_EXPR_FN (node), indent + 4);
 	  print_node (file, "static_chain", CALL_EXPR_STATIC_CHAIN (node),
 		      indent + 4);
-	  i = 0;
-	  FOR_EACH_CALL_EXPR_ARG (arg, iter, node)
+
+	  call_expr_arg_iterator iter;
+	  init_call_expr_arg_iterator (node, &iter);
+	  while (more_call_expr_args_p (&iter))
 	    {
 	      /* Buffer big enough to format a 32-bit UINT_MAX into, plus
 		 the text.  */
 	      char temp[15];
-	      sprintf (temp, "arg:%u", i);
-	      print_node (file, temp, arg, indent + 4);
-	      i++;
+	      sprintf (temp, "arg:%u", iter.i);
+	      tree arg = next_call_expr_arg (&iter);
+	      if (arg)
+		print_node (file, temp, arg, indent + 4);
+	      else
+		{
+		  indent_to (file, indent + 4);
+		  fprintf (file, "%s NULL", temp);
+		}
 	    }
 	}
       else
@@ -851,7 +859,7 @@ print_node (FILE *file, const char *prefix, tree node, int indent,
 	    char buf[10];
 	    for (unsigned int i = 0; i < NUM_POLY_INT_COEFFS; ++i)
 	      {
-		snprintf (buf, sizeof (buf), "elt%u: ", i);
+		snprintf (buf, sizeof (buf), "elt%u:", i);
 		print_node (file, buf, POLY_INT_CST_COEFF (node, i),
 			    indent + 4);
 	      }
@@ -1046,7 +1054,7 @@ print_decl_identifier (FILE *file, tree decl, int flags)
 
   if (flags & PRINT_DECL_ORIGIN)
     {
-      if (DECL_IS_BUILTIN (decl))
+      if (DECL_IS_UNDECLARED_BUILTIN (decl))
 	fputs ("<built-in>", file);
       else
 	{

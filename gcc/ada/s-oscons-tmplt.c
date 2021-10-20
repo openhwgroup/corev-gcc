@@ -7,7 +7,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---          Copyright (C) 2000-2020, Free Software Foundation, Inc.         --
+--          Copyright (C) 2000-2021, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -96,7 +96,7 @@ pragma Style_Checks ("M32766");
 /* Define _BSD_SOURCE to get CRTSCTS */
 # define _BSD_SOURCE
 
-#endif /* defined (__linux__) */
+#endif /* defined (__linux__) || defined (__ANDROID__) */
 
 /* Include gsocket.h before any system header so it can redefine FD_SETSIZE */
 
@@ -121,6 +121,8 @@ pragma Style_Checks ("M32766");
  **/
 
 # include <vxWorks.h>
+#elif !defined(__MINGW32__)
+#include <poll.h>
 #endif
 
 #include "adaint.h"
@@ -721,6 +723,41 @@ CNU(CRTSCTS, "Output hw flow control")
 # define CREAD -1
 #endif
 CNU(CREAD, "Read")
+
+#ifndef ICANON
+# define ICANON -1
+#endif
+CNU(ICANON, "canonical mode")
+
+#ifndef CBAUD
+# define CBAUD -1
+#endif
+CNU(CBAUD, "baud speed mask")
+
+#ifndef ECHO
+# define ECHO -1
+#endif
+CNU(ECHO, "echo input characters")
+
+#ifndef ECHOE
+# define ECHOE -1
+#endif
+CNU(ECHOE, "erase preceding characters")
+
+#ifndef ECHOK
+# define ECHOK -1
+#endif
+CNU(ECHOK, "kill character, erases current line")
+
+#ifndef ECHOCTL
+# define ECHOCTL -1
+#endif
+CNU(ECHOCTL, "echo special characters")
+
+#ifndef ECHONL
+# define ECHONL -1
+#endif
+CNU(ECHONL, "force echo NL character")
 
 #ifndef CS5
 # define CS5 -1
@@ -1426,13 +1463,7 @@ CND(MSG_PEEK, "Peek at incoming data")
 CND(MSG_EOR, "Send end of record")
 
 #ifndef MSG_WAITALL
-#ifdef __MINWGW32__
-/* The value of MSG_WAITALL is 8.  Nevertheless winsock.h doesn't
-   define it, but it is still usable as we link to winsock2 API.  */
-# define MSG_WAITALL (1 << 3)
-#else
 # define MSG_WAITALL -1
-#endif
 #endif
 CND(MSG_WAITALL, "Wait for full reception")
 
@@ -1463,6 +1494,39 @@ CNS(MSG_Forced_Flags, "")
 # define TCP_NODELAY -1
 #endif
 CND(TCP_NODELAY, "Do not coalesce packets")
+
+#ifndef TCP_KEEPCNT
+#ifdef __MINGW32__
+/* Windows headers can be too old to have all available constants.
+ * We know this one. */
+# define TCP_KEEPCNT 16
+#else
+# define TCP_KEEPCNT -1
+#endif
+#endif
+CND(TCP_KEEPCNT, "Maximum number of keepalive probes")
+
+#ifndef TCP_KEEPIDLE
+#ifdef __MINGW32__
+/* Windows headers can be too old to have all available constants.
+ * We know this one. */
+# define TCP_KEEPIDLE 3
+#else
+# define TCP_KEEPIDLE -1
+#endif
+#endif
+CND(TCP_KEEPIDLE, "Idle time before TCP starts sending keepalive probes")
+
+#ifndef TCP_KEEPINTVL
+#ifdef __MINGW32__
+/* Windows headers can be too old to have all available constants.
+ * We know this one. */
+# define TCP_KEEPINTVL 17
+#else
+# define TCP_KEEPINTVL -1
+#endif
+#endif
+CND(TCP_KEEPINTVL, "Time between individual keepalive probes")
 
 #ifndef SO_REUSEADDR
 # define SO_REUSEADDR -1
@@ -1625,7 +1689,13 @@ CND(IPV6_DSTOPTS, "Set the destination options delivery")
 CND(IPV6_HOPOPTS, "Set the hop options delivery")
 
 #ifndef IPV6_FLOWINFO
+#ifdef __linux__
+/* The IPV6_FLOWINFO is defined in linux/in6.h, but we can't include it because
+ * of conflicts with other headers. */
+# define IPV6_FLOWINFO 11
+#else
 # define IPV6_FLOWINFO -1
+#endif
 #endif
 CND(IPV6_FLOWINFO, "Set the flow ID delivery")
 
@@ -1735,11 +1805,30 @@ CND(SIZEOF_sigset, "sigset")
 #endif
 
 #if defined(_WIN32) || defined(__vxworks)
+#define SIZEOF_nfds_t sizeof (int) * 8
 #define SIZEOF_socklen_t sizeof (size_t)
+#elif defined(__Lynx__)
+#define SIZEOF_nfds_t sizeof (unsigned long int) * 8
+#define SIZEOF_socklen_t sizeof (socklen_t)
 #else
+#define SIZEOF_nfds_t sizeof (nfds_t) * 8
 #define SIZEOF_socklen_t sizeof (socklen_t)
 #endif
+CND(SIZEOF_nfds_t, "Size of nfds_t");
 CND(SIZEOF_socklen_t, "Size of socklen_t");
+
+{
+#if defined(__vxworks)
+#define SIZEOF_fd_type sizeof (int) * 8
+#define SIZEOF_pollfd_events sizeof (short) * 8
+#else
+const struct pollfd v_pollfd;
+#define SIZEOF_fd_type sizeof (v_pollfd.fd) * 8
+#define SIZEOF_pollfd_events sizeof (v_pollfd.events) * 8
+#endif
+CND(SIZEOF_fd_type, "Size of socket fd");
+CND(SIZEOF_pollfd_events, "Size of pollfd.events");
+}
 
 #ifndef IF_NAMESIZE
 #ifdef IF_MAX_STRING_SIZE
@@ -1749,6 +1838,50 @@ CND(SIZEOF_socklen_t, "Size of socklen_t");
 #endif
 #endif
 CND(IF_NAMESIZE, "Max size of interface name with 0 terminator");
+
+/*
+
+   --  Poll values
+
+*/
+
+#if defined(__vxworks)
+#ifndef POLLIN
+#define POLLIN 1
+#endif
+
+#ifndef POLLPRI
+#define POLLPRI 2
+#endif
+
+#ifndef POLLOUT
+#define POLLOUT 4
+#endif
+
+#ifndef POLLERR
+#define POLLERR 8
+#endif
+
+#ifndef POLLHUP
+#define POLLHUP 16
+#endif
+
+#ifndef POLLNVAL
+#define POLLNVAL 32
+#endif
+
+#elif defined(_WIN32)
+#define POLLPRI 0
+/*  If the POLLPRI flag is set on a socket for the Microsoft Winsock provider,
+ *  the WSAPoll function will fail. */
+#endif
+
+CND(POLLIN, "There is data to read");
+CND(POLLPRI, "Urgent data to read");
+CND(POLLOUT, "Writing will not block");
+CND(POLLERR, "Error (output only)");
+CND(POLLHUP, "Hang up (output only)");
+CND(POLLNVAL, "Invalid request");
 
 /*
 
@@ -1798,6 +1931,13 @@ CST(Inet_Pton_Linkname, "")
 # define Inet_Ntop_Linkname "__gnat_inet_ntop"
 #endif
 CST(Inet_Ntop_Linkname, "")
+
+#if defined(_WIN32)
+# define Poll_Linkname "WSAPoll"
+#else
+# define Poll_Linkname "poll"
+#endif
+CST(Poll_Linkname, "")
 
 #endif /* HAVE_SOCKETS */
 

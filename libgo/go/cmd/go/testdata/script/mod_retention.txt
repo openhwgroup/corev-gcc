@@ -7,7 +7,7 @@ env GO111MODULE=on
 
 # Control case: verify that go.mod.tidy is actually tidy.
 cp go.mod.tidy go.mod
-go list all
+go list -mod=mod all
 cmp go.mod go.mod.tidy
 
 
@@ -35,7 +35,7 @@ cmp go.mod go.mod.tidy
 # "// indirect" comments should be removed if direct dependencies are seen.
 # changes.
 cp go.mod.indirect go.mod
-go list all
+go list -mod=mod all
 cmp go.mod go.mod.tidy
 
 # "// indirect" comments should be added if appropriate.
@@ -62,9 +62,10 @@ cmp go.mod go.mod.tidy
 
 # A missing "go" version directive should be added.
 # However, that should not remove other redundant requirements.
+# In fact, it may *add* redundant requirements due to activating lazy loading.
 cp go.mod.nogo go.mod
-go list all
-cmpenv go.mod go.mod.currentgo
+go list -mod=mod all
+cmpenv go.mod go.mod.addedgo
 
 
 -- go.mod.tidy --
@@ -133,7 +134,7 @@ require (
 	rsc.io/sampler v1.3.0 // indirect
 	rsc.io/testonly v1.0.0 // indirect
 )
--- go.mod.currentgo --
+-- go.mod.addedgo --
 module m
 
 go $goversion
@@ -143,3 +144,5 @@ require (
 	rsc.io/sampler v1.3.0 // indirect
 	rsc.io/testonly v1.0.0 // indirect
 )
+
+require golang.org/x/text v0.0.0-20170915032832-14c0d48ead0c // indirect

@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+//go:build aix || darwin || dragonfly || freebsd || hurd || linux || netbsd || openbsd || solaris
 // +build aix darwin dragonfly freebsd hurd linux netbsd openbsd solaris
 
 package runtime_test
@@ -10,10 +11,8 @@ import (
 	"bytes"
 	"internal/testenv"
 	"io"
-	"io/ioutil"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -70,35 +69,23 @@ func TestCrashDumpsAllThreads(t *testing.T) {
 		t.Skipf("skipping; not supported on %v", runtime.GOOS)
 	}
 
+	if runtime.GOOS == "openbsd" && (runtime.GOARCH == "arm" || runtime.GOARCH == "mips64") {
+		// This may be ncpu < 2 related...
+		t.Skipf("skipping; test fails on %s/%s - see issue #42464", runtime.GOOS, runtime.GOARCH)
+	}
+
 	if runtime.Sigisblocked(int(syscall.SIGQUIT)) {
 		t.Skip("skipping; SIGQUIT is blocked, see golang.org/issue/19196")
 	}
 
-	// We don't use executeTest because we need to kill the
-	// program while it is running.
-
 	testenv.MustHaveGoBuild(t)
 
-	t.Parallel()
-
-	dir, err := ioutil.TempDir("", "go-build")
+	exe, err := buildTestProg(t, "testprog")
 	if err != nil {
-		t.Fatalf("failed to create temp directory: %v", err)
-	}
-	defer os.RemoveAll(dir)
-
-	if err := ioutil.WriteFile(filepath.Join(dir, "main.go"), []byte(crashDumpsAllThreadsSource), 0666); err != nil {
-		t.Fatalf("failed to create Go file: %v", err)
+		t.Fatal(err)
 	}
 
-	cmd := exec.Command(testenv.GoToolPath(t), "build", "-o", "a.exe", "main.go")
-	cmd.Dir = dir
-	out, err := testenv.CleanCmdEnv(cmd).CombinedOutput()
-	if err != nil {
-		t.Fatalf("building source: %v\n%s", err, out)
-	}
-
-	cmd = exec.Command(filepath.Join(dir, "a.exe"))
+	cmd := exec.Command(exe, "CrashDumpsAllThreads")
 	cmd = testenv.CleanCmdEnv(cmd)
 	cmd.Env = append(cmd.Env,
 		"GOTRACEBACK=crash",
@@ -120,9 +107,12 @@ func TestCrashDumpsAllThreads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer rp.Close()
+
 	cmd.ExtraFiles = []*os.File{wp}
 
 	if err := cmd.Start(); err != nil {
+		wp.Close()
 		t.Fatalf("starting program: %v", err)
 	}
 
@@ -144,58 +134,13 @@ func TestCrashDumpsAllThreads(t *testing.T) {
 	// We want to see a stack trace for each thread.
 	// Before https://golang.org/cl/2811 running threads would say
 	// "goroutine running on other thread; stack unavailable".
-	out = outbuf.Bytes()
-	n := bytes.Count(out, []byte("main.loop"))
+	out := outbuf.Bytes()
+	n := bytes.Count(out, []byte("main.crashDumpsAllThreadsLoop"))
 	if n != 4 {
 		t.Errorf("found %d instances of main.loop; expected 4", n)
 		t.Logf("%s", out)
 	}
 }
-
-const crashDumpsAllThreadsSource = `
-package main
-
-import (
-	"fmt"
-	"os"
-	"runtime"
-	"time"
-)
-
-func main() {
-	const count = 4
-	runtime.GOMAXPROCS(count + 1)
-
-	chans := make([]chan bool, count)
-	for i := range chans {
-		chans[i] = make(chan bool)
-		go loop(i, chans[i])
-	}
-
-	// Wait for all the goroutines to start executing.
-	for _, c := range chans {
-		<-c
-	}
-
-	time.Sleep(time.Millisecond)
-
-	// Tell our parent that all the goroutines are executing.
-	if _, err := os.NewFile(3, "pipe").WriteString("x"); err != nil {
-		fmt.Fprintf(os.Stderr, "write to pipe failed: %v\n", err)
-		os.Exit(2)
-	}
-
-	select {}
-}
-
-func loop(i int, c chan bool) {
-	close(c)
-	for {
-		for j := 0; j < 0x7fffffff; j++ {
-		}
-	}
-}
-`
 
 func TestPanicSystemstack(t *testing.T) {
 	// Test that GOTRACEBACK=crash prints both the system and user
@@ -231,12 +176,19 @@ func TestPanicSystemstack(t *testing.T) {
 	}
 	defer pr.Close()
 
-	// Wait for "x\nx\n" to indicate readiness.
+	// Wait for "x\nx\n" to indicate almost-readiness.
 	buf := make([]byte, 4)
 	_, err = io.ReadFull(pr, buf)
 	if err != nil || string(buf) != "x\nx\n" {
 		t.Fatal("subprocess failed; output:\n", string(buf))
 	}
+
+	// The child blockers print "x\n" and then block on a lock. Receiving
+	// those bytes only indicates that the child is _about to block_. Since
+	// we don't have a way to know when it is fully blocked, sleep a bit to
+	// make us less likely to lose the race and signal before the child
+	// blocks.
+	time.Sleep(100 * time.Millisecond)
 
 	// Send SIGQUIT.
 	if err := cmd.Process.Signal(syscall.SIGQUIT); err != nil {
@@ -244,7 +196,7 @@ func TestPanicSystemstack(t *testing.T) {
 	}
 
 	// Get traceback.
-	tb, err := ioutil.ReadAll(pr)
+	tb, err := io.ReadAll(pr)
 	if err != nil {
 		t.Fatal("reading traceback from pipe: ", err)
 	}

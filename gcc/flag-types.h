@@ -1,5 +1,5 @@
 /* Compilation switch flag type definitions for GCC.
-   Copyright (C) 1987-2020 Free Software Foundation, Inc.
+   Copyright (C) 1987-2021 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -20,16 +20,43 @@ along with GCC; see the file COPYING3.  If not see
 #ifndef GCC_FLAG_TYPES_H
 #define GCC_FLAG_TYPES_H
 
+#if !defined(IN_LIBGCC2) && !defined(IN_TARGET_LIBS) && !defined(IN_RTS)
+
 enum debug_info_type
 {
-  NO_DEBUG,	    /* Write no debug info.  */
-  DBX_DEBUG,	    /* Write BSD .stabs for DBX (using dbxout.c).  */
-  DWARF2_DEBUG,	    /* Write Dwarf v2 debug info (using dwarf2out.c).  */
-  XCOFF_DEBUG,	    /* Write IBM/Xcoff debug info (using dbxout.c).  */
-  VMS_DEBUG,        /* Write VMS debug info (using vmsdbgout.c).  */
-  VMS_AND_DWARF2_DEBUG /* Write VMS debug info (using vmsdbgout.c).
-                          and DWARF v2 debug info (using dwarf2out.c).  */
+  DINFO_TYPE_NONE = 0,		  /* No debug info.  */
+  DINFO_TYPE_DBX = 1,		  /* BSD .stabs for DBX.  */
+  DINFO_TYPE_DWARF2 = 2,	  /* Dwarf v2 debug info.  */
+  DINFO_TYPE_XCOFF = 3,		  /* IBM/Xcoff debug info.  */
+  DINFO_TYPE_VMS = 4,		  /* VMS debug info.  */
+  DINFO_TYPE_CTF = 5,		  /* CTF debug info.  */
+  DINFO_TYPE_BTF = 6,		  /* BTF debug info.  */
+  DINFO_TYPE_BTF_WITH_CORE = 7,	  /* BTF debug info with CO-RE relocations.  */
+  DINFO_TYPE_MAX = DINFO_TYPE_BTF_WITH_CORE /* Marker only.  */
 };
+
+#define NO_DEBUG      (0U)
+/* Write DBX debug info (using dbxout.c).  */
+#define DBX_DEBUG     (1U << DINFO_TYPE_DBX)
+/* Write DWARF2 debug info (using dwarf2out.c).  */
+#define DWARF2_DEBUG  (1U << DINFO_TYPE_DWARF2)
+/* Write IBM/XCOFF debug info (using dbxout.c).  */
+#define XCOFF_DEBUG   (1U << DINFO_TYPE_XCOFF)
+/* Write VMS debug info (using vmsdbgout.c).  */
+#define VMS_DEBUG     (1U << DINFO_TYPE_VMS)
+/* Write CTF debug info (using ctfout.c).  */
+#define CTF_DEBUG     (1U << DINFO_TYPE_CTF)
+/* Write BTF debug info (using btfout.c).  */
+#define BTF_DEBUG     (1U << DINFO_TYPE_BTF)
+/* Write BTF debug info for BPF CO-RE usecase (using btfout.c).  */
+#define BTF_WITH_CORE_DEBUG     (1U << DINFO_TYPE_BTF_WITH_CORE)
+
+/* Note: Adding new definitions to handle -combination- of debug formats,
+   like VMS_AND_DWARF2_DEBUG is not recommended.  This definition remains
+   here for historical reasons.  */
+/* Write VMS debug info (using vmsdbgout.c) and DWARF v2 debug info (using
+   dwarf2out.c).  */
+#define VMS_AND_DWARF2_DEBUG  ((VMS_DEBUG | DWARF2_DEBUG))
 
 enum debug_info_levels
 {
@@ -37,6 +64,19 @@ enum debug_info_levels
   DINFO_LEVEL_TERSE,	/* Write minimal info to support tracebacks only.  */
   DINFO_LEVEL_NORMAL,	/* Write info for all declarations (and line table).  */
   DINFO_LEVEL_VERBOSE	/* Write normal info plus #define/#undef info.  */
+};
+
+/* CTF debug info levels.
+   CTF debug info levels are untied with DWARF debug info levels because CTF
+   may co-exist with DWARF.  */
+enum ctf_debug_info_levels
+{
+  CTFINFO_LEVEL_NONE = 0,     /* Write no CTF debug info.  */
+  CTFINFO_LEVEL_TERSE = 1,    /* Write CTF information to support tracebacks
+				 only.  Not Implemented.  */
+  CTFINFO_LEVEL_NORMAL = 2    /* Write CTF type information for all entities
+				 (functions, data objects, variables etc.)
+				 at file-scope or global-scope only.  */
 };
 
 /* A major contribution to object and executable size is debug
@@ -151,10 +191,6 @@ enum ira_region
   IRA_REGION_ONE,
   IRA_REGION_ALL,
   IRA_REGION_MIXED,
-  /* This value means that there were no options -fira-region on the
-     command line and that we should choose a value depending on the
-     used -O option.  */
-  IRA_REGION_AUTODETECT
 };
 
 /* The options for excess precision.  */
@@ -162,7 +198,8 @@ enum excess_precision
 {
   EXCESS_PRECISION_DEFAULT,
   EXCESS_PRECISION_FAST,
-  EXCESS_PRECISION_STANDARD
+  EXCESS_PRECISION_STANDARD,
+  EXCESS_PRECISION_FLOAT16
 };
 
 /* The options for which values of FLT_EVAL_METHOD are permissible.  */
@@ -230,12 +267,21 @@ enum scalar_storage_order_kind {
   SSO_LITTLE_ENDIAN
 };
 
-/* Vectorizer cost-model.  */
+/* Vectorizer cost-model.  Except for DEFAULT, the values are ordered from
+   the most conservative to the least conservative.  */
 enum vect_cost_model {
+  VECT_COST_MODEL_VERY_CHEAP = -3,
+  VECT_COST_MODEL_CHEAP = -2,
+  VECT_COST_MODEL_DYNAMIC = -1,
   VECT_COST_MODEL_UNLIMITED = 0,
-  VECT_COST_MODEL_CHEAP = 1,
-  VECT_COST_MODEL_DYNAMIC = 2,
-  VECT_COST_MODEL_DEFAULT = 3
+  VECT_COST_MODEL_DEFAULT = 1
+};
+
+/* Automatic variable initialization type.  */
+enum auto_init_type {
+  AUTO_INIT_UNINITIALIZED = 0,
+  AUTO_INIT_PATTERN = 1,
+  AUTO_INIT_ZERO = 2
 };
 
 /* Different instrumentation modes.  */
@@ -272,6 +318,9 @@ enum sanitize_code {
   SANITIZE_BUILTIN = 1UL << 25,
   SANITIZE_POINTER_COMPARE = 1UL << 26,
   SANITIZE_POINTER_SUBTRACT = 1UL << 27,
+  SANITIZE_HWADDRESS = 1UL << 28,
+  SANITIZE_USER_HWADDRESS = 1UL << 29,
+  SANITIZE_KERNEL_HWADDRESS = 1UL << 30,
   SANITIZE_SHIFT = SANITIZE_SHIFT_BASE | SANITIZE_SHIFT_EXPONENT,
   SANITIZE_UNDEFINED = SANITIZE_SHIFT | SANITIZE_DIVIDE | SANITIZE_UNREACHABLE
 		       | SANITIZE_VLA | SANITIZE_NULL | SANITIZE_RETURN
@@ -284,6 +333,24 @@ enum sanitize_code {
   SANITIZE_UNDEFINED_NONDEFAULT = SANITIZE_FLOAT_DIVIDE | SANITIZE_FLOAT_CAST
 				  | SANITIZE_BOUNDS_STRICT
 };
+
+/* Different settings for zeroing subset of registers.  */
+namespace zero_regs_flags {
+  const unsigned int UNSET = 0;
+  const unsigned int SKIP = 1UL << 0;
+  const unsigned int ONLY_USED = 1UL << 1;
+  const unsigned int ONLY_GPR = 1UL << 2;
+  const unsigned int ONLY_ARG = 1UL << 3;
+  const unsigned int ENABLED = 1UL << 4;
+  const unsigned int USED_GPR_ARG = ENABLED | ONLY_USED | ONLY_GPR | ONLY_ARG;
+  const unsigned int USED_GPR = ENABLED | ONLY_USED | ONLY_GPR;
+  const unsigned int USED_ARG = ENABLED | ONLY_USED | ONLY_ARG;
+  const unsigned int USED = ENABLED | ONLY_USED;
+  const unsigned int ALL_GPR_ARG = ENABLED | ONLY_GPR | ONLY_ARG;
+  const unsigned int ALL_GPR = ENABLED | ONLY_GPR;
+  const unsigned int ALL_ARG = ENABLED | ONLY_ARG;
+  const unsigned int ALL = ENABLED;
+}
 
 /* Settings of flag_incremental_link.  */
 enum incremental_link {
@@ -381,5 +448,35 @@ enum parloops_schedule_type
   PARLOOPS_SCHEDULE_AUTO,
   PARLOOPS_SCHEDULE_RUNTIME
 };
+
+/* EVRP mode.  */
+enum evrp_mode
+{
+  EVRP_MODE_RVRP_ONLY = 0,
+  EVRP_MODE_EVRP_ONLY = 1,
+  EVRP_MODE_EVRP_FIRST = 2,
+  EVRP_MODE_RVRP_FIRST = 3,
+  EVRP_MODE_TRACE = 4,
+  EVRP_MODE_CACHE = (8 | EVRP_MODE_TRACE),
+  EVRP_MODE_GORI = 16,
+  EVRP_MODE_TRACE_GORI = (EVRP_MODE_TRACE | EVRP_MODE_GORI),
+  EVRP_MODE_DEBUG = (EVRP_MODE_GORI | EVRP_MODE_CACHE)
+};
+
+/* Modes of OpenACC 'kernels' constructs handling.  */
+enum openacc_kernels
+{
+  OPENACC_KERNELS_DECOMPOSE,
+  OPENACC_KERNELS_PARLOOPS
+};
+
+/* Modes of OpenACC privatization diagnostics.  */
+enum openacc_privatization
+{
+  OPENACC_PRIVATIZATION_QUIET,
+  OPENACC_PRIVATIZATION_NOISY
+};
+
+#endif
 
 #endif /* ! GCC_FLAG_TYPES_H */

@@ -2,16 +2,14 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// +build !js
-// +build !plan9
-// +build !windows
+//go:build !js && !plan9 && !windows
+// +build !js,!plan9,!windows
 
 package os_test
 
 import (
 	"fmt"
 	"io"
-	"io/ioutil"
 	"math/rand"
 	"os"
 	"os/signal"
@@ -29,7 +27,7 @@ func TestNonpollableDeadline(t *testing.T) {
 		t.Skipf("skipping on %s", runtime.GOOS)
 	}
 
-	f, err := ioutil.TempFile("", "ostest")
+	f, err := os.CreateTemp("", "ostest")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -429,7 +427,7 @@ func testVariousDeadlines(t *testing.T) {
 					if err := r.SetDeadline(t0.Add(timeout)); err != nil {
 						t.Error(err)
 					}
-					n, err := io.Copy(ioutil.Discard, r)
+					n, err := io.Copy(io.Discard, r)
 					dt := time.Since(t0)
 					r.Close()
 					actvch <- result{n, err, dt}
@@ -565,7 +563,7 @@ func TestRacyWrite(t *testing.T) {
 	var wg sync.WaitGroup
 	defer wg.Wait()
 
-	go io.Copy(ioutil.Discard, r)
+	go io.Copy(io.Discard, r)
 
 	w.SetWriteDeadline(time.Now().Add(time.Millisecond))
 	for i := 0; i < 10; i++ {

@@ -28,12 +28,16 @@ git config alias.gcc-undescr \!"f() { o=\$(git config --get gcc-config.upstream)
 git config alias.gcc-verify '!f() { "`git rev-parse --show-toplevel`/contrib/gcc-changelog/git_check_commit.py" $@; } ; f'
 git config alias.gcc-backport '!f() { "`git rev-parse --show-toplevel`/contrib/git-backport.py" $@; } ; f'
 git config alias.gcc-mklog '!f() { "`git rev-parse --show-toplevel`/contrib/mklog.py" $@; } ; f'
-git config alias.gcc-commit-mklog '!f() { GCC_FORCE_MKLOG=1 git commit "$@"; }; f'
+git config alias.gcc-commit-mklog '!f() { "`git rev-parse --show-toplevel`/contrib/git-commit-mklog.py" "$@"; }; f'
 
 # Make diff on MD files use "(define" as a function marker.
 # Use this in conjunction with a .gitattributes file containing
 # *.md    diff=md
 git config diff.md.xfuncname '^\(define.*$'
+
+# Tell git send-email where patches go.
+# ??? Maybe also set sendemail.tocmd to guess from MAINTAINERS?
+git config sendemail.to 'gcc-patches@gcc.gnu.org'
 
 set_user=$(git config --get "user.name")
 set_email=$(git config --get "user.email")

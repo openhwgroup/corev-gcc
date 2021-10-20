@@ -1,5 +1,5 @@
 /* Classes for saving, deduplicating, and emitting analyzer diagnostics.
-   Copyright (C) 2019-2020 Free Software Foundation, Inc.
+   Copyright (C) 2019-2021 Free Software Foundation, Inc.
    Contributed by David Malcolm <dmalcolm@redhat.com>.
 
 This file is part of GCC.
@@ -23,48 +23,42 @@ along with GCC; see the file COPYING3.  If not see
 
 namespace ana {
 
+class epath_finder;
+
 /* A to-be-emitted diagnostic stored within diagnostic_manager.  */
 
 class saved_diagnostic
 {
 public:
-  enum status
-  {
-   STATUS_NEW,
-   STATUS_INFEASIBLE_PATH,
-   STATUS_FEASIBLE_PATH
-  };
-
   saved_diagnostic (const state_machine *sm,
 		    const exploded_node *enode,
 		    const supernode *snode, const gimple *stmt,
 		    stmt_finder *stmt_finder,
-		    tree var, state_machine::state_t state,
-		    pending_diagnostic *d);
+		    tree var, const svalue *sval,
+		    state_machine::state_t state,
+		    pending_diagnostic *d,
+		    unsigned idx);
   ~saved_diagnostic ();
 
   bool operator== (const saved_diagnostic &other) const;
 
-  void set_feasible ()
-  {
-    gcc_assert (m_status == STATUS_NEW);
-    m_status = STATUS_FEASIBLE_PATH;
-  }
-  void set_infeasible (feasibility_problem *p)
-  {
-    gcc_assert (m_status == STATUS_NEW);
-    m_status = STATUS_INFEASIBLE_PATH;
-    m_problem = p; // take ownership
-  }
+  json::object *to_json () const;
+
   const feasibility_problem *get_feasibility_problem () const
   {
     return m_problem;
   }
 
-  enum status get_status () const { return m_status; }
+  bool calc_best_epath (epath_finder *pf);
+  const exploded_path *get_best_epath () const { return m_best_epath; }
+  unsigned get_epath_length () const;
 
-  void set_epath_length (unsigned length) { m_epath_length = length; }
-  unsigned get_epath_length () const { return m_epath_length; }
+  void add_duplicate (saved_diagnostic *other);
+  unsigned get_num_dupes () const { return m_duplicates.length (); }
+
+  unsigned get_index () const { return m_idx; }
+
+  bool supercedes_p (const saved_diagnostic &other) const;
 
   //private:
   const state_machine *m_sm;
@@ -73,16 +67,19 @@ public:
   const gimple *m_stmt;
   stmt_finder *m_stmt_finder;
   tree m_var;
+  const svalue *m_sval;
   state_machine::state_t m_state;
-  pending_diagnostic *m_d;
-  exploded_edge *m_trailing_eedge;
+  pending_diagnostic *m_d; // owned
+  const exploded_edge *m_trailing_eedge;
 
 private:
   DISABLE_COPY_AND_ASSIGN (saved_diagnostic);
 
-  enum status m_status;
-  unsigned m_epath_length;
-  feasibility_problem *m_problem;
+  unsigned m_idx;
+  exploded_path *m_best_epath; // owned
+  feasibility_problem *m_problem; // owned
+
+  auto_vec<const saved_diagnostic *> m_duplicates;
 };
 
 class path_builder;
@@ -99,16 +96,22 @@ class path_builder;
 class diagnostic_manager : public log_user
 {
 public:
-  diagnostic_manager (logger *logger, int verbosity);
+  diagnostic_manager (logger *logger, engine *eng, int verbosity);
+
+  engine *get_engine () const { return m_eng; }
+
+  json::object *to_json () const;
 
   void add_diagnostic (const state_machine *sm,
-		       const exploded_node *enode,
+		       exploded_node *enode,
 		       const supernode *snode, const gimple *stmt,
 		       stmt_finder *finder,
-		       tree var, state_machine::state_t state,
+		       tree var,
+		       const svalue *sval,
+		       state_machine::state_t state,
 		       pending_diagnostic *d);
 
-  void add_diagnostic (const exploded_node *enode,
+  void add_diagnostic (exploded_node *enode,
 		       const supernode *snode, const gimple *stmt,
 		       stmt_finder *finder,
 		       pending_diagnostic *d);
@@ -116,10 +119,7 @@ public:
   void emit_saved_diagnostics (const exploded_graph &eg);
 
   void emit_saved_diagnostic (const exploded_graph &eg,
-			      const saved_diagnostic &sd,
-			      const exploded_path &epath,
-			      const gimple *stmt,
-			      int num_dupes);
+			      const saved_diagnostic &sd);
 
   unsigned get_num_diagnostics () const
   {
@@ -152,16 +152,23 @@ private:
 
   void prune_path (checker_path *path,
 		   const state_machine *sm,
-		   tree var, state_machine::state_t state) const;
+		   const svalue *sval,
+		   state_machine::state_t state) const;
 
   void prune_for_sm_diagnostic (checker_path *path,
 				const state_machine *sm,
 				tree var,
 				state_machine::state_t state) const;
+  void prune_for_sm_diagnostic (checker_path *path,
+				const state_machine *sm,
+				const svalue *sval,
+				state_machine::state_t state) const;
   void update_for_unsuitable_sm_exprs (tree *expr) const;
   void prune_interproc_events (checker_path *path) const;
+  void consolidate_conditions (checker_path *path) const;
   void finish_pruning (checker_path *path) const;
 
+  engine *m_eng;
   auto_delete_vec<saved_diagnostic> m_saved_diagnostics;
   const int m_verbosity;
 };

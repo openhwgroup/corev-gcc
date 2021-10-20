@@ -1,5 +1,5 @@
 /* Building internal representation for IRA.
-   Copyright (C) 2006-2020 Free Software Foundation, Inc.
+   Copyright (C) 2006-2021 Free Software Foundation, Inc.
    Contributed by Vladimir Makarov <vmakarov@redhat.com>.
 
 This file is part of GCC.
@@ -128,7 +128,6 @@ create_loop_tree_nodes (void)
   bool skip_p;
   edge_iterator ei;
   edge e;
-  vec<edge> edges;
   loop_p loop;
 
   ira_bb_nodes
@@ -173,14 +172,13 @@ create_loop_tree_nodes (void)
 	      }
 	  if (skip_p)
 	    continue;
-	  edges = get_loop_exit_edges (loop);
+	  auto_vec<edge> edges = get_loop_exit_edges (loop);
 	  FOR_EACH_VEC_ELT (edges, j, e)
 	    if ((e->flags & EDGE_ABNORMAL) && EDGE_CRITICAL_P (e))
 	      {
 		skip_p = true;
 		break;
 	      }
-	  edges.release ();
 	  if (skip_p)
 	    continue;
 	}
@@ -631,7 +629,7 @@ ior_hard_reg_conflicts (ira_allocno_t a, const_hard_reg_set set)
 bool
 ira_conflict_vector_profitable_p (ira_object_t obj, int num)
 {
-  int nw;
+  int nbytes;
   int max = OBJECT_MAX (obj);
   int min = OBJECT_MIN (obj);
 
@@ -640,9 +638,14 @@ ira_conflict_vector_profitable_p (ira_object_t obj, int num)
        in allocation.  */
     return false;
 
-  nw = (max - min + IRA_INT_BITS) / IRA_INT_BITS;
-  return (2 * sizeof (ira_object_t) * (num + 1)
-	  < 3 * nw * sizeof (IRA_INT_TYPE));
+  nbytes = (max - min) / 8 + 1;
+  STATIC_ASSERT (sizeof (ira_object_t) <= 8);
+  /* Don't use sizeof (ira_object_t), use constant 8.  Size of ira_object_t (a
+     pointer) is different on 32-bit and 64-bit targets.  Usage sizeof
+     (ira_object_t) can result in different code generation by GCC built as 32-
+     and 64-bit program.  In any case the profitability is just an estimation
+     and border cases are rare.  */
+  return (2 * 8 /* sizeof (ira_object_t) */ * (num + 1) < 3 * nbytes);
 }
 
 /* Allocates and initialize the conflict vector of OBJ for NUM
@@ -1674,7 +1677,7 @@ finish_cost_vectors (void)
 
 static vec<ira_loop_tree_node_t>
 ira_loop_tree_body_rev_postorder (ira_loop_tree_node_t loop_node ATTRIBUTE_UNUSED,
-				  vec<ira_loop_tree_node_t> loop_preorder)
+				  const vec<ira_loop_tree_node_t> &loop_preorder)
 {
   vec<ira_loop_tree_node_t> topsort_nodes = vNULL;
   unsigned int n_loop_preorder;
@@ -1964,17 +1967,15 @@ create_loop_tree_node_allocnos (ira_loop_tree_node_t loop_node)
       int i;
       edge_iterator ei;
       edge e;
-      vec<edge> edges;
 
       ira_assert (current_loops != NULL);
       FOR_EACH_EDGE (e, ei, loop_node->loop->header->preds)
 	if (e->src != loop_node->loop->latch)
 	  create_loop_allocnos (e);
 
-      edges = get_loop_exit_edges (loop_node->loop);
+      auto_vec<edge> edges = get_loop_exit_edges (loop_node->loop);
       FOR_EACH_VEC_ELT (edges, i, e)
 	create_loop_allocnos (e);
-      edges.release ();
     }
 }
 
@@ -2167,13 +2168,12 @@ loop_with_complex_edge_p (class loop *loop)
   int i;
   edge_iterator ei;
   edge e;
-  vec<edge> edges;
   bool res;
 
   FOR_EACH_EDGE (e, ei, loop->header->preds)
     if (e->flags & EDGE_EH)
       return true;
-  edges = get_loop_exit_edges (loop);
+  auto_vec<edge> edges = get_loop_exit_edges (loop);
   res = false;
   FOR_EACH_VEC_ELT (edges, i, e)
     if (e->flags & EDGE_COMPLEX)
@@ -2181,7 +2181,6 @@ loop_with_complex_edge_p (class loop *loop)
 	res = true;
 	break;
       }
-  edges.release ();
   return res;
 }
 #endif

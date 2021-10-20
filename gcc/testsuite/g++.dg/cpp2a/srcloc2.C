@@ -84,7 +84,7 @@ const source_location *p1 = &s1;
 const source_location *p2 = &s2;
 
 static_assert (source_location::current ().line () == __LINE__);
-static_assert (source_location::current ().column () == 42);
+static_assert (source_location::current ().column () == 41);
 
 constexpr bool
 quux ()
@@ -92,7 +92,7 @@ quux ()
   const char *file1 = source_location::current ().file_name ();
   const char *file2 = __FILE__;
   const char *function1 = source_location::current ().function_name ();
-  const char *function2 = __FUNCTION__;
+  const char *function2 = __PRETTY_FUNCTION__;
   int line1 = source_location::current ().line ();
   int line2 = __LINE__ - 1;
   int column
@@ -110,7 +110,7 @@ quux ()
     return false;
   if (line1 != line2)
     return false;
-  if (column != 33)
+  if (column != 32)
     return false;
   return true;
 }

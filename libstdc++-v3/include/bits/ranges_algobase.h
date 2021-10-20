@@ -1,6 +1,6 @@
 // Core algorithmic facilities -*- C++ -*-
 
-// Copyright (C) 2020 Free Software Foundation, Inc.
+// Copyright (C) 2020-2021 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -33,10 +33,11 @@
 #if __cplusplus > 201703L
 
 #include <compare>
-#include <iterator>
-// #include <bits/range_concepts.h>
-#include <ranges>
-#include <bits/invoke.h>
+#include <bits/stl_iterator_base_types.h>
+#include <bits/stl_iterator_base_funcs.h>
+#include <bits/stl_iterator.h>
+#include <bits/ranges_base.h> // ranges::begin, ranges::range etc.
+#include <bits/invoke.h>      // __invoke
 #include <bits/cpp_type_traits.h> // __is_byte
 
 #if __cpp_lib_concepts
@@ -105,7 +106,6 @@ namespace ranges
 	      return false;
 
 	    using _ValueType1 = iter_value_t<_Iter1>;
-	    using _ValueType2 = iter_value_t<_Iter2>;
 	    constexpr bool __use_memcmp
 	      = ((is_integral_v<_ValueType1> || is_pointer_v<_ValueType1>)
 		 && __memcmpable<_Iter1, _Iter2>::__value
@@ -197,9 +197,9 @@ namespace ranges
     requires (_IsMove
 	      ? indirectly_movable<_Iter, _Out>
 	      : indirectly_copyable<_Iter, _Out>)
-    constexpr conditional_t<_IsMove,
-			    move_backward_result<_Iter, _Out>,
-			    copy_backward_result<_Iter, _Out>>
+    constexpr __conditional_t<_IsMove,
+			      move_backward_result<_Iter, _Out>,
+			      copy_backward_result<_Iter, _Out>>
     __copy_or_move_backward(_Iter __first, _Sent __last, _Out __result);
 
   template<bool _IsMove,
@@ -208,9 +208,9 @@ namespace ranges
     requires (_IsMove
 	      ? indirectly_movable<_Iter, _Out>
 	      : indirectly_copyable<_Iter, _Out>)
-    constexpr conditional_t<_IsMove,
-			    move_result<_Iter, _Out>,
-			    copy_result<_Iter, _Out>>
+    constexpr __conditional_t<_IsMove,
+			      move_result<_Iter, _Out>,
+			      copy_result<_Iter, _Out>>
     __copy_or_move(_Iter __first, _Sent __last, _Out __result)
     {
       // TODO: implement more specializations to be at least on par with
@@ -246,7 +246,7 @@ namespace ranges
       else if constexpr (__is_normal_iterator<_Out>)
 	{
 	  auto [__in,__out]
-	    = ranges::__copy_or_move<_IsMove>(__first, __last, __result.base());
+	    = ranges::__copy_or_move<_IsMove>(std::move(__first), __last, __result.base());
 	  return {std::move(__in), decltype(__result){__out}};
 	}
       else if constexpr (sized_sentinel_for<_Sent, _Iter>)
@@ -351,9 +351,9 @@ namespace ranges
     requires (_IsMove
 	      ? indirectly_movable<_Iter, _Out>
 	      : indirectly_copyable<_Iter, _Out>)
-    constexpr conditional_t<_IsMove,
-			    move_backward_result<_Iter, _Out>,
-			    copy_backward_result<_Iter, _Out>>
+    constexpr __conditional_t<_IsMove,
+			      move_backward_result<_Iter, _Out>,
+			      copy_backward_result<_Iter, _Out>>
     __copy_or_move_backward(_Iter __first, _Sent __last, _Out __result)
     {
       // TODO: implement more specializations to be at least on par with

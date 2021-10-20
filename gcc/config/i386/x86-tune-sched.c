@@ -1,5 +1,5 @@
 /* Scheduler hooks for IA-32 which implement CPU specific logic.
-   Copyright (C) 1988-2020 Free Software Foundation, Inc.
+   Copyright (C) 1988-2021 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -66,10 +66,12 @@ ix86_issue_rate (void)
     case PROCESSOR_BDVER4:
     case PROCESSOR_ZNVER1:
     case PROCESSOR_ZNVER2:
+    case PROCESSOR_ZNVER3:
     case PROCESSOR_CORE2:
     case PROCESSOR_NEHALEM:
     case PROCESSOR_SANDYBRIDGE:
     case PROCESSOR_HASWELL:
+    case PROCESSOR_TREMONT:
     case PROCESSOR_GENERIC:
       return 4;
 
@@ -180,7 +182,6 @@ exact_dependency_1 (rtx addr, rtx insn)
     case SYMBOL_REF:
     case CODE_LABEL:
     case PC:
-    case CC0:
     case EXPR_LIST:
       return false;
     default:
@@ -385,7 +386,7 @@ ix86_adjust_cost (rtx_insn *insn, int dep_type, rtx_insn *dep_insn, int cost,
 	  if (unit == UNIT_INTEGER || unit == UNIT_UNKNOWN)
 	    loadcost = 3;
 	  else
-	    loadcost = TARGET_ATHLON ? 2 : 0;
+	    loadcost = TARGET_CPU_P (ATHLON) ? 2 : 0;
 
 	  if (cost >= loadcost)
 	    cost -= loadcost;
@@ -396,6 +397,7 @@ ix86_adjust_cost (rtx_insn *insn, int dep_type, rtx_insn *dep_insn, int cost,
 
     case PROCESSOR_ZNVER1:
     case PROCESSOR_ZNVER2:
+    case PROCESSOR_ZNVER3:
       /* Stack engine allows to execute push&pop instructions in parall.  */
       if ((insn_type == TYPE_PUSH || insn_type == TYPE_POP)
 	  && (dep_insn_type == TYPE_PUSH || dep_insn_type == TYPE_POP))
@@ -428,6 +430,7 @@ ix86_adjust_cost (rtx_insn *insn, int dep_type, rtx_insn *dep_insn, int cost,
     case PROCESSOR_NEHALEM:
     case PROCESSOR_SANDYBRIDGE:
     case PROCESSOR_HASWELL:
+    case PROCESSOR_TREMONT:
     case PROCESSOR_GENERIC:
       /* Stack engine allows to execute push&pop instructions in parall.  */
       if ((insn_type == TYPE_PUSH || insn_type == TYPE_POP)

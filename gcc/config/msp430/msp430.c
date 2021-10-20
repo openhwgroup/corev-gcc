@@ -1,5 +1,5 @@
 /* Subroutines used for code generation on TI MSP430 processors.
-   Copyright (C) 2012-2020 Free Software Foundation, Inc.
+   Copyright (C) 2012-2021 Free Software Foundation, Inc.
    Contributed by Red Hat.
 
    This file is part of GCC.
@@ -49,13 +49,18 @@
 #include "msp430-devices.h"
 #include "incpath.h"
 #include "prefix.h"
+#include "insn-config.h"
+#include "insn-attr.h"
+#include "recog.h"
 
 /* This file should be included last.  */
 #include "target-def.h"
 
 
 static void msp430_compute_frame_info (void);
-static bool use_32bit_hwmult (void);
+static bool msp430_use_16bit_hwmult (void);
+static bool msp430_use_32bit_hwmult (void);
+static bool use_helper_for_const_shift (machine_mode mode, HOST_WIDE_INT amt);
 
 
 
@@ -117,7 +122,7 @@ msp430_mcu_name (void)
 
       /* The 'i' in the device name symbol for msp430i* devices must be lower
 	 case, to match the expected symbol in msp430.h.  */
-      if (strncmp (target_mcu, "msp430i", 7) == 0)
+      if (startswith (target_mcu, "msp430i"))
 	{
 	  snprintf (mcu_name, sizeof (mcu_name) - 1, "__MSP430i%s__",
 		    target_mcu + 7);
@@ -160,15 +165,7 @@ msp430_option_override (void)
 
   init_machine_status = msp430_init_machine_status;
 
-  if (target_cpu)
-    {
-      /* gcc/common/config/msp430-common.c will have
-	 already canonicalised the string in target_cpu.  */
-      if (strcasecmp (target_cpu, "msp430x") == 0)
-	msp430x = true;
-      else /* target_cpu == "msp430" - already handled by the front end.  */
-	msp430x = false;
-    }
+  msp430x = target_cpu >= MSP430_CPU_MSP430X_DEFAULT;
 
   if (target_mcu)
     {
@@ -180,7 +177,7 @@ msp430_option_override (void)
 
 	  if (msp430_warn_mcu)
 	    {
-	      if (target_cpu && msp430x != xisa)
+	      if (target_cpu != MSP430_CPU_MSP430X_DEFAULT && msp430x != xisa)
 		warning (0, "MCU %qs supports %s ISA but %<-mcpu%> option "
 			 "is set to %s",
 			 target_mcu, xisa ? "430X" : "430",
@@ -212,7 +209,10 @@ msp430_option_override (void)
 			 "but %<-mhwmult%> is set to f5series",
 			 target_mcu, hwmult_name (extracted_mcu_data.hwmpy));
 	    }
-	  msp430x = xisa;
+	  /* Only override the default setting with the extracted ISA value if
+	     the user has not passed -mcpu=.  */
+	  if (target_cpu == MSP430_CPU_MSP430X_DEFAULT)
+	    msp430x = xisa;
 	}
       else
 	{
@@ -220,10 +220,10 @@ msp430_option_override (void)
 	    {
 	      if (msp430_warn_mcu)
 		{
-		  if (target_cpu == NULL)
+		  if (target_cpu == MSP430_CPU_MSP430X_DEFAULT)
 		    warning (0,
 			     "Unrecognized MCU name %qs, assuming that it is "
-			     "just a MSP430 with no hardware multiply.\n"
+			     "just a MSP430X with no hardware multiply.\n"
 			     "Use the %<-mcpu%> and %<-mhwmult%> options to "
 			     "set these explicitly.",
 			     target_mcu);
@@ -237,26 +237,19 @@ msp430_option_override (void)
 
 	      msp430_hwmult_type = MSP430_HWMULT_NONE;
 	    }
-	  else if (target_cpu == NULL)
+	  else if (target_cpu == MSP430_CPU_MSP430X_DEFAULT)
 	    {
 	      if (msp430_warn_mcu)
 		warning (0,
 			 "Unrecognized MCU name %qs, assuming that it just "
-			 "supports the MSP430 ISA.\nUse the %<-mcpu%> option "
+			 "supports the MSP430X ISA.\nUse the %<-mcpu%> option "
 			 "to set the ISA explicitly.",
 			 target_mcu);
-
-	      msp430x = false;
 	    }
 	  else if (msp430_warn_mcu)
 	    warning (0, "Unrecognized MCU name %qs.", target_mcu);
 	}
     }
-
-  /* The F5 series are all able to support the 430X ISA.  */
-  if (target_cpu == NULL && target_mcu == NULL
-      && msp430_hwmult_type == MSP430_HWMULT_F5SERIES)
-    msp430x = true;
 
   if (TARGET_LARGE && !msp430x)
     error ("%<-mlarge%> requires a 430X-compatible %<-mmcu=%>");
@@ -1043,39 +1036,635 @@ msp430_legitimate_constant (machine_mode mode, rtx x)
 }
 
 
+/* Describing Relative Costs of Operations
+   To model the cost of an instruction, use the number of cycles when
+   optimizing for speed, and the number of words when optimizing for size.
+   The cheapest instruction will execute in one cycle and cost one word.
+   The cycle and size costs correspond to 430 ISA instructions, not 430X
+   instructions or 430X "address" instructions.  The relative costs of 430X
+   instructions is accurately modeled with the 430 costs.  The relative costs
+   of some "address" instructions can differ, but these are not yet handled.
+   Adding support for this could improve performance/code size.  */
+
+struct single_op_cost
+{
+  const int reg;
+  /* Indirect register (@Rn) or indirect autoincrement (@Rn+).  */
+  const int ind;
+  const int mem;
+};
+
+static const struct single_op_cost cycle_cost_single_op =
+{
+  1, 3, 4
+};
+
+static const struct single_op_cost size_cost_single_op =
+{
+  1, 1, 2
+};
+
+/* When the destination of an insn is memory, the cost is always the same
+   regardless of whether that memory is accessed using indirect register,
+   indexed or absolute addressing.
+   When the source operand is memory, indirect register and post-increment have
+   the same cost, which is lower than indexed and absolute, which also have
+   the same cost.  */
+struct double_op_cost
+{
+  /* Source operand is a register.  */
+  const int r2r;
+  const int r2pc;
+  const int r2m;
+
+  /* Source operand is memory, using indirect register (@Rn) or indirect
+     autoincrement (@Rn+) addressing modes.  */
+  const int ind2r;
+  const int ind2pc;
+  const int ind2m;
+
+  /* Source operand is an immediate.  */
+  const int imm2r;
+  const int imm2pc;
+  const int imm2m;
+
+  /* Source operand is memory, using indexed (x(Rn)) or absolute (&ADDR)
+     addressing modes.  */
+  const int mem2r;
+  const int mem2pc;
+  const int mem2m;
+};
+
+/* These structures describe the cost of MOV, BIT and CMP instructions, in terms
+   of clock cycles or words.  */
+static const struct double_op_cost cycle_cost_double_op_mov =
+{
+  1, 3, 3,
+  2, 4, 4,
+  2, 3, 4,
+  3, 5, 5
+};
+
+/* Cycle count when memory is the destination operand is one larger than above
+   for instructions that aren't MOV, BIT or CMP.  */
+static const struct double_op_cost cycle_cost_double_op =
+{
+  1, 3, 4,
+  2, 4, 5,
+  2, 3, 5,
+  3, 5, 6
+};
+
+static const struct double_op_cost size_cost_double_op =
+{
+  1, 1, 2,
+  1, 1, 2,
+  2, 2, 3,
+  2, 2, 3
+};
+
+struct msp430_multlib_costs
+{
+  const int mulhi;
+  const int mulsi;
+  const int muldi;
+};
+
+/* There is no precise size cost when using libcalls, instead it is disparaged
+   relative to other instructions.
+   The cycle costs are from the CALL to the RET, inclusive.
+   FIXME muldi cost is not accurate.  */
+static const struct msp430_multlib_costs cycle_cost_multlib_32bit =
+{
+  27, 33, 66
+};
+
+/* 32bit multiply takes a few more instructions on 16bit hwmult.  */
+static const struct msp430_multlib_costs cycle_cost_multlib_16bit =
+{
+  27, 42, 66
+};
+
+/* TARGET_REGISTER_MOVE_COST
+   There is only one class of general-purpose, non-fixed registers, and the
+   relative cost of moving data between them is always the same.
+   Therefore, the default of 2 is optimal.  */
+
+#undef TARGET_MEMORY_MOVE_COST
+#define TARGET_MEMORY_MOVE_COST msp430_memory_move_cost
+
+/* Return the cost of moving data between registers and memory.
+   The returned cost must be relative to the default TARGET_REGISTER_MOVE_COST
+   of 2.
+   IN is false if the value is to be written to memory.  */
+static int
+msp430_memory_move_cost (machine_mode mode ATTRIBUTE_UNUSED,
+			 reg_class_t rclass ATTRIBUTE_UNUSED,
+			 bool in)
+{
+  int cost;
+  const struct double_op_cost *cost_p;
+  /* Optimize with a code size focus by default, unless -O2 or above is
+     specified.  */
+  bool speed = (!optimize_size && optimize >= 2);
+
+  cost_p = (speed ? &cycle_cost_double_op_mov : &size_cost_double_op);
+
+  if (in)
+    /* Reading from memory using indirect addressing is assumed to be the more
+       common case.  */
+    cost = cost_p->ind2r;
+  else
+    cost = cost_p->r2m;
+
+  /* All register to register moves cost 1 cycle or 1 word, so multiply by 2
+     to get the costs relative to TARGET_REGISTER_MOVE_COST of 2.  */
+  return 2 * cost;
+}
+
+/* For X, which must be a MEM RTX, return TRUE if it is an indirect memory
+   reference, @Rn or @Rn+.  */
+static bool
+msp430_is_mem_indirect (rtx x)
+{
+  gcc_assert (GET_CODE (x) == MEM);
+  rtx op0 = XEXP (x, 0);
+  return (GET_CODE (op0) == REG || GET_CODE (op0) == POST_INC);
+}
+
+/* Costs of MSP430 instructions are generally based on the addressing mode
+   combination of the source and destination operands.
+   Given source operand SRC (which may be NULL to indicate a single-operand
+   instruction) and destination operand DST return the cost of this
+   expression.  */
+static int
+msp430_costs (rtx src, rtx dst, bool speed, rtx outer_rtx)
+{
+  enum rtx_code src_code = GET_CODE (src);
+  enum rtx_code dst_code = GET_CODE (dst);
+  enum rtx_code outer_code = GET_CODE (outer_rtx);
+  machine_mode outer_mode = GET_MODE (outer_rtx);
+  const struct double_op_cost *cost_p;
+  cost_p = (speed ? &cycle_cost_double_op : &size_cost_double_op);
+
+  if (outer_code == TRUNCATE
+      && (outer_mode == QImode
+	  || outer_mode == HImode
+	  || outer_mode == PSImode))
+    /* Truncation to these modes is normally free as a side effect of the
+       instructions themselves.  */
+    return 0;
+
+  if (dst_code == SYMBOL_REF
+      || dst_code == LABEL_REF
+      || dst_code == CONST_INT)
+    /* Catch RTX like (minus (const_int 0) (reg)) but don't add any cost.  */
+    return 0;
+
+  switch (src_code)
+    {
+    case REG:
+      return (dst_code == REG ? cost_p->r2r
+	      : (dst_code == PC ? cost_p->r2pc : cost_p->r2m));
+
+    case CONST_INT:
+    case SYMBOL_REF:
+    case LABEL_REF:
+    case CONST:
+      return (dst_code == REG ? cost_p->imm2r
+	      : (dst_code == PC ? cost_p->imm2pc : cost_p->imm2m));
+
+
+    case MEM:
+      if (msp430_is_mem_indirect (src))
+	return (dst_code == REG ? cost_p->ind2r : (dst_code == PC
+						   ? cost_p->ind2pc
+						   : cost_p->ind2m));
+      else
+	return (dst_code == REG ? cost_p->mem2r	: (dst_code == PC
+						   ? cost_p->mem2pc
+						   : cost_p->mem2m));
+    default:
+      return cost_p->mem2m;
+    }
+}
+
+/* Given source operand SRC and destination operand DST from the shift or
+   rotate RTX OUTER_RTX, return the cost of performing that shift, assuming
+   optimization for speed when SPEED is true.  */
+static int
+msp430_shift_costs (rtx src, rtx dst, bool speed, rtx outer_rtx)
+{
+  int amt;
+  enum rtx_code src_code = GET_CODE (src);
+  enum rtx_code dst_code = GET_CODE (dst);
+  const struct single_op_cost *cost_p;
+
+  cost_p = (speed ? &cycle_cost_single_op : &size_cost_single_op);
+
+  if (src_code != CONST_INT)
+    /* The size or speed cost when the shift amount is unknown cannot be
+       accurately calculated, so just disparage it slightly.  */
+    return 2 * msp430_costs (src, dst, speed, outer_rtx);
+
+  if (use_helper_for_const_shift (GET_MODE (outer_rtx), amt = INTVAL (src)))
+    {
+      /* GCC sometimes tries to perform shifts in some very inventive ways,
+	 resulting in much larger code size usage than necessary, if
+	 they are disparaged too much here.  So in general, if
+	 use_helper_for_const_shift thinks a helper should be used, obey
+	 that and don't disparage the shift any more than a regular
+	 instruction, even though the shift may actually cost more.
+	 This ensures that the RTL generated at the initial expand pass has the
+	 expected shift instructions, which can be mapped to the helper
+	 functions.  */
+      return msp430_costs (src, dst, speed, outer_rtx);
+    }
+
+  if (!msp430x)
+    {
+      /* Each shift by one place will be emitted individually.  */
+      switch (dst_code)
+	{
+	case REG:
+	case CONST_INT:
+	  return amt * cost_p->reg;
+	case MEM:
+	  if (msp430_is_mem_indirect (dst))
+	    return amt * cost_p->ind;
+	  else
+	    return amt * cost_p->mem;
+	default:
+	  return amt * cost_p->mem;
+	}
+    }
+
+  /* RRAM, RRCM, RRUM, RLAM are used for shift counts <= 4, otherwise, the 'X'
+     versions are used.
+     Instructions which shift a MEM operand will never actually be output.  It
+     will always be copied into a register to allow for efficient shifting.  So
+     the cost just takes into account the cost of an additional copy in that
+     case.  */
+  return (amt <= 4 ? (speed ? amt : 1) : (speed ? amt + 1 : 2)
+	  + (dst_code == REG ? 0
+	     : msp430_costs (dst, gen_rtx_REG (HImode, 10), speed, outer_rtx)));
+}
+
+/* Given source operand SRC and destination operand DST from the MULT/DIV/MOD
+   RTX OUTER_RTX, return the cost of performing that operation, assuming
+   optimization for speed when SPEED is true.  */
+static int
+msp430_muldiv_costs (rtx src, rtx dst, bool speed, rtx outer_rtx,
+		     machine_mode outer_mode)
+{
+  enum rtx_code outer_code = GET_CODE (outer_rtx);
+  const struct msp430_multlib_costs *cost_p;
+  cost_p = (msp430_use_16bit_hwmult ()
+	    ? &cycle_cost_multlib_32bit
+	    : &cycle_cost_multlib_16bit);
+
+  int factor = 1;
+  /* Only used in some calculations.  */
+  int mode_factor = 1;
+  if (outer_mode == SImode)
+    mode_factor = 2;
+  else if (outer_mode == PSImode)
+    /* PSImode multiplication is performed using SImode operands, so has extra
+       cost to factor in the conversions necessary before/after the
+       operation.  */
+    mode_factor = 3;
+  else if (outer_mode == DImode)
+    mode_factor = 4;
+
+  if (!speed)
+    {
+      /* The codesize cost of using a helper function to perform the
+	 multiplication or division cannot be accurately calculated, since the
+	 cost depends on how many times the operation is performed in the
+	 entire program.  */
+      if (outer_code != MULT)
+	/* Division is always expensive.  */
+	factor = 7;
+      else if (((msp430_use_16bit_hwmult () && outer_mode != DImode)
+		|| msp430_use_32bit_hwmult ()
+		|| msp430_use_f5_series_hwmult ()))
+	/* When the hardware multiplier is available, only disparage
+	   slightly.  */
+	factor = 2;
+      else
+	factor = 5;
+      return factor * mode_factor * msp430_costs (src, dst, speed, outer_rtx);
+    }
+
+  /* When there is hardware multiply support, there is a relatively low, fixed
+     cycle cost to performing any multiplication, but when there is no hardware
+     multiply support it is very costly.  That precise cycle cost has not been
+     calculated here.
+     Division is extra slow since it always uses a software library.
+     The 16-bit hardware multiply library cannot be used to produce 64-bit
+     results.  */
+  if (outer_code != MULT || !msp430_has_hwmult ()
+      || (outer_mode == DImode && msp430_use_16bit_hwmult ()))
+    {
+      factor = (outer_code == MULT ? 50 : 70);
+      return factor * mode_factor * msp430_costs (src, dst, speed, outer_rtx);
+    }
+
+  switch (outer_mode)
+    {
+    case E_QImode:
+    case E_HImode:
+      /* Include the cost of copying the operands into and out of the hardware
+	 multiply routine.  */
+      return cost_p->mulhi + (3 * msp430_costs (src, dst, speed, outer_rtx));
+
+    case E_PSImode:
+      /* Extra factor for the conversions necessary to do PSI->SI before the
+	 operation.  */
+      factor = 2;
+      /* fallthru.  */
+    case E_SImode:
+      return factor * (cost_p->mulsi
+		       + (6 * msp430_costs (src, dst, speed, outer_rtx)));
+
+    case E_DImode:
+    default:
+      return cost_p->muldi + (12 * msp430_costs (src, dst, speed, outer_rtx));
+    }
+}
+
+/* Recurse within X to find the actual destination operand of the expression.
+   For example:
+   (plus (ashift (minus (ashift (reg)
+   (const_int) ......
+   should return the reg RTX.  */
+static rtx
+msp430_get_inner_dest_code (rtx x)
+{
+  enum rtx_code code = GET_CODE (x);
+  rtx op0 = XEXP (x, 0);
+  switch (code)
+    {
+    case REG:
+    case SYMBOL_REF:
+    case CONST_INT:
+    case CONST:
+    case LABEL_REF:
+      return x;
+
+    case MEM:
+      /* Return the MEM expr not the inner REG for these cases.  */
+      switch (GET_CODE (op0))
+	{
+	case REG:
+	case SYMBOL_REF:
+	case LABEL_REF:
+	case CONST:
+	case POST_INC:
+	  return x;
+
+	case PLUS:
+	  /* return MEM (PLUS (REG) (CONST)) */
+	  if (GET_CODE (XEXP (op0, 0)) == REG)
+	    {
+	      if (GET_CODE (XEXP (op0, 1)) == CONST_INT
+		  || GET_CODE (XEXP (op0, 1)) == CONST
+		  || GET_CODE (XEXP (op0, 1)) == LABEL_REF
+		  || GET_CODE (XEXP (op0, 1)) == SYMBOL_REF)
+		return x;
+	      else
+		return msp430_get_inner_dest_code (op0);
+	    }
+	  return msp430_get_inner_dest_code (op0);
+
+	default:
+	  if (GET_RTX_FORMAT (code)[0] != 'e')
+	    return x;
+	  return msp430_get_inner_dest_code (op0);
+	}
+      break;
+
+    default:
+      if (op0 == NULL_RTX)
+	gcc_unreachable ();
+      else
+	{
+	  if (GET_RTX_FORMAT (code)[0] != 'e'
+	      && code != ENTRY_VALUE)
+	    return x;
+	  return msp430_get_inner_dest_code (op0);
+	}
+    }
+}
+
+/* Calculate the cost of an MSP430 single-operand instruction, for operand DST
+   within the RTX OUTER_RTX, optimizing for speed if SPEED is true.  */
+static int
+msp430_single_op_cost (rtx dst, bool speed, rtx outer_rtx)
+{
+  enum rtx_code dst_code = GET_CODE (dst);
+  const struct single_op_cost *cost_p;
+  const struct double_op_cost *double_op_cost_p;
+
+  cost_p = (speed ? &cycle_cost_single_op : &size_cost_single_op);
+  double_op_cost_p = (speed ? &cycle_cost_double_op : &size_cost_double_op);
+
+  switch (dst_code)
+    {
+    case REG:
+      return cost_p->reg;
+    case MEM:
+      if (msp430_is_mem_indirect (dst))
+	return cost_p->ind;
+      else
+	return cost_p->mem;
+
+    case CONST_INT:
+    case CONST_FIXED:
+    case CONST_DOUBLE:
+    case SYMBOL_REF:
+    case CONST:
+      /* A constant value would need to be copied into a register first.  */
+      return double_op_cost_p->imm2r + cost_p->reg;
+
+    default:
+      return cost_p->mem;
+    }
+}
+
 #undef  TARGET_RTX_COSTS
 #define TARGET_RTX_COSTS msp430_rtx_costs
 
-static bool msp430_rtx_costs (rtx	   x ATTRIBUTE_UNUSED,
-			      machine_mode mode,
-			      int	   outer_code ATTRIBUTE_UNUSED,
-			      int	   opno ATTRIBUTE_UNUSED,
-			      int *	   total,
-			      bool	   speed ATTRIBUTE_UNUSED)
+/* This target hook describes the relative costs of RTL expressions.
+   The function recurses to just before the lowest level of the expression,
+   when both of the operands of the expression can be examined at the same time.
+   This is because the cost of the expression depends on the specific
+   addressing mode combination of the operands.
+   The hook returns true when all subexpressions of X have been processed, and
+   false when rtx_cost should recurse.  */
+static bool
+msp430_rtx_costs (rtx x,
+		  machine_mode mode,
+		  int	   outer_code ATTRIBUTE_UNUSED,
+		  int	   opno ATTRIBUTE_UNUSED,
+		  int *	   total,
+		  bool	   speed)
 {
-  int code = GET_CODE (x);
+  enum rtx_code code = GET_CODE (x);
+  rtx dst, src;
+  rtx dst_inner, src_inner;
+
+  *total = 0;
+  dst = XEXP (x, 0);
+  if (GET_RTX_LENGTH (code) == 1)
+    /* Some RTX that are single-op in GCC are double-op when translated to
+       MSP430 instructions e.g NOT, NEG, ZERO_EXTEND.  */
+    src = dst;
+  else
+    src = XEXP (x, 1);
+
 
   switch (code)
     {
-    case SIGN_EXTEND:
-      if (mode == SImode && outer_code == SET)
-	{
-	  *total = COSTS_N_INSNS (4);
-	  return true;
-	}
-      break;
+    case SET:
+      /* Ignoring SET improves codesize.  */
+      if (!speed)
+	return true;
+      /* fallthru.  */
+    case PLUS:
+      if (outer_code == MEM)
+	/* Do not add any cost for the plus itself, but recurse in case there
+	   are more complicated RTX inside.  */
+	return false;
+      /* fallthru.  */
+    case MINUS:
+    case AND:
+    case IOR:
+    case XOR:
+    case NOT:
+    case ZERO_EXTEND:
+    case TRUNCATE:
+    case NEG:
+    case ZERO_EXTRACT:
+    case SIGN_EXTRACT:
+    case IF_THEN_ELSE:
+      dst_inner = msp430_get_inner_dest_code (dst);
+      src_inner = msp430_get_inner_dest_code (src);
+      *total = COSTS_N_INSNS (msp430_costs (src_inner, dst_inner, speed, x));
+      if (mode == SImode)
+	*total *= 2;
+      if (mode == DImode)
+	*total *= 4;
+      return false;
+
+    case ROTATE:
     case ASHIFT:
     case ASHIFTRT:
     case LSHIFTRT:
-      if (!msp430x)
-	{
-	  *total = COSTS_N_INSNS (100);
-	  return true;
-	}
-      break;
+      dst_inner = msp430_get_inner_dest_code (dst);
+      src_inner = msp430_get_inner_dest_code (src);
+      *total = COSTS_N_INSNS (msp430_shift_costs (src_inner, dst_inner,
+						  speed, x));
+      if (mode == SImode)
+	*total *= 2;
+      if (mode == DImode)
+	*total *= 4;
+      return false;
+
+    case MULT:
+    case DIV:
+    case MOD:
+    case UDIV:
+    case UMOD:
+      dst_inner = msp430_get_inner_dest_code (dst);
+      src_inner = msp430_get_inner_dest_code (src);
+      *total = COSTS_N_INSNS (msp430_muldiv_costs (src_inner, dst_inner, speed,
+						   x, mode));
+      return false;
+
+    case CALL:
+    case SIGN_EXTEND:
+      dst_inner = msp430_get_inner_dest_code (dst);
+      *total = COSTS_N_INSNS (msp430_single_op_cost (dst_inner, speed, x));
+      if (mode == SImode)
+	*total *= 2;
+      if (mode == DImode)
+	*total *= 4;
+      return false;
+
+    case CONST_INT:
+    case CONST_FIXED:
+    case CONST_DOUBLE:
+    case SYMBOL_REF:
+    case CONST:
+    case LABEL_REF:
+    case REG:
+    case PC:
+    case POST_INC:
+      if (mode == SImode)
+	*total = COSTS_N_INSNS (2);
+      else if (mode == DImode)
+	*total = COSTS_N_INSNS (4);
+      return true;
+
+    case MEM:
+      /* PSImode operands are expensive when in memory.  */
+      if (mode == PSImode)
+	*total = COSTS_N_INSNS (1);
+      else if (mode == SImode)
+	*total = COSTS_N_INSNS (2);
+      else if (mode == DImode)
+	*total = COSTS_N_INSNS (4);
+      /* Recurse into the MEM.  */
+      return false;
+
+    case EQ:
+    case NE:
+    case GT:
+    case GTU:
+    case GE:
+    case GEU:
+    case LT:
+    case LTU:
+    case LE:
+    case LEU:
+      /* Conditions are mostly equivalent, changing their relative
+	 costs has no effect.  */
+      return false;
+
+    case ASM_OPERANDS:
+    case ASM_INPUT:
+    case CLOBBER:
+    case COMPARE:
+    case CONCAT:
+    case ENTRY_VALUE:
+      /* Other unhandled expressions.  */
+      return false;
+
+    default:
+      return false;
     }
-  return false;
 }
+
+#undef TARGET_INSN_COST
+#define TARGET_INSN_COST msp430_insn_cost
+
+static int
+msp430_insn_cost (rtx_insn *insn, bool speed ATTRIBUTE_UNUSED)
+{
+  if (recog_memoized (insn) < 0)
+    return 0;
+
+  /* The returned cost must be relative to COSTS_N_INSNS (1). An insn with a
+     length of 2 bytes is the smallest possible size and so must be equivalent
+     to COSTS_N_INSNS (1).  */
+  return COSTS_N_INSNS (get_attr_length (insn) / 2);
+
+  /* FIXME Add more detailed costs when optimizing for speed.
+     For now the length of the instruction is a good approximiation and roughly
+     correlates with cycle cost.  */
+}
+
 
 /* Function Entry and Exit */
 
@@ -1379,15 +1968,18 @@ msp430_section_attr (tree * node,
 
   const char * message = NULL;
 
-  /* The "noinit" and "section" attributes are handled generically, so we
-     cannot set up additional target-specific attribute exclusions using the
-     existing mechanism.  */
-  if (has_attr (ATTR_NOINIT, *node))
+  /* The "noinit", "persistent", and "section" attributes are handled
+     generically, so we cannot set up additional target-specific attribute
+     exclusions using the existing mechanism.  */
+  if (has_attr (ATTR_NOINIT, *node) && !TREE_NAME_EQ (name, "lower"))
     message = G_("ignoring attribute %qE because it conflicts with "
 		 "attribute %<noinit%>");
   else if (has_attr ("section", *node) && !TREE_NAME_EQ (name, "lower"))
     message = G_("ignoring attribute %qE because it conflicts with "
 		 "attribute %<section%>");
+  else if (has_attr (ATTR_PERSIST, *node) && !TREE_NAME_EQ (name, "lower"))
+    message = G_("ignoring attribute %qE because it conflicts with "
+		 "attribute %<persistent%>");
   /* It does not make sense to use upper/lower/either attributes without
      -mlarge.
      Without -mlarge, "lower" is the default and only region, so is redundant.
@@ -1398,56 +1990,6 @@ msp430_section_attr (tree * node,
   else if (!TARGET_LARGE)
     message = G_("%qE attribute ignored.  Large memory model (%<-mlarge%>) "
 		 "is required.");
-
-  if (message)
-    {
-      warning (OPT_Wattributes, message, name);
-      * no_add_attrs = true;
-    }
-
-  return NULL_TREE;
-}
-
-static tree
-msp430_persist_attr (tree *node,
-		  tree   name,
-		  tree   args,
-		  int    flags ATTRIBUTE_UNUSED,
-		  bool * no_add_attrs ATTRIBUTE_UNUSED)
-{
-  const char * message = NULL;
-
-  gcc_assert (DECL_P (* node));
-  gcc_assert (args == NULL);
-  gcc_assert (TREE_NAME_EQ (name, ATTR_PERSIST));
-
-  /* Check for the section attribute separately from DECL_SECTION_NAME so
-     we can provide a clearer warning.  */
-  if (has_attr ("section", *node))
-    message = G_("ignoring attribute %qE because it conflicts with "
-		 "attribute %<section%>");
-  /* Check that it's possible for the variable to have a section.  */
-  else if ((TREE_STATIC (*node) || DECL_EXTERNAL (*node) || in_lto_p)
-	   && (DECL_SECTION_NAME (*node)))
-    message = G_("%qE attribute cannot be applied to variables with specific "
-		 "sections");
-  else if (has_attr (ATTR_NOINIT, *node))
-    message = G_("ignoring attribute %qE because it conflicts with "
-		 "attribute %<noinit%>");
-  else if (TREE_CODE (*node) != VAR_DECL)
-    message = G_("%qE attribute only applies to variables");
-  else if (!TREE_STATIC (*node) && !TREE_PUBLIC (*node)
-	   && !DECL_EXTERNAL (*node))
-    message = G_("%qE attribute has no effect on automatic variables");
-  else if (DECL_COMMON (*node) || DECL_INITIAL (*node) == NULL)
-    message = G_("variables marked with %qE attribute must be initialized");
-  else
-    /* It's not clear if there is anything that can be set here to prevent the
-       front end placing the variable before the back end can handle it, in a
-       similar way to how DECL_COMMON is cleared for .noinit variables in
-       handle_noinit_attribute (gcc/c-family/c-attribs.c).
-       So just place the variable in the .persistent section now.  */
-    set_decl_section_name (* node, ".persistent");
 
   if (message)
     {
@@ -1492,7 +2034,6 @@ static const struct attribute_spec::exclusions attr_lower_exclusions[] =
 {
   ATTR_EXCL (ATTR_UPPER, true, true, true),
   ATTR_EXCL (ATTR_EITHER, true, true, true),
-  ATTR_EXCL (ATTR_PERSIST, true, true, true),
   ATTR_EXCL (NULL, false, false, false)
 };
 
@@ -1500,7 +2041,6 @@ static const struct attribute_spec::exclusions attr_upper_exclusions[] =
 {
   ATTR_EXCL (ATTR_LOWER, true, true, true),
   ATTR_EXCL (ATTR_EITHER, true, true, true),
-  ATTR_EXCL (ATTR_PERSIST, true, true, true),
   ATTR_EXCL (NULL, false, false, false)
 };
 
@@ -1508,15 +2048,6 @@ static const struct attribute_spec::exclusions attr_either_exclusions[] =
 {
   ATTR_EXCL (ATTR_LOWER, true, true, true),
   ATTR_EXCL (ATTR_UPPER, true, true, true),
-  ATTR_EXCL (ATTR_PERSIST, true, true, true),
-  ATTR_EXCL (NULL, false, false, false)
-};
-
-static const struct attribute_spec::exclusions attr_persist_exclusions[] =
-{
-  ATTR_EXCL (ATTR_LOWER, true, true, true),
-  ATTR_EXCL (ATTR_UPPER, true, true, true),
-  ATTR_EXCL (ATTR_EITHER, true, true, true),
   ATTR_EXCL (NULL, false, false, false)
 };
 
@@ -1544,9 +2075,6 @@ const struct attribute_spec msp430_attribute_table[] =
     { ATTR_EITHER,      0, 0, true,  false, false, false, msp430_section_attr,
       attr_either_exclusions },
 
-    { ATTR_PERSIST,     0, 0, true,  false, false, false, msp430_persist_attr,
-      attr_persist_exclusions },
-
     { NULL,		0, 0, false, false, false, false, NULL,  NULL }
   };
 
@@ -1563,14 +2091,13 @@ msp430_handle_generic_attribute (tree *node,
 {
   const char *message = NULL;
 
-  /* The front end has set up an exclusion between the "noinit" and "section"
-     attributes.  */
-  if (!(TREE_NAME_EQ (name, ATTR_NOINIT) || TREE_NAME_EQ (name, "section")))
-    return NULL_TREE;
-
-  /* We allow the "lower" attribute to be used on variables with the "section"
-     attribute.  */
-  if (has_attr (ATTR_LOWER, *node) && !TREE_NAME_EQ (name, "section"))
+  /* Permit the "lower" attribute to be set on variables with the "section",
+     "noinit" and "persistent" attributes.  This is used to indicate that the
+     corresponding output section will be in lower memory, so a 430X
+     instruction is not required to handle it.  */
+  if (has_attr (ATTR_LOWER, *node)
+      && !(TREE_NAME_EQ (name, "section") || TREE_NAME_EQ (name, ATTR_PERSIST)
+	   || TREE_NAME_EQ (name, ATTR_NOINIT)))
     message = G_("ignoring attribute %qE because it conflicts with "
 		 "attribute %<lower%>");
   else if (has_attr (ATTR_UPPER, *node))
@@ -1579,9 +2106,6 @@ msp430_handle_generic_attribute (tree *node,
   else if (has_attr (ATTR_EITHER, *node))
     message = G_("ignoring attribute %qE because it conflicts with "
 		 "attribute %<either%>");
-  else if (has_attr (ATTR_PERSIST, *node))
-    message = G_("ignoring attribute %qE because it conflicts with "
-		 "attribute %<persistent%>");
 
   if (message)
     {
@@ -1716,9 +2240,9 @@ increment_stack (HOST_WIDE_INT amount)
     {
       inc = GEN_INT (amount);
       if (TARGET_LARGE)
-	emit_insn (gen_addpsi3 (sp, sp, inc));
+	F (emit_insn (gen_addpsi3 (sp, sp, inc)));
       else
-	emit_insn (gen_addhi3 (sp, sp, inc));
+	F (emit_insn (gen_addhi3 (sp, sp, inc)));
     }
 }
 
@@ -1839,18 +2363,6 @@ gen_prefix (tree decl)
   return NULL;
 }
 
-static section * persist_section;
-
-#undef  TARGET_ASM_INIT_SECTIONS
-#define TARGET_ASM_INIT_SECTIONS msp430_init_sections
-
-static void
-msp430_init_sections (void)
-{
-  persist_section = get_unnamed_section (0, output_section_asm_op,
-					 ".section .persistent,\"aw\"");
-}
-
 #undef  TARGET_ASM_SELECT_SECTION
 #define TARGET_ASM_SELECT_SECTION msp430_select_section
 
@@ -1876,11 +2388,8 @@ msp430_select_section (tree decl, int reloc, unsigned HOST_WIDE_INT align)
       && is_interrupt_func (decl))
     return get_section (".lowtext", SECTION_CODE | SECTION_WRITE , decl);
 
-  if (has_attr (ATTR_PERSIST, decl))
-    return persist_section;
-
-  /* ATTR_NOINIT is handled generically.  */
-  if (has_attr (ATTR_NOINIT, decl))
+  /* The "noinit" and "persistent" attributes are handled generically.  */
+  if (has_attr (ATTR_NOINIT, decl) || has_attr (ATTR_PERSIST, decl))
     return default_elf_select_section (decl, reloc, align);
 
   prefix = gen_prefix (decl);
@@ -1957,7 +2466,7 @@ msp430_function_section (tree decl, enum node_frequency freq, bool startup,
 
   const char * prefix = gen_prefix (decl);
   if (prefix == NULL
-      || strncmp (name, prefix, strlen (prefix)) == 0)
+      || startswith (name, prefix))
     return default_function_section (decl, freq, startup, exit);
 
   name = ACONCAT ((prefix, name, NULL));
@@ -1970,14 +2479,12 @@ msp430_function_section (tree decl, enum node_frequency freq, bool startup,
 unsigned int
 msp430_section_type_flags (tree decl, const char * name, int reloc)
 {
-  if (strncmp (name, lower_prefix, strlen (lower_prefix)) == 0)
+  if (startswith (name, lower_prefix))
     name += strlen (lower_prefix);
-  else if (strncmp (name, upper_prefix, strlen (upper_prefix)) == 0)
+  else if (startswith (name, upper_prefix))
     name += strlen (upper_prefix);
-  else if (strncmp (name, either_prefix, strlen (either_prefix)) == 0)
+  else if (startswith (name, either_prefix))
     name += strlen (either_prefix);
-  else if (strcmp (name, ".persistent") == 0)
-    return SECTION_WRITE | SECTION_NOTYPE;
 
   return default_section_type_flags (decl, name, reloc);
 }
@@ -2112,7 +2619,7 @@ msp430_output_aligned_decl_common (FILE *		  stream,
 static void
 msp430_file_end (void)
 {
-#ifdef HAVE_AS_GNU_ATTRIBUTE
+#ifdef HAVE_AS_MSPABI_ATTRIBUTE
   /* Enum for tag names.  */
   enum
     {
@@ -2151,7 +2658,7 @@ msp430_file_end (void)
 	   OFBA_MSPABI_Tag_Data_Model,
 	   TARGET_LARGE ? OFBA_MSPABI_Val_Model_Large
 	   : OFBA_MSPABI_Val_Model_Small);
-#ifdef HAVE_AS_MSPABI_ATTRIBUTE
+#ifdef HAVE_AS_GNU_ATTRIBUTE
   /* Emit .gnu_attribute directive for Tag_GNU_MSP430_Data_Region.  */
   fprintf (asm_out_file, "\t%s %d, %d\n", gnu_attr, Tag_GNU_MSP430_Data_Region,
 	   msp430_data_region == MSP430_REGION_LOWER
@@ -2429,6 +2936,8 @@ msp430_expand_prologue (void)
   for (i = 15; i >= 4; i--)
     if (cfun->machine->need_to_save[i])
       {
+	/* We need to save COUNT sequential registers starting from regnum
+	   I.  */
 	int seq, count;
 	rtx note;
 
@@ -2443,6 +2952,7 @@ msp430_expand_prologue (void)
 	    p = F (emit_insn (gen_pushm (gen_rtx_REG (Pmode, i),
 					 GEN_INT (count))));
 
+	    /* Document the stack decrement as a result of PUSHM.  */
 	    note = gen_rtx_SEQUENCE (VOIDmode, rtvec_alloc (count + 1));
 
 	    XVECEXP (note, 0, 0)
@@ -2491,8 +3001,10 @@ msp430_expand_prologue (void)
 void
 msp430_expand_epilogue (int is_eh)
 {
-  int i;
+  int i, j;
   int fs;
+  rtx sp = stack_pointer_rtx;
+  rtx p;
   int helper_n = 0;
 
   if (is_naked_func ())
@@ -2561,19 +3073,27 @@ msp430_expand_epilogue (int is_eh)
   for (i = 4; i <= 15; i++)
     if (cfun->machine->need_to_save[i])
       {
-	int seq, count;
+	/* We need to restore COUNT sequential registers starting from regnum
+	   I.  */
+	int seq;
+	int count = 1;
+	int helper_used = 0;
+	rtx note, addr;
 
-	for (seq = i + 1; seq <= 15 && cfun->machine->need_to_save[seq]; seq ++)
-	  ;
-	count = seq - i;
+	if (msp430x)
+	  {
+	    for (seq = i + 1; seq <= 15 && cfun->machine->need_to_save[seq];
+		 seq++)
+	      ;
+	    count = seq - i;
+	  }
 
 	if (msp430x)
 	  {
 	    /* Note: With TARGET_LARGE we still use
 	       POPM as POPX.A is two bytes bigger.  */
-	    emit_insn (gen_popm (stack_pointer_rtx, GEN_INT (seq - 1),
-				 GEN_INT (count)));
-	    i += count - 1;
+	    p = F (emit_insn (gen_popm (stack_pointer_rtx, GEN_INT (seq - 1),
+					GEN_INT (count))));
 	  }
 	else if (i == 11 - helper_n
 		 && ! msp430_is_interrupt_func ()
@@ -2585,11 +3105,44 @@ msp430_expand_epilogue (int is_eh)
 		 && helper_n > 1
 		 && !is_eh)
 	  {
-	    emit_jump_insn (gen_epilogue_helper (GEN_INT (helper_n)));
-	    return;
+	    p = F (emit_jump_insn (gen_epilogue_helper (GEN_INT (helper_n))));
+	    count = helper_n;
+	    helper_used = 1;
 	  }
 	else
-	  emit_insn (gen_pop (gen_rtx_REG (Pmode, i)));
+	  p = F (emit_insn (gen_pop (gen_rtx_REG (Pmode, i))));
+
+	/* Document the stack increment as a result of POPM.  */
+	note = gen_rtx_SEQUENCE (VOIDmode, rtvec_alloc (count + 1));
+
+	addr = gen_rtx_PLUS (Pmode, stack_pointer_rtx,
+			     GEN_INT (count * (TARGET_LARGE ? 4 : 2)));
+
+	XVECEXP (note, 0, 0) = F (gen_rtx_SET (stack_pointer_rtx, addr));
+
+
+	/* *sp++ = R[i+j] */
+	/* sp	R4
+	   ...
+	   sp+N	R10.  */
+	for (j = 0; j < count; j++)
+	  {
+	    int ofs = j * (TARGET_LARGE ? 4 : 2);
+
+	    if (ofs)
+	      addr = gen_rtx_PLUS (Pmode, sp, GEN_INT (ofs));
+	    else
+	      addr = stack_pointer_rtx;
+
+	    XVECEXP (note, 0, j + 1)
+	      = F (gen_rtx_SET (gen_rtx_MEM (Pmode, addr),
+				gen_rtx_REG (Pmode, i + j)));
+	  }
+	add_reg_note (p, REG_FRAME_RELATED_EXPR, note);
+	i += count - 1;
+
+	if (helper_used)
+	  return;
       }
 
   if (is_eh)
@@ -2674,32 +3227,6 @@ msp430_init_dwarf_reg_sizes_extra (tree address)
     }
 }
 
-/* This is a list of MD patterns that implement fixed-count shifts.  */
-static struct
-{
-  const char *name;
-  int count;
-  int need_430x;
-  rtx (*genfunc)(rtx,rtx);
-}
-const_shift_helpers[] =
-{
-#define CSH(N,C,X,G) { "__mspabi_" N, C, X, gen_##G }
-
-  CSH ("slli", 1, 1, slli_1),
-  CSH ("slll", 1, 1, slll_1),
-  CSH ("slll", 2, 1, slll_2),
-
-  CSH ("srai", 1, 0, srai_1),
-  CSH ("sral", 1, 0, sral_1),
-  CSH ("sral", 2, 0, sral_2),
-
-  CSH ("srll", 1, 0, srll_1),
-  CSH ("srll", 2, 1, srll_2x),
-  { 0, 0, 0, 0 }
-#undef CSH
-};
-
 /* The MSP430 ABI defines a number of helper functions that should be
    used for, for example, 32-bit shifts.  This function is called to
    emit such a function, using the table above to optimize some
@@ -2716,30 +3243,10 @@ msp430_expand_helper (rtx *operands, const char *helper_name,
   machine_mode arg0mode = GET_MODE (operands[0]);
   machine_mode arg1mode = GET_MODE (operands[1]);
   machine_mode arg2mode = GET_MODE (operands[2]);
-  int have_430x = msp430x ? 1 : 0;
-  int expand_mpy = strncmp (helper_name, "__mspabi_mpy",
-			    sizeof ("__mspabi_mpy") - 1) == 0;
+  int expand_mpy = startswith (helper_name, "__mspabi_mpy");
   /* This function has been used incorrectly if CONST_VARIANTS is TRUE for a
      hwmpy function.  */
   gcc_assert (!(expand_mpy && const_variants));
-
-  /* Emit size-optimal insns for small shifts we can easily do inline.  */
-  if (CONST_INT_P (operands[2]) && !expand_mpy)
-    {
-      int i;
-
-      for (i=0; const_shift_helpers[i].name; i++)
-	{
-	  if (const_shift_helpers[i].need_430x <= have_430x
-	      && strcmp (helper_name, const_shift_helpers[i].name) == 0
-	      && INTVAL (operands[2]) == const_shift_helpers[i].count)
-	    {
-	      emit_insn (const_shift_helpers[i].genfunc (operands[0],
-							 operands[1]));
-	      return;
-	    }
-	}
-    }
 
   if (arg1mode != VOIDmode && arg2mode != VOIDmode)
     /* Modes of arguments must be equal if not constants.  */
@@ -2789,7 +3296,7 @@ msp430_expand_helper (rtx *operands, const char *helper_name,
       if (msp430_use_f5_series_hwmult ())
 	fsym = gen_rtx_SYMBOL_REF (VOIDmode, concat (helper_name,
 						     "_f5hw", NULL));
-      else if (use_32bit_hwmult ())
+      else if (msp430_use_32bit_hwmult ())
 	{
 	  /* When the arguments are 16-bits, the 16-bit hardware multiplier is
 	     used.  */
@@ -2800,8 +3307,7 @@ msp430_expand_helper (rtx *operands, const char *helper_name,
 	    fsym = gen_rtx_SYMBOL_REF (VOIDmode, concat (helper_name,
 							 "_hw32", NULL));
 	}
-      /* 16-bit hardware multiply.  */
-      else if (msp430_has_hwmult ())
+      else if (msp430_use_16bit_hwmult ())
 	fsym = gen_rtx_SYMBOL_REF (VOIDmode, concat (helper_name,
 						     "_hw", NULL));
       else
@@ -2833,6 +3339,235 @@ msp430_expand_helper (rtx *operands, const char *helper_name,
   emit_move_insn (operands[0],
 		  /* Return value will always start in R12.  */
 		  gen_rtx_REG (arg0mode, 12));
+}
+
+/* Return TRUE if the helper function should be used and FALSE if the shifts
+   insns should be emitted inline.  */
+static bool
+use_helper_for_const_shift (machine_mode mode, HOST_WIDE_INT amt)
+{
+  const int default_inline_shift = 4;
+  /* We initialize the option to 65 so we know if the user set it or not.  */
+  int user_set_max_inline = (msp430_max_inline_shift == 65 ? 0 : 1);
+  int max_inline = (user_set_max_inline ? msp430_max_inline_shift
+		    : default_inline_shift);
+  /* 32-bit shifts are roughly twice as costly as 16-bit shifts so we adjust
+     the heuristic accordingly.  */
+  int max_inline_32 = max_inline / 2;
+
+  if (mode == E_DImode)
+    return true;
+
+  /* Don't use helpers for these modes on 430X, when optimizing for speed, or
+     when emitting a small number of insns.  */
+  if ((mode == E_QImode || mode == E_HImode || mode == E_PSImode)
+      && (msp430x
+	  /* If the user set max_inline then we always obey that number.
+	     Otherwise we always emit the shifts inline at -O2 and above.  */
+	  || amt <= max_inline
+	  || (!user_set_max_inline
+	      && (optimize >= 2 && !optimize_size))))
+    return false;
+
+  /* 430 and 430X codegen for SImode shifts is the same.
+     Set a hard limit of 15 for the number of shifts that will be emitted
+     inline by default, even at -O2 and above, to prevent code size
+     explosion.  */
+  if (mode == E_SImode
+      && (amt <= max_inline_32
+	  || (!user_set_max_inline
+	      && (optimize >= 2 && !optimize_size)
+	      && amt <= 15)))
+    return false;
+
+  return true;
+}
+
+/* For shift operations which will use an mspabi helper function, setup the
+   call to msp430_expand helper.  Return 1 to indicate we have finished with
+   this insn and invoke "DONE".
+   Otherwise return 0 to indicate the insn should fallthrough.
+   Never FAIL.  */
+int
+msp430_expand_shift (enum rtx_code code, machine_mode mode, rtx *operands)
+{
+  /* Always use the helper function when the shift amount is not a
+     constant.  */
+  if (!CONST_INT_P (operands[2])
+      || mode == E_DImode
+      || use_helper_for_const_shift (mode, INTVAL (operands[2])))
+    {
+      const char *helper_name = NULL;
+      /* The const variants of mspabi shifts have significantly larger code
+	 size than the generic version, so use the generic version if
+	 optimizing for size.  */
+      bool const_variant = !optimize_size;
+      switch (mode)
+	{
+	case E_HImode:
+	  helper_name = (code == ASHIFT ? "__mspabi_slli" :
+			 (code == ASHIFTRT ? "__mspabi_srai" :
+			  (code == LSHIFTRT ? "__mspabi_srli" :
+			   NULL)));
+	  break;
+	case E_PSImode:
+	  helper_name = (code == ASHIFT ? "__gnu_mspabi_sllp" :
+			 (code == ASHIFTRT ? "__gnu_mspabi_srap" :
+			  (code == LSHIFTRT ? "__gnu_mspabi_srlp" :
+			   NULL)));
+	  /* No const variant for PSImode shifts FIXME.  */
+	  const_variant = false;
+	  break;
+	case E_SImode:
+	  helper_name = (code == ASHIFT ? "__mspabi_slll" :
+			 (code == ASHIFTRT ? "__mspabi_sral" :
+			  (code == LSHIFTRT ? "__mspabi_srll" :
+			   NULL)));
+	  break;
+	case E_DImode:
+	  helper_name = (code == ASHIFT ? "__mspabi_sllll" :
+			 (code == ASHIFTRT ? "__mspabi_srall" :
+			  (code == LSHIFTRT ? "__mspabi_srlll" :
+			   NULL)));
+	  /* No const variant for DImode shifts.  */
+	  const_variant = false;
+	  break;
+	default:
+	  gcc_unreachable ();
+	  break;
+	}
+      gcc_assert (helper_name);
+      msp430_expand_helper (operands, helper_name, const_variant);
+      return 1;
+    }
+  /* When returning 0, there must be an insn to match the RTL pattern
+     otherwise there will be an unrecognizeable insn.  */
+  return 0;
+}
+
+/* Helper function to emit a sequence of shift instructions.  The amount of
+   shift instructions to emit is in OPERANDS[2].
+   For 430 we output copies of identical inline shifts for all modes.
+   For 430X it is inneficient to do so for any modes except SI and DI, since we
+   can make use of R*M insns or RPT with 430X insns, so this function is only
+   used for SImode in that case.  */
+int
+msp430_output_asm_shift_insns (enum rtx_code code, machine_mode mode,
+			       rtx *operands, bool return_length)
+{
+  int i;
+  int amt;
+  int max_shift = GET_MODE_BITSIZE (mode) - 1;
+  int length = 0;
+
+  gcc_assert (CONST_INT_P (operands[2]));
+  amt = INTVAL (operands[2]);
+
+  if (amt == 0 || amt > max_shift)
+    {
+      if (return_length)
+	return 0;
+      switch (code)
+	{
+	case ASHIFT:
+	  output_asm_insn ("# ignored undefined behaviour left shift "
+			   "of %1 by %2", operands);
+	  break;
+	case ASHIFTRT:
+	  output_asm_insn ("# ignored undefined behaviour arithmetic right "
+			   "shift of %1 by %2", operands);
+	  break;
+	case LSHIFTRT:
+	  output_asm_insn ("# ignored undefined behaviour logical right shift "
+			   "of %1 by %2", operands);
+	  break;
+	default:
+	  gcc_unreachable ();
+	}
+      return 0;
+    }
+
+  if (code == ASHIFT)
+    {
+      if (!msp430x && mode == HImode)
+	{
+	  if (return_length)
+	    length = 2 + (MEM_P (operands[0]) ? 2 : 0);
+	  else
+	    for (i = 0; i < amt; i++)
+	      output_asm_insn ("RLA.W\t%0", operands);
+	}
+      else if (mode == SImode)
+	{
+	  if (return_length)
+	    length = 4 + (MEM_P (operands[0]) ? 4 : 0)
+	      + (4 * msp430x_insn_required (operands[0]));
+	  else
+	    for (i = 0; i < amt; i++)
+	      output_asm_insn ("RLA%X0.W\t%L0 { RLC%X0.W\t%H0", operands);
+	}
+      else
+	/* Catch unhandled cases.  */
+	gcc_unreachable ();
+    }
+  else if (code == ASHIFTRT)
+    {
+      if (!msp430x && mode == HImode)
+	{
+	  if (return_length)
+	    length = 2 + (MEM_P (operands[0]) ? 2 : 0);
+	  else
+	    for (i = 0; i < amt; i++)
+	      output_asm_insn ("RRA.W\t%0", operands);
+	}
+      else if (mode == SImode)
+	{
+	  if (return_length)
+	    length = 4 + (MEM_P (operands[0]) ? 4 : 0)
+	      + (4 * msp430x_insn_required (operands[0]));
+	  else
+	    for (i = 0; i < amt; i++)
+	      output_asm_insn ("RRA%X0.W\t%H0 { RRC%X0.W\t%L0", operands);
+	}
+      else
+	gcc_unreachable ();
+    }
+  else if (code == LSHIFTRT)
+    {
+      if (!msp430x && mode == HImode)
+	{
+	  if (return_length)
+	    length = 4 + (MEM_P (operands[0]) ? 2 : 0);
+	  else
+	    for (i = 0; i < amt; i++)
+	      output_asm_insn ("CLRC { RRC.W\t%0", operands);
+	}
+      else if (mode == SImode)
+	{
+	  if (return_length)
+	    length = 6 + (MEM_P (operands[0]) ? 4 : 0)
+	      + (4 * msp430x_insn_required (operands[0]));
+	  else
+	    for (i = 0; i < amt; i++)
+	      output_asm_insn ("CLRC { RRC%X0.W\t%H0 { RRC%X0.W\t%L0",
+			       operands);
+	}
+      /* FIXME: Why doesn't "RRUX.W\t%H0 { RRC%X0.W\t%L0" work for msp430x?
+	 It causes execution timeouts e.g. pr41963.c.  */
+#if 0
+      else if (msp430x && mode == SImode)
+	{
+	  if (return_length)
+	    length = 2;
+	  else
+	    for (i = 0; i < amt; i++)
+	      output_asm_insn ("RRUX.W\t%H0 { RRC%X0.W\t%L0", operands);
+	}
+#endif
+      else
+	gcc_unreachable ();
+    }
+  return length * amt;
 }
 
 /* Called by cbranch<mode>4 to coerce operands into usable forms.  */
@@ -3113,7 +3848,7 @@ msp430_use_f5_series_hwmult (void)
    32-bit hardware multiplier.  */
 
 static bool
-use_32bit_hwmult (void)
+msp430_use_32bit_hwmult (void)
 {
   static const char * cached_match = NULL;
   static bool cached_result;
@@ -3132,6 +3867,34 @@ use_32bit_hwmult (void)
   msp430_extract_mcu_data (target_mcu);
   if (extracted_mcu_data.name != NULL)
     return cached_result = extracted_mcu_data.hwmpy == 4;
+
+  return cached_result = false;
+}
+
+/* Returns true if the current MCU has a first generation
+   16-bit hardware multiplier.  */
+
+static bool
+msp430_use_16bit_hwmult (void)
+{
+  static const char * cached_match = NULL;
+  static bool	      cached_result;
+
+  if (msp430_hwmult_type == MSP430_HWMULT_SMALL)
+    return true;
+
+  if (target_mcu == NULL || msp430_hwmult_type != MSP430_HWMULT_AUTO)
+    return false;
+
+  if (target_mcu == cached_match)
+    return cached_result;
+
+  cached_match = target_mcu;
+
+  msp430_extract_mcu_data (target_mcu);
+  if (extracted_mcu_data.name != NULL)
+    return cached_result = (extracted_mcu_data.hwmpy == 1
+			    || extracted_mcu_data.hwmpy == 2);
 
   return cached_result = false;
 }
@@ -3184,28 +3947,6 @@ msp430_output_labelref (FILE *file, const char *name)
 	name = helper_function_name_mappings[i].ti_name;
 	break;
       }
-
-  /* If we have been given a specific MCU name then we may be
-     able to make use of its hardware multiply capabilities.  */
-  if (msp430_has_hwmult ())
-    {
-      if (strcmp ("__mspabi_mpyi", name) == 0)
-	{
-	  if (msp430_use_f5_series_hwmult ())
-	    name = "__mulhi2_f5";
-	  else
-	    name = "__mulhi2";
-	}
-      else if (strcmp ("__mspabi_mpyl", name) == 0)
-	{
-	  if (msp430_use_f5_series_hwmult ())
-	    name = "__mulsi2_f5";
-	  else if (use_32bit_hwmult ())
-	    name = "__mulsi2_hw32";
-	  else
-	    name = "__mulsi2";
-	}
-    }
 
   if (user_label_prefix[0] != 0)
     fputs (user_label_prefix, file);
@@ -3354,32 +4095,60 @@ msp430_op_not_in_high_mem (rtx op)
   return false;
 }
 
+/* Based on the operand OP, is a 430X insn required to handle it?
+   There are only 3 conditions for which a 430X insn is required:
+   - PSImode operand
+   - memory reference to a symbol which could be in upper memory
+     (so its address is > 0xFFFF)
+   - absolute address which has VOIDmode, i.e. (mem:HI (const_int))
+   Use a 430 insn if none of these conditions are true.  */
+bool
+msp430x_insn_required (rtx op)
+{
+  return (GET_MODE (op) == PSImode
+	  || !msp430_op_not_in_high_mem (op));
+}
+
 #undef  TARGET_PRINT_OPERAND
 #define TARGET_PRINT_OPERAND		msp430_print_operand
 
-/* A   low 16-bits of int/lower of register pair
-   B   high 16-bits of int/higher of register pair
-   C   bits 32-47 of a 64-bit value/reg 3 of a DImode value
-   D   bits 48-63 of a 64-bit value/reg 4 of a DImode value
-   H   like %B (for backwards compatibility)
-   I   inverse of value
-   J   an integer without a # prefix
-   L   like %A (for backwards compatibility)
-   O   offset of the top of the stack
-   Q   like X but generates an A postfix
-   R   inverse of condition code, unsigned.
-   X   X instruction postfix in large mode
-   Y   value - 4
-   Z   value - 1
-   b   .B or .W or .A, depending upon the mode
-   p   bit position
-   r   inverse of condition code
-   x   like X but only for pointers.  */
+/* A   Select low 16-bits of the constant/register/memory operand.
+   B   Select high 16-bits of the constant/register/memory
+       operand.
+   C   Select bits 32-47 of the constant/register/memory operand.
+   D   Select bits 48-63 of the constant/register/memory operand.
+   H   Equivalent to @code{B} (for backwards compatibility).
+   I   Print the inverse (logical @code{NOT}) of the constant
+       value.
+   J   Print an integer without a @code{#} prefix.
+   L   Equivalent to @code{A} (for backwards compatibility).
+   O   Offset of the current frame from the top of the stack.
+   Q   Use the @code{A} instruction postfix.
+   R   Inverse of condition code, for unsigned comparisons.
+   W   Subtract 16 from the constant value.
+   X   Use the @code{X} instruction postfix.
+   Y   Subtract 4 from the constant value.
+   Z   Subtract 1 from the constant value.
+   b   Append @code{.B}, @code{.W} or @code{.A} to the
+       instruction, depending on the mode.
+   d   Offset 1 byte of a memory reference or constant value.
+   e   Offset 3 bytes of a memory reference or constant value.
+   f   Offset 5 bytes of a memory reference or constant value.
+   g   Offset 7 bytes of a memory reference or constant value.
+   p   Print the value of 2, raised to the power of the given
+       constant.  Used to select the specified bit position.
+   r   Inverse of condition code, for signed comparisons.
+   x   Equivialent to @code{X}, but only for pointers.  */
 
 static void
 msp430_print_operand (FILE * file, rtx op, int letter)
 {
   rtx addr;
+  /* These are used by the 'A', 'B', 'C', 'D', 'd', 'e', 'f' and 'g' modifiers
+     to describe how to process the operand to get the requested value.  */
+  int mem_off = 0;
+  int reg_off = 0;
+  int const_shift = 0;
 
   /* We can't use c, n, a, or l.  */
   switch (letter)
@@ -3387,12 +4156,17 @@ msp430_print_operand (FILE * file, rtx op, int letter)
     case 'Z':
       gcc_assert (CONST_INT_P (op));
       /* Print the constant value, less one.  */
-      fprintf (file, "#%ld", INTVAL (op) - 1);
+      fprintf (file, "#%ld", (long) (INTVAL (op) - 1));
       return;
     case 'Y':
       gcc_assert (CONST_INT_P (op));
       /* Print the constant value, less four.  */
-      fprintf (file, "#%ld", INTVAL (op) - 4);
+      fprintf (file, "#%ld", (long) (INTVAL (op) - 4));
+      return;
+    case 'W':
+      gcc_assert (CONST_INT_P (op));
+      /* Print the constant value, less 16.  */
+      fprintf (file, "#%ld", (long) (INTVAL (op) - 16));
       return;
     case 'I':
       if (GET_CODE (op) == CONST_INT)
@@ -3449,76 +4223,71 @@ msp430_print_operand (FILE * file, rtx op, int letter)
 	default:
 	  return;
 	}
-    case 'A':
-    case 'L': /* Low half.  */
-      switch (GET_CODE (op))
+    case 'd': case 'e': case 'f': case 'g':
+      if (REG_P (op))
 	{
-	case MEM:
-	  op = adjust_address (op, Pmode, 0);
+	  output_operand_lossage ("%%d, %%e, %%f, %%g operand modifiers are "
+				  "for memory references or constant values "
+				  "only");
+	  return;
+	}
+      /* fallthru */
+    case 'B': case 'H': /* high half */
+    case 'C':
+    case 'D':
+      switch (letter)
+	{
+	case 'd':
+	  mem_off = 1;
+	  const_shift = 8;
 	  break;
-	case REG:
+	case 'B':
+	case 'H':
+	  mem_off = 2;
+	  reg_off = 1;
+	  const_shift = 16;
 	  break;
-	case CONST_INT:
-	  op = GEN_INT (INTVAL (op) & 0xffff);
-	  letter = 0;
+	case 'e':
+	  mem_off = 3;
+	  const_shift = 24;
+	  break;
+	case 'C':
+	  mem_off = 4;
+	  reg_off = 2;
+	  const_shift = 32;
+	  break;
+	case 'f':
+	  mem_off = 5;
+	  const_shift = 40;
+	  break;
+	case 'D':
+	  mem_off = 6;
+	  reg_off = 3;
+	  const_shift = 48;
+	  break;
+	case 'g':
+	  mem_off = 7;
+	  const_shift = 56;
 	  break;
 	default:
-	  /* If you get here, figure out a test case :-) */
 	  gcc_unreachable ();
+	  break;
 	}
-      break;
-    case 'B':
-    case 'H': /* high half */
+      /* fallthru */
+    case 'A': case 'L': /* Low half.  */
       switch (GET_CODE (op))
 	{
 	case MEM:
 	  /* We don't need to adjust the address for post_inc.  */
 	  op = adjust_address (op, Pmode,
-			       (GET_CODE (XEXP (op, 0)) == POST_INC) ? 0 : 2);
+			       (GET_CODE (XEXP (op, 0)) == POST_INC)
+			       ? 0 : mem_off);
 	  break;
 	case REG:
-	  op = gen_rtx_REG (Pmode, REGNO (op) + 1);
+	  op = gen_rtx_REG (Pmode, REGNO (op) + reg_off);
 	  break;
 	case CONST_INT:
-	  op = GEN_INT (INTVAL (op) >> 16);
-	  letter = 0;
-	  break;
-	default:
-	  /* If you get here, figure out a test case :-) */
-	  gcc_unreachable ();
-	}
-      break;
-    case 'C':
-      switch (GET_CODE (op))
-	{
-	case MEM:
-	  op = adjust_address (op, Pmode,
-			       (GET_CODE (XEXP (op, 0)) == POST_INC) ? 0 : 4);
-	  break;
-	case REG:
-	  op = gen_rtx_REG (Pmode, REGNO (op) + 2);
-	  break;
-	case CONST_INT:
-	  op = GEN_INT ((long long) INTVAL (op) >> 32);
-	  letter = 0;
-	  break;
-	default:
-	  /* If you get here, figure out a test case :-) */
-	  gcc_unreachable ();
-	}
-      break;
-    case 'D':
-      switch (GET_CODE (op))
-	{
-	case MEM:
-	  op = adjust_address (op, Pmode,
-			       (GET_CODE (XEXP (op, 0)) == POST_INC) ? 0 : 6);
-	  break;
-	case REG:
-	  op = gen_rtx_REG (Pmode, REGNO (op) + 3);
-	  break;
-	case CONST_INT:
-	  op = GEN_INT ((long long) INTVAL (op) >> 48);
+	  op = GEN_INT (((long long) INTVAL (op) >> const_shift) & 0xffff);
 	  letter = 0;
 	  break;
 	default:
@@ -3680,63 +4449,52 @@ msp430_register_pre_includes (const char *sysroot ATTRIBUTE_UNUSED,
 
 /* Generate a sequence of instructions to sign-extend an HI
    value into an SI value.  Handles the tricky case where
-   we are overwriting the destination.  */
-
-const char *
-msp430x_extendhisi (rtx * operands)
+   we are overwriting the destination.
+   Return the number of bytes used by the emitted instructions.
+   If RETURN_LENGTH is true then do not emit the assembly instruction
+   sequence.  */
+int
+msp430x_extendhisi (rtx * operands, bool return_length)
 {
   if (REGNO (operands[0]) == REGNO (operands[1]))
-    /* Low word of dest == source word.  8-byte sequence.  */
-    return "BIT.W\t#0x8000, %L0 { SUBC.W\t%H0, %H0 { INV.W\t%H0, %H0";
+    {
+      /* Low word of dest == source word.  */
+      if (!return_length)
+	output_asm_insn ("BIT.W\t#0x8000, %L0 { SUBC.W\t%H0, %H0 { INV.W\t%H0, %H0",
+			 operands);
+      return 8;
+    }
+  else if (! msp430x)
+    {
+      /* Note: This sequence is approximately the same length as invoking a
+	 helper function to perform the sign-extension, as in:
 
-  if (! msp430x)
-    /* Note: This sequence is approximately the same length as invoking a helper
-       function to perform the sign-extension, as in:
+	 MOV.W  %1, %L0
+	 MOV.W  %1, r12
+	 CALL   __mspabi_srai_15
+	 MOV.W  r12, %H0
 
-       MOV.W  %1, %L0
-       MOV.W  %1, r12
-       CALL   __mspabi_srai_15
-       MOV.W  r12, %H0
+	 but this version does not involve any function calls or using argument
+	 registers, so it reduces register pressure.  */
+      if (!return_length)
+	output_asm_insn ("MOV.W\t%1, %L0 { BIT.W\t#0x8000, %L0 { SUBC.W\t%H0, %H0 { INV.W\t%H0, %H0",
+			 operands);
+      return 10;
+    }
+  else if (REGNO (operands[0]) + 1 == REGNO (operands[1]))
+    {
+      /* High word of dest == source word.  */
+      if (!return_length)
+	output_asm_insn ("MOV.W\t%1, %L0 { RPT\t#15 { RRAX.W\t%H0",
+			 operands);
+      return 6;
+    }
 
-       but this version does not involve any function calls or using argument
-       registers, so it reduces register pressure.  10-byte sequence.  */
-    return "MOV.W\t%1, %L0 { BIT.W\t#0x8000, %L0 { SUBC.W\t%H0, %H0 "
-      "{ INV.W\t%H0, %H0";
-
-  if (REGNO (operands[0]) + 1 == REGNO (operands[1]))
-    /* High word of dest == source word.  6-byte sequence.  */
-    return "MOV.W\t%1, %L0 { RPT\t#15 { RRAX.W\t%H0";
-
-  /* No overlap between dest and source.  8-byte sequence.  */
-  return "MOV.W\t%1, %L0 { MOV.W\t%1, %H0 { RPT\t#15 { RRAX.W\t%H0";
-}
-
-/* Likewise for logical right shifts.  */
-const char *
-msp430x_logical_shift_right (rtx amount)
-{
-  /* The MSP430X's logical right shift instruction - RRUM - does
-     not use an extension word, so we cannot encode a repeat count.
-     Try various alternatives to work around this.  If the count
-     is in a register we are stuck, hence the assert.  */
-  gcc_assert (CONST_INT_P (amount));
-
-  if (INTVAL (amount) <= 0
-      || INTVAL (amount) >= 16)
-    return "# nop logical shift.";
-
-  if (INTVAL (amount) > 0
-      && INTVAL (amount) < 5)
-    return "rrum.w\t%2, %0"; /* Two bytes.  */
-
-  if (INTVAL (amount) > 4
-      && INTVAL (amount) < 9)
-    return "rrum.w\t#4, %0 { rrum.w\t%Y2, %0 "; /* Four bytes.  */
-
-  /* First we logically shift right by one.  Now we know
-     that the top bit is zero and we can use the arithmetic
-     right shift instruction to perform the rest of the shift.  */
-  return "rrum.w\t#1, %0 { rpt\t%Z2 { rrax.w\t%0"; /* Six bytes.  */
+  /* No overlap between dest and source.  */
+  if (!return_length)
+    output_asm_insn ("MOV.W\t%1, %L0 { MOV.W\t%1, %H0 { RPT\t#15 { RRAX.W\t%H0",
+		     operands);
+  return 8;
 }
 
 /* Stop GCC from thinking that it can eliminate (SUBREG:PSI (SI)).  */

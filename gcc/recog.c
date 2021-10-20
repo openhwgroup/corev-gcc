@@ -1,5 +1,5 @@
 /* Subroutines used by or related to instruction recognition.
-   Copyright (C) 1987-2020 Free Software Foundation, Inc.
+   Copyright (C) 1987-2021 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -183,6 +183,7 @@ struct change_t
 {
   rtx object;
   int old_code;
+  int old_len;
   bool unshare;
   rtx *loc;
   rtx old;
@@ -192,10 +193,13 @@ static change_t *changes;
 static int changes_allocated;
 
 static int num_changes = 0;
+static int temporarily_undone_changes = 0;
 
 /* Validate a proposed change to OBJECT.  LOC is the location in the rtl
-   at which NEW_RTX will be placed.  If OBJECT is zero, no validation is done,
-   the change is simply made.
+   at which NEW_RTX will be placed.  If NEW_LEN is >= 0, XVECLEN (NEW_RTX, 0)
+   will also be changed to NEW_LEN, which is no greater than the current
+   XVECLEN.  If OBJECT is zero, no validation is done, the change is
+   simply made.
 
    Two types of objects are supported:  If OBJECT is a MEM, memory_address_p
    will be called with the address and mode as parameters.  If OBJECT is
@@ -212,14 +216,26 @@ static int num_changes = 0;
    Otherwise, perform the change and return 1.  */
 
 static bool
-validate_change_1 (rtx object, rtx *loc, rtx new_rtx, bool in_group, bool unshare)
+validate_change_1 (rtx object, rtx *loc, rtx new_rtx, bool in_group,
+		   bool unshare, int new_len = -1)
 {
+  gcc_assert (temporarily_undone_changes == 0);
   rtx old = *loc;
 
-  if (old == new_rtx || rtx_equal_p (old, new_rtx))
+  /* Single-element parallels aren't valid and won't match anything.
+     Replace them with the single element.  */
+  if (new_len == 1 && GET_CODE (new_rtx) == PARALLEL)
+    {
+      new_rtx = XVECEXP (new_rtx, 0, 0);
+      new_len = -1;
+    }
+
+  if ((old == new_rtx || rtx_equal_p (old, new_rtx))
+      && (new_len < 0 || XVECLEN (new_rtx, 0) == new_len))
     return 1;
 
-  gcc_assert (in_group != 0 || num_changes == 0);
+  gcc_assert ((in_group != 0 || num_changes == 0)
+	      && (new_len < 0 || new_rtx == *loc));
 
   *loc = new_rtx;
 
@@ -239,7 +255,11 @@ validate_change_1 (rtx object, rtx *loc, rtx new_rtx, bool in_group, bool unshar
   changes[num_changes].object = object;
   changes[num_changes].loc = loc;
   changes[num_changes].old = old;
+  changes[num_changes].old_len = (new_len >= 0 ? XVECLEN (new_rtx, 0) : -1);
   changes[num_changes].unshare = unshare;
+
+  if (new_len >= 0)
+    XVECLEN (new_rtx, 0) = new_len;
 
   if (object && !MEM_P (object))
     {
@@ -278,6 +298,14 @@ validate_unshare_change (rtx object, rtx *loc, rtx new_rtx, bool in_group)
   return validate_change_1 (object, loc, new_rtx, in_group, true);
 }
 
+/* Change XVECLEN (*LOC, 0) to NEW_LEN.  OBJECT, IN_GROUP and the return
+   value are as for validate_change_1.  */
+
+bool
+validate_change_xveclen (rtx object, rtx *loc, int new_len, bool in_group)
+{
+  return validate_change_1 (object, loc, *loc, in_group, false, new_len);
+}
 
 /* Keep X canonicalized if some changes have made it non-canonical; only
    modifies the operands of X, not (for example) its code.  Simplifications
@@ -408,10 +436,7 @@ verify_changes (int num)
 	       changes[i].old
 	       && REG_P (changes[i].old)
 	       && asm_noperands (PATTERN (object)) > 0
-	       && REG_EXPR (changes[i].old) != NULL_TREE
-	       && HAS_DECL_ASSEMBLER_NAME_P (REG_EXPR (changes[i].old))
-	       && DECL_ASSEMBLER_NAME_SET_P (REG_EXPR (changes[i].old))
-	       && DECL_REGISTER (REG_EXPR (changes[i].old)))
+	       && register_asm_p (changes[i].old))
 	{
 	  /* Don't allow changes of hard register operands to inline
 	     assemblies if they have been defined as register asm ("x").  */
@@ -483,6 +508,7 @@ confirm_change_group (void)
   int i;
   rtx last_object = NULL;
 
+  gcc_assert (temporarily_undone_changes == 0);
   for (i = 0; i < num_changes; i++)
     {
       rtx object = changes[i].object;
@@ -538,17 +564,65 @@ num_validated_changes (void)
 void
 cancel_changes (int num)
 {
+  gcc_assert (temporarily_undone_changes == 0);
   int i;
 
   /* Back out all the changes.  Do this in the opposite order in which
      they were made.  */
   for (i = num_changes - 1; i >= num; i--)
     {
-      *changes[i].loc = changes[i].old;
+      if (changes[i].old_len >= 0)
+	XVECLEN (*changes[i].loc, 0) = changes[i].old_len;
+      else
+	*changes[i].loc = changes[i].old;
       if (changes[i].object && !MEM_P (changes[i].object))
 	INSN_CODE (changes[i].object) = changes[i].old_code;
     }
   num_changes = num;
+}
+
+/* Swap the status of change NUM from being applied to not being applied,
+   or vice versa.  */
+
+static void
+swap_change (int num)
+{
+  if (changes[num].old_len >= 0)
+    std::swap (XVECLEN (*changes[num].loc, 0), changes[num].old_len);
+  else
+    std::swap (*changes[num].loc, changes[num].old);
+  if (changes[num].object && !MEM_P (changes[num].object))
+    std::swap (INSN_CODE (changes[num].object), changes[num].old_code);
+}
+
+/* Temporarily undo all the changes numbered NUM and up, with a view
+   to reapplying them later.  The next call to the changes machinery
+   must be:
+
+      redo_changes (NUM)
+
+   otherwise things will end up in an invalid state.  */
+
+void
+temporarily_undo_changes (int num)
+{
+  gcc_assert (temporarily_undone_changes == 0 && num <= num_changes);
+  for (int i = num_changes - 1; i >= num; i--)
+    swap_change (i);
+  temporarily_undone_changes = num_changes - num;
+}
+
+/* Redo the changes that were temporarily undone by:
+
+      temporarily_undo_changes (NUM).  */
+
+void
+redo_changes (int num)
+{
+  gcc_assert (temporarily_undone_changes == num_changes - num);
+  for (int i = num; i < num_changes; ++i)
+    swap_change (i);
+  temporarily_undone_changes = 0;
 }
 
 /* Reduce conditional compilation elsewhere.  */
@@ -922,8 +996,404 @@ validate_simplify_insn (rtx_insn *insn)
       }
   return ((num_changes_pending () > 0) && (apply_change_group () > 0));
 }
-
-/* Return 1 if OP is a valid general operand for machine mode MODE.
+
+/* Try to process the address of memory expression MEM.  Return true on
+   success; leave the caller to clean up on failure.  */
+
+bool
+insn_propagation::apply_to_mem_1 (rtx mem)
+{
+  auto old_num_changes = num_validated_changes ();
+  mem_depth += 1;
+  bool res = apply_to_rvalue_1 (&XEXP (mem, 0));
+  mem_depth -= 1;
+  if (!res)
+    return false;
+
+  if (old_num_changes != num_validated_changes ()
+      && should_check_mems
+      && !check_mem (old_num_changes, mem))
+    return false;
+
+  return true;
+}
+
+/* Try to process the rvalue expression at *LOC.  Return true on success;
+   leave the caller to clean up on failure.  */
+
+bool
+insn_propagation::apply_to_rvalue_1 (rtx *loc)
+{
+  rtx x = *loc;
+  enum rtx_code code = GET_CODE (x);
+  machine_mode mode = GET_MODE (x);
+
+  auto old_num_changes = num_validated_changes ();
+  if (from && GET_CODE (x) == GET_CODE (from) && rtx_equal_p (x, from))
+    {
+      /* Don't replace register asms in asm statements; we mustn't
+	 change the user's register allocation.  */
+      if (REG_P (x)
+	  && HARD_REGISTER_P (x)
+	  && register_asm_p (x)
+	  && asm_noperands (PATTERN (insn)) > 0)
+	return false;
+
+      if (should_unshare)
+	validate_unshare_change (insn, loc, to, 1);
+      else
+	validate_change (insn, loc, to, 1);
+      if (mem_depth && !REG_P (to) && !CONSTANT_P (to))
+	{
+	  /* We're substituting into an address, but TO will have the
+	     form expected outside an address.  Canonicalize it if
+	     necessary.  */
+	  insn_propagation subprop (insn);
+	  subprop.mem_depth += 1;
+	  if (!subprop.apply_to_rvalue (loc))
+	    gcc_unreachable ();
+	  if (should_unshare
+	      && num_validated_changes () != old_num_changes + 1)
+	    {
+	      /* TO is owned by someone else, so create a copy and
+		 return TO to its original form.  */
+	      rtx to = copy_rtx (*loc);
+	      cancel_changes (old_num_changes);
+	      validate_change (insn, loc, to, 1);
+	    }
+	}
+      num_replacements += 1;
+      should_unshare = true;
+      result_flags |= UNSIMPLIFIED;
+      return true;
+    }
+
+  /* Recursively apply the substitution and see if we can simplify
+     the result.  This specifically shouldn't use simplify_gen_* for
+     speculative simplifications, since we want to avoid generating new
+     expressions where possible.  */
+  auto old_result_flags = result_flags;
+  rtx newx = NULL_RTX;
+  bool recurse_p = false;
+  switch (GET_RTX_CLASS (code))
+    {
+    case RTX_UNARY:
+      {
+	machine_mode op0_mode = GET_MODE (XEXP (x, 0));
+	if (!apply_to_rvalue_1 (&XEXP (x, 0)))
+	  return false;
+	if (from && old_num_changes == num_validated_changes ())
+	  return true;
+
+	newx = simplify_unary_operation (code, mode, XEXP (x, 0), op0_mode);
+	break;
+      }
+
+    case RTX_BIN_ARITH:
+    case RTX_COMM_ARITH:
+      {
+	if (!apply_to_rvalue_1 (&XEXP (x, 0))
+	    || !apply_to_rvalue_1 (&XEXP (x, 1)))
+	  return false;
+	if (from && old_num_changes == num_validated_changes ())
+	  return true;
+
+	if (GET_RTX_CLASS (code) == RTX_COMM_ARITH
+	    && swap_commutative_operands_p (XEXP (x, 0), XEXP (x, 1)))
+	  newx = simplify_gen_binary (code, mode, XEXP (x, 1), XEXP (x, 0));
+	else
+	  newx = simplify_binary_operation (code, mode,
+					    XEXP (x, 0), XEXP (x, 1));
+	break;
+      }
+
+    case RTX_COMPARE:
+    case RTX_COMM_COMPARE:
+      {
+	machine_mode op_mode = (GET_MODE (XEXP (x, 0)) != VOIDmode
+				? GET_MODE (XEXP (x, 0))
+				: GET_MODE (XEXP (x, 1)));
+	if (!apply_to_rvalue_1 (&XEXP (x, 0))
+	    || !apply_to_rvalue_1 (&XEXP (x, 1)))
+	  return false;
+	if (from && old_num_changes == num_validated_changes ())
+	  return true;
+
+	newx = simplify_relational_operation (code, mode, op_mode,
+					      XEXP (x, 0), XEXP (x, 1));
+	break;
+      }
+
+    case RTX_TERNARY:
+    case RTX_BITFIELD_OPS:
+      {
+	machine_mode op0_mode = GET_MODE (XEXP (x, 0));
+	if (!apply_to_rvalue_1 (&XEXP (x, 0))
+	    || !apply_to_rvalue_1 (&XEXP (x, 1))
+	    || !apply_to_rvalue_1 (&XEXP (x, 2)))
+	  return false;
+	if (from && old_num_changes == num_validated_changes ())
+	  return true;
+
+	newx = simplify_ternary_operation (code, mode, op0_mode,
+					   XEXP (x, 0), XEXP (x, 1),
+					   XEXP (x, 2));
+	break;
+      }
+
+    case RTX_EXTRA:
+      if (code == SUBREG)
+	{
+	  machine_mode inner_mode = GET_MODE (SUBREG_REG (x));
+	  if (!apply_to_rvalue_1 (&SUBREG_REG (x)))
+	    return false;
+	  if (from && old_num_changes == num_validated_changes ())
+	    return true;
+
+	  rtx inner = SUBREG_REG (x);
+	  newx = simplify_subreg (mode, inner, inner_mode, SUBREG_BYTE (x));
+	  /* Reject the same cases that simplify_gen_subreg would.  */
+	  if (!newx
+	      && (GET_CODE (inner) == SUBREG
+		  || GET_CODE (inner) == CONCAT
+		  || GET_MODE (inner) == VOIDmode
+		  || !validate_subreg (mode, inner_mode,
+				       inner, SUBREG_BYTE (x))))
+	    {
+	      failure_reason = "would create an invalid subreg";
+	      return false;
+	    }
+	  break;
+	}
+      else
+	recurse_p = true;
+      break;
+
+    case RTX_OBJ:
+      if (code == LO_SUM)
+	{
+	  if (!apply_to_rvalue_1 (&XEXP (x, 0))
+	      || !apply_to_rvalue_1 (&XEXP (x, 1)))
+	    return false;
+	  if (from && old_num_changes == num_validated_changes ())
+	    return true;
+
+	  /* (lo_sum (high x) y) -> y where x and y have the same base.  */
+	  rtx op0 = XEXP (x, 0);
+	  rtx op1 = XEXP (x, 1);
+	  if (GET_CODE (op0) == HIGH)
+	    {
+	      rtx base0, base1, offset0, offset1;
+	      split_const (XEXP (op0, 0), &base0, &offset0);
+	      split_const (op1, &base1, &offset1);
+	      if (rtx_equal_p (base0, base1))
+		newx = op1;
+	    }
+	}
+      else if (code == REG)
+	{
+	  if (from && REG_P (from) && reg_overlap_mentioned_p (x, from))
+	    {
+	      failure_reason = "inexact register overlap";
+	      return false;
+	    }
+	}
+      else if (code == MEM)
+	return apply_to_mem_1 (x);
+      else
+	recurse_p = true;
+      break;
+
+    case RTX_CONST_OBJ:
+      break;
+
+    case RTX_AUTOINC:
+      if (from && reg_overlap_mentioned_p (XEXP (x, 0), from))
+	{
+	  failure_reason = "is subject to autoinc";
+	  return false;
+	}
+      recurse_p = true;
+      break;
+
+    case RTX_MATCH:
+    case RTX_INSN:
+      gcc_unreachable ();
+    }
+
+  if (recurse_p)
+    {
+      const char *fmt = GET_RTX_FORMAT (code);
+      for (int i = 0; fmt[i]; i++)
+	switch (fmt[i])
+	  {
+	  case 'E':
+	    for (int j = 0; j < XVECLEN (x, i); j++)
+	      if (!apply_to_rvalue_1 (&XVECEXP (x, i, j)))
+		return false;
+	    break;
+
+	  case 'e':
+	    if (XEXP (x, i) && !apply_to_rvalue_1 (&XEXP (x, i)))
+	      return false;
+	    break;
+	  }
+    }
+  else if (newx && !rtx_equal_p (x, newx))
+    {
+      /* All substitutions made by OLD_NUM_CHANGES onwards have been
+	 simplified.  */
+      result_flags = ((result_flags & ~UNSIMPLIFIED)
+		      | (old_result_flags & UNSIMPLIFIED));
+
+      if (should_note_simplifications)
+	note_simplification (old_num_changes, old_result_flags, x, newx);
+
+      /* There's no longer any point unsharing the substitutions made
+	 for subexpressions, since we'll just copy this one instead.  */
+      bool unshare = false;
+      for (int i = old_num_changes; i < num_changes; ++i)
+	{
+	  unshare |= changes[i].unshare;
+	  changes[i].unshare = false;
+	}
+      if (unshare)
+	validate_unshare_change (insn, loc, newx, 1);
+      else
+	validate_change (insn, loc, newx, 1);
+    }
+
+  return true;
+}
+
+/* Try to process the lvalue expression at *LOC.  Return true on success;
+   leave the caller to clean up on failure.  */
+
+bool
+insn_propagation::apply_to_lvalue_1 (rtx dest)
+{
+  rtx old_dest = dest;
+  while (GET_CODE (dest) == SUBREG
+	 || GET_CODE (dest) == ZERO_EXTRACT
+	 || GET_CODE (dest) == STRICT_LOW_PART)
+    {
+      if (GET_CODE (dest) == ZERO_EXTRACT
+	  && (!apply_to_rvalue_1 (&XEXP (dest, 1))
+	      || !apply_to_rvalue_1 (&XEXP (dest, 2))))
+	return false;
+      dest = XEXP (dest, 0);
+    }
+
+  if (MEM_P (dest))
+    return apply_to_mem_1 (dest);
+
+  /* Check whether the substitution is safe in the presence of this lvalue.  */
+  if (!from
+      || dest == old_dest
+      || !REG_P (dest)
+      || !reg_overlap_mentioned_p (dest, from))
+    return true;
+
+  if (SUBREG_P (old_dest)
+      && SUBREG_REG (old_dest) == dest
+      && !read_modify_subreg_p (old_dest))
+    return true;
+
+  failure_reason = "is part of a read-write destination";
+  return false;
+}
+
+/* Try to process the instruction pattern at *LOC.  Return true on success;
+   leave the caller to clean up on failure.  */
+
+bool
+insn_propagation::apply_to_pattern_1 (rtx *loc)
+{
+  rtx body = *loc;
+  switch (GET_CODE (body))
+    {
+    case COND_EXEC:
+      return (apply_to_rvalue_1 (&COND_EXEC_TEST (body))
+	      && apply_to_pattern_1 (&COND_EXEC_CODE (body)));
+
+    case PARALLEL:
+      {
+	int last = XVECLEN (body, 0) - 1;
+	for (int i = 0; i < last; ++i)
+	  if (!apply_to_pattern_1 (&XVECEXP (body, 0, i)))
+	    return false;
+	return apply_to_pattern_1 (&XVECEXP (body, 0, last));
+      }
+
+    case ASM_OPERANDS:
+      for (int i = 0, len = ASM_OPERANDS_INPUT_LENGTH (body); i < len; ++i)
+	if (!apply_to_rvalue_1 (&ASM_OPERANDS_INPUT (body, i)))
+	  return false;
+      return true;
+
+    case CLOBBER:
+      return apply_to_lvalue_1 (XEXP (body, 0));
+
+    case SET:
+      return (apply_to_lvalue_1 (SET_DEST (body))
+	      && apply_to_rvalue_1 (&SET_SRC (body)));
+
+    default:
+      /* All the other possibilities never store and can use a normal
+	 rtx walk.  This includes:
+
+	 - USE
+	 - TRAP_IF
+	 - PREFETCH
+	 - UNSPEC
+	 - UNSPEC_VOLATILE.  */
+      return apply_to_rvalue_1 (loc);
+    }
+}
+
+/* Apply this insn_propagation object's simplification or substitution
+   to the instruction pattern at LOC.  */
+
+bool
+insn_propagation::apply_to_pattern (rtx *loc)
+{
+  unsigned int num_changes = num_validated_changes ();
+  bool res = apply_to_pattern_1 (loc);
+  if (!res)
+    cancel_changes (num_changes);
+  return res;
+}
+
+/* Apply this insn_propagation object's simplification or substitution
+   to the rvalue expression at LOC.  */
+
+bool
+insn_propagation::apply_to_rvalue (rtx *loc)
+{
+  unsigned int num_changes = num_validated_changes ();
+  bool res = apply_to_rvalue_1 (loc);
+  if (!res)
+    cancel_changes (num_changes);
+  return res;
+}
+
+/* Check whether INSN matches a specific alternative of an .md pattern.  */
+
+bool
+valid_insn_p (rtx_insn *insn)
+{
+  recog_memoized (insn);
+  if (INSN_CODE (insn) < 0)
+    return false;
+  extract_insn (insn);
+  /* We don't know whether the insn will be in code that is optimized
+     for size or speed, so consider all enabled alternatives.  */
+  if (!constrain_operands (1, get_enabled_alternatives (insn)))
+    return false;
+  return true;
+}
+
+/* Return true if OP is a valid general operand for machine mode MODE.
    This is either a register reference, a memory reference,
    or a constant.  In the case of a memory reference, the address
    is checked for general validity for the target machine.
@@ -937,7 +1407,7 @@ validate_simplify_insn (rtx_insn *insn)
    The main use of this function is as a predicate in match_operand
    expressions in the machine description.  */
 
-int
+bool
 general_operand (rtx op, machine_mode mode)
 {
   enum rtx_code code = GET_CODE (op);
@@ -950,12 +1420,12 @@ general_operand (rtx op, machine_mode mode)
   if (GET_MODE (op) == VOIDmode && mode != VOIDmode
       && GET_MODE_CLASS (mode) != MODE_INT
       && GET_MODE_CLASS (mode) != MODE_PARTIAL_INT)
-    return 0;
+    return false;
 
   if (CONST_INT_P (op)
       && mode != VOIDmode
       && trunc_int_for_mode (INTVAL (op), mode) != INTVAL (op))
-    return 0;
+    return false;
 
   if (CONSTANT_P (op))
     return ((GET_MODE (op) == VOIDmode || GET_MODE (op) == mode
@@ -969,7 +1439,7 @@ general_operand (rtx op, machine_mode mode)
      OP's mode must match MODE if MODE specifies a mode.  */
 
   if (GET_MODE (op) != mode)
-    return 0;
+    return false;
 
   if (code == SUBREG)
     {
@@ -982,7 +1452,7 @@ general_operand (rtx op, machine_mode mode)
 	 get cleaned up by cleanup_subreg_operands.  */
       if (!reload_completed && MEM_P (sub)
 	  && paradoxical_subreg_p (op))
-	return 0;
+	return false;
 #endif
       /* Avoid memories with nonzero SUBREG_BYTE, as offsetting the memory
          may result in incorrect reference.  We should simplify all valid
@@ -993,7 +1463,7 @@ general_operand (rtx op, machine_mode mode)
       if (!reload_completed
 	  && maybe_ne (SUBREG_BYTE (op), 0)
 	  && MEM_P (sub))
-	return 0;
+	return false;
 
       if (REG_P (sub)
 	  && REGNO (sub) < FIRST_PSEUDO_REGISTER
@@ -1004,7 +1474,7 @@ general_operand (rtx op, machine_mode mode)
 	     operand reload presentation.  LRA needs to treat them as
 	     valid.  */
 	  && ! LRA_SUBREG_P (op))
-	return 0;
+	return false;
 
       /* FLOAT_MODE subregs can't be paradoxical.  Combine will occasionally
 	 create such rtl, and we must reject it.  */
@@ -1016,7 +1486,7 @@ general_operand (rtx op, machine_mode mode)
 	     mode.  */
 	  && ! lra_in_progress 
 	  && paradoxical_subreg_p (op))
-	return 0;
+	return false;
 
       op = sub;
       code = GET_CODE (op);
@@ -1031,7 +1501,7 @@ general_operand (rtx op, machine_mode mode)
       rtx y = XEXP (op, 0);
 
       if (! volatile_ok && MEM_VOLATILE_P (op))
-	return 0;
+	return false;
 
       /* Use the mem's mode, since it will be reloaded thus.  LRA can
 	 generate move insn with invalid addresses which is made valid
@@ -1039,19 +1509,19 @@ general_operand (rtx op, machine_mode mode)
 	 transformations.  */
       if (lra_in_progress
 	  || memory_address_addr_space_p (GET_MODE (op), y, MEM_ADDR_SPACE (op)))
-	return 1;
+	return true;
     }
 
-  return 0;
+  return false;
 }
 
-/* Return 1 if OP is a valid memory address for a memory reference
+/* Return true if OP is a valid memory address for a memory reference
    of mode MODE.
 
    The main use of this function is as a predicate in match_operand
    expressions in the machine description.  */
 
-int
+bool
 address_operand (rtx op, machine_mode mode)
 {
   /* Wrong mode for an address expr.  */
@@ -1062,13 +1532,13 @@ address_operand (rtx op, machine_mode mode)
   return memory_address_p (mode, op);
 }
 
-/* Return 1 if OP is a register reference of mode MODE.
+/* Return true if OP is a register reference of mode MODE.
    If MODE is VOIDmode, accept a register in any mode.
 
    The main use of this function is as a predicate in match_operand
    expressions in the machine description.  */
 
-int
+bool
 register_operand (rtx op, machine_mode mode)
 {
   if (GET_CODE (op) == SUBREG)
@@ -1082,29 +1552,29 @@ register_operand (rtx op, machine_mode mode)
 	 but currently it does result from (SUBREG (REG)...) where the
 	 reg went on the stack.)  */
       if (!REG_P (sub) && (reload_completed || !MEM_P (sub)))
-	return 0;
+	return false;
     }
   else if (!REG_P (op))
-    return 0;
+    return false;
   return general_operand (op, mode);
 }
 
-/* Return 1 for a register in Pmode; ignore the tested mode.  */
+/* Return true for a register in Pmode; ignore the tested mode.  */
 
-int
+bool
 pmode_register_operand (rtx op, machine_mode mode ATTRIBUTE_UNUSED)
 {
   return register_operand (op, Pmode);
 }
 
-/* Return 1 if OP should match a MATCH_SCRATCH, i.e., if it is a SCRATCH
+/* Return true if OP should match a MATCH_SCRATCH, i.e., if it is a SCRATCH
    or a hard register.  */
 
-int
+bool
 scratch_operand (rtx op, machine_mode mode)
 {
   if (GET_MODE (op) != mode && mode != VOIDmode)
-    return 0;
+    return false;
 
   return (GET_CODE (op) == SCRATCH
 	  || (REG_P (op)
@@ -1113,12 +1583,12 @@ scratch_operand (rtx op, machine_mode mode)
 		      && REGNO_REG_CLASS (REGNO (op)) != NO_REGS))));
 }
 
-/* Return 1 if OP is a valid immediate operand for mode MODE.
+/* Return true if OP is a valid immediate operand for mode MODE.
 
    The main use of this function is as a predicate in match_operand
    expressions in the machine description.  */
 
-int
+bool
 immediate_operand (rtx op, machine_mode mode)
 {
   /* Don't accept CONST_INT or anything similar
@@ -1126,12 +1596,12 @@ immediate_operand (rtx op, machine_mode mode)
   if (GET_MODE (op) == VOIDmode && mode != VOIDmode
       && GET_MODE_CLASS (mode) != MODE_INT
       && GET_MODE_CLASS (mode) != MODE_PARTIAL_INT)
-    return 0;
+    return false;
 
   if (CONST_INT_P (op)
       && mode != VOIDmode
       && trunc_int_for_mode (INTVAL (op), mode) != INTVAL (op))
-    return 0;
+    return false;
 
   return (CONSTANT_P (op)
 	  && (GET_MODE (op) == mode || mode == VOIDmode
@@ -1142,29 +1612,29 @@ immediate_operand (rtx op, machine_mode mode)
 					    : mode, op));
 }
 
-/* Returns 1 if OP is an operand that is a CONST_INT of mode MODE.  */
+/* Return true if OP is an operand that is a CONST_INT of mode MODE.  */
 
-int
+bool
 const_int_operand (rtx op, machine_mode mode)
 {
   if (!CONST_INT_P (op))
-    return 0;
+    return false;
 
   if (mode != VOIDmode
       && trunc_int_for_mode (INTVAL (op), mode) != INTVAL (op))
-    return 0;
+    return false;
 
-  return 1;
+  return true;
 }
 
 #if TARGET_SUPPORTS_WIDE_INT
-/* Returns 1 if OP is an operand that is a CONST_INT or CONST_WIDE_INT
+/* Return true if OP is an operand that is a CONST_INT or CONST_WIDE_INT
    of mode MODE.  */
-int
+bool
 const_scalar_int_operand (rtx op, machine_mode mode)
 {
   if (!CONST_SCALAR_INT_P (op))
-    return 0;
+    return false;
 
   if (CONST_INT_P (op))
     return const_int_operand (op, mode);
@@ -1176,10 +1646,10 @@ const_scalar_int_operand (rtx op, machine_mode mode)
       int bitsize = GET_MODE_BITSIZE (int_mode);
 
       if (CONST_WIDE_INT_NUNITS (op) * HOST_BITS_PER_WIDE_INT > bitsize)
-	return 0;
+	return false;
 
       if (prec == bitsize)
-	return 1;
+	return true;
       else
 	{
 	  /* Multiword partial int.  */
@@ -1188,23 +1658,23 @@ const_scalar_int_operand (rtx op, machine_mode mode)
 	  return (sext_hwi (x, prec & (HOST_BITS_PER_WIDE_INT - 1)) == x);
 	}
     }
-  return 1;
+  return true;
 }
 
-/* Returns 1 if OP is an operand that is a constant integer or constant
+/* Return true if OP is an operand that is a constant integer or constant
    floating-point number of MODE.  */
 
-int
+bool
 const_double_operand (rtx op, machine_mode mode)
 {
   return (GET_CODE (op) == CONST_DOUBLE)
 	  && (GET_MODE (op) == mode || mode == VOIDmode);
 }
 #else
-/* Returns 1 if OP is an operand that is a constant integer or constant
+/* Return true if OP is an operand that is a constant integer or constant
    floating-point number of MODE.  */
 
-int
+bool
 const_double_operand (rtx op, machine_mode mode)
 {
   /* Don't accept CONST_INT or anything similar
@@ -1212,25 +1682,26 @@ const_double_operand (rtx op, machine_mode mode)
   if (GET_MODE (op) == VOIDmode && mode != VOIDmode
       && GET_MODE_CLASS (mode) != MODE_INT
       && GET_MODE_CLASS (mode) != MODE_PARTIAL_INT)
-    return 0;
+    return false;
 
   return ((CONST_DOUBLE_P (op) || CONST_INT_P (op))
 	  && (mode == VOIDmode || GET_MODE (op) == mode
 	      || GET_MODE (op) == VOIDmode));
 }
 #endif
-/* Return 1 if OP is a general operand that is not an immediate
+/* Return true if OP is a general operand that is not an immediate
    operand of mode MODE.  */
 
-int
+bool
 nonimmediate_operand (rtx op, machine_mode mode)
 {
   return (general_operand (op, mode) && ! CONSTANT_P (op));
 }
 
-/* Return 1 if OP is a register reference or immediate value of mode MODE.  */
+/* Return true if OP is a register reference or
+   immediate value of mode MODE.  */
 
-int
+bool
 nonmemory_operand (rtx op, machine_mode mode)
 {
   if (CONSTANT_P (op))
@@ -1238,20 +1709,20 @@ nonmemory_operand (rtx op, machine_mode mode)
   return register_operand (op, mode);
 }
 
-/* Return 1 if OP is a valid operand that stands for pushing a
+/* Return true if OP is a valid operand that stands for pushing a
    value of mode MODE onto the stack.
 
    The main use of this function is as a predicate in match_operand
    expressions in the machine description.  */
 
-int
+bool
 push_operand (rtx op, machine_mode mode)
 {
   if (!MEM_P (op))
-    return 0;
+    return false;
 
   if (mode != VOIDmode && GET_MODE (op) != mode)
-    return 0;
+    return false;
 
   poly_int64 rounded_size = GET_MODE_SIZE (mode);
 
@@ -1264,7 +1735,7 @@ push_operand (rtx op, machine_mode mode)
   if (known_eq (rounded_size, GET_MODE_SIZE (mode)))
     {
       if (GET_CODE (op) != STACK_PUSH_CODE)
-	return 0;
+	return false;
     }
   else
     {
@@ -1276,61 +1747,61 @@ push_operand (rtx op, machine_mode mode)
 	  || (STACK_GROWS_DOWNWARD
 	      ? maybe_ne (offset, -rounded_size)
 	      : maybe_ne (offset, rounded_size)))
-	return 0;
+	return false;
     }
 
   return XEXP (op, 0) == stack_pointer_rtx;
 }
 
-/* Return 1 if OP is a valid operand that stands for popping a
+/* Return true if OP is a valid operand that stands for popping a
    value of mode MODE off the stack.
 
    The main use of this function is as a predicate in match_operand
    expressions in the machine description.  */
 
-int
+bool
 pop_operand (rtx op, machine_mode mode)
 {
   if (!MEM_P (op))
-    return 0;
+    return false;
 
   if (mode != VOIDmode && GET_MODE (op) != mode)
-    return 0;
+    return false;
 
   op = XEXP (op, 0);
 
   if (GET_CODE (op) != STACK_POP_CODE)
-    return 0;
+    return false;
 
   return XEXP (op, 0) == stack_pointer_rtx;
 }
 
-/* Return 1 if ADDR is a valid memory address
+/* Return true if ADDR is a valid memory address
    for mode MODE in address space AS.  */
 
-int
+bool
 memory_address_addr_space_p (machine_mode mode ATTRIBUTE_UNUSED,
 			     rtx addr, addr_space_t as)
 {
 #ifdef GO_IF_LEGITIMATE_ADDRESS
   gcc_assert (ADDR_SPACE_GENERIC_P (as));
   GO_IF_LEGITIMATE_ADDRESS (mode, addr, win);
-  return 0;
+  return false;
 
  win:
-  return 1;
+  return true;
 #else
   return targetm.addr_space.legitimate_address_p (mode, addr, 0, as);
 #endif
 }
 
-/* Return 1 if OP is a valid memory reference with mode MODE,
+/* Return true if OP is a valid memory reference with mode MODE,
    including a valid address.
 
    The main use of this function is as a predicate in match_operand
    expressions in the machine description.  */
 
-int
+bool
 memory_operand (rtx op, machine_mode mode)
 {
   rtx inner;
@@ -1341,7 +1812,7 @@ memory_operand (rtx op, machine_mode mode)
     return MEM_P (op) && general_operand (op, mode);
 
   if (mode != VOIDmode && GET_MODE (op) != mode)
-    return 0;
+    return false;
 
   inner = op;
   if (GET_CODE (inner) == SUBREG)
@@ -1350,10 +1821,10 @@ memory_operand (rtx op, machine_mode mode)
   return (MEM_P (inner) && general_operand (op, mode));
 }
 
-/* Return 1 if OP is a valid indirect memory reference with mode MODE;
+/* Return true if OP is a valid indirect memory reference with mode MODE;
    that is, a memory reference whose address is a general_operand.  */
 
-int
+bool
 indirect_operand (rtx op, machine_mode mode)
 {
   /* Before reload, a SUBREG isn't in memory (see memory_operand, above).  */
@@ -1361,7 +1832,7 @@ indirect_operand (rtx op, machine_mode mode)
       && GET_CODE (op) == SUBREG && MEM_P (SUBREG_REG (op)))
     {
       if (mode != VOIDmode && GET_MODE (op) != mode)
-	return 0;
+	return false;
 
       /* The only way that we can have a general_operand as the resulting
 	 address is if OFFSET is zero and the address already is an operand
@@ -1378,10 +1849,10 @@ indirect_operand (rtx op, machine_mode mode)
 	  && general_operand (XEXP (op, 0), Pmode));
 }
 
-/* Return 1 if this is an ordered comparison operator (not including
+/* Return true if this is an ordered comparison operator (not including
    ORDERED and UNORDERED).  */
 
-int
+bool
 ordered_comparison_operator (rtx op, machine_mode mode)
 {
   if (mode != VOIDmode && GET_MODE (op) != mode)
@@ -1404,10 +1875,10 @@ ordered_comparison_operator (rtx op, machine_mode mode)
     }
 }
 
-/* Return 1 if this is a comparison operator.  This allows the use of
+/* Return true if this is a comparison operator.  This allows the use of
    MATCH_OPERATOR to recognize all the branch insns.  */
 
-int
+bool
 comparison_operator (rtx op, machine_mode mode)
 {
   return ((mode == VOIDmode || GET_MODE (op) == mode)
@@ -1778,6 +2249,7 @@ asm_operand_ok (rtx op, const char *constraint, const char **constraints)
 	  /* FALLTHRU */
 	default:
 	  cn = lookup_constraint (constraint);
+	  rtx mem = NULL;
 	  switch (get_constraint_type (cn))
 	    {
 	    case CT_REGISTER:
@@ -1796,9 +2268,14 @@ asm_operand_ok (rtx op, const char *constraint, const char **constraints)
 	      break;
 
 	    case CT_MEMORY:
+	    case CT_RELAXED_MEMORY:
+	      mem = op;
+	      /* Fall through.  */
 	    case CT_SPECIAL_MEMORY:
 	      /* Every memory operand can be reloaded to fit.  */
-	      result = result || memory_operand (op, VOIDmode);
+	      if (!mem)
+		mem = extract_mem_from_operand (op);
+	      result = result || memory_operand (mem, VOIDmode);
 	      break;
 
 	    case CT_ADDRESS:
@@ -1884,18 +2361,16 @@ find_constant_term_loc (rtx *p)
   return 0;
 }
 
-/* Return 1 if OP is a memory reference
-   whose address contains no side effects
-   and remains valid after the addition
-   of a positive integer less than the
-   size of the object being referenced.
+/* Return true if OP is a memory reference whose address contains
+   no side effects and remains valid after the addition of a positive
+   integer less than the size of the object being referenced.
 
    We assume that the original address is valid and do not check it.
 
    This uses strict_memory_address_p as a subroutine, so
    don't use it before reload.  */
 
-int
+bool
 offsettable_memref_p (rtx op)
 {
   return ((MEM_P (op))
@@ -1906,7 +2381,7 @@ offsettable_memref_p (rtx op)
 /* Similar, but don't require a strictly valid mem ref:
    consider pseudo-regs valid as index or base regs.  */
 
-int
+bool
 offsettable_nonstrict_memref_p (rtx op)
 {
   return ((MEM_P (op))
@@ -1914,7 +2389,7 @@ offsettable_nonstrict_memref_p (rtx op)
 					       MEM_ADDR_SPACE (op)));
 }
 
-/* Return 1 if Y is a memory address which contains no side effects
+/* Return true if Y is a memory address which contains no side effects
    and would remain valid for address space AS after the addition of
    a positive integer less than the size of that mode.
 
@@ -1924,7 +2399,7 @@ offsettable_nonstrict_memref_p (rtx op)
    If STRICTP is nonzero, we require a strictly valid address,
    for the sake of use in reload.c.  */
 
-int
+bool
 offsettable_address_addr_space_p (int strictp, machine_mode mode, rtx y,
 				  addr_space_t as)
 {
@@ -1932,19 +2407,19 @@ offsettable_address_addr_space_p (int strictp, machine_mode mode, rtx y,
   rtx z;
   rtx y1 = y;
   rtx *y2;
-  int (*addressp) (machine_mode, rtx, addr_space_t) =
+  bool (*addressp) (machine_mode, rtx, addr_space_t) =
     (strictp ? strict_memory_address_addr_space_p
 	     : memory_address_addr_space_p);
   poly_int64 mode_sz = GET_MODE_SIZE (mode);
 
   if (CONSTANT_ADDRESS_P (y))
-    return 1;
+    return true;
 
   /* Adjusting an offsettable address involves changing to a narrower mode.
      Make sure that's OK.  */
 
   if (mode_dependent_address_p (y, as))
-    return 0;
+    return false;
 
   machine_mode address_mode = GET_MODE (y);
   if (address_mode == VOIDmode)
@@ -1965,7 +2440,7 @@ offsettable_address_addr_space_p (int strictp, machine_mode mode, rtx y,
 
   if ((ycode == PLUS) && (y2 = find_constant_term_loc (&y1)))
     {
-      int good;
+      bool good;
 
       y1 = *y2;
       *y2 = plus_constant (address_mode, *y2, mode_sz - 1);
@@ -1979,7 +2454,7 @@ offsettable_address_addr_space_p (int strictp, machine_mode mode, rtx y,
     }
 
   if (GET_RTX_CLASS (ycode) == RTX_AUTOINC)
-    return 0;
+    return false;
 
   /* The offset added here is chosen as the maximum offset that
      any instruction could need to add when operating on something
@@ -2009,7 +2484,7 @@ offsettable_address_addr_space_p (int strictp, machine_mode mode, rtx y,
   return (*addressp) (QImode, z, as);
 }
 
-/* Return 1 if ADDR is an address-expression whose effect depends
+/* Return true if ADDR is an address-expression whose effect depends
    on the mode of the memory reference it is used in.
 
    ADDRSPACE is the address space associated with the address.
@@ -2417,6 +2892,7 @@ preprocess_constraints (int n_operands, int n_alternatives,
 
 		    case CT_MEMORY:
 		    case CT_SPECIAL_MEMORY:
+		    case CT_RELAXED_MEMORY:
 		      op_alt[i].memory_ok = 1;
 		      break;
 
@@ -2547,10 +3023,7 @@ constrain_operands (int strict, alternative_mask alternatives)
     return 1;
 
   for (c = 0; c < recog_data.n_operands; c++)
-    {
-      constraints[c] = recog_data.constraints[c];
-      matching_operands[c] = -1;
-    }
+    constraints[c] = recog_data.constraints[c];
 
   do
     {
@@ -2571,6 +3044,9 @@ constrain_operands (int strict, alternative_mask alternatives)
 	}
 
       for (opno = 0; opno < recog_data.n_operands; opno++)
+	matching_operands[opno] = -1;
+
+      for (opno = 0; opno < recog_data.n_operands; opno++)
 	{
 	  rtx op = recog_data.operand[opno];
 	  machine_mode mode = GET_MODE (op);
@@ -2584,7 +3060,9 @@ constrain_operands (int strict, alternative_mask alternatives)
 
 	  /* A unary operator may be accepted by the predicate, but it
 	     is irrelevant for matching constraints.  */
-	  if (UNARY_P (op))
+	  /* For special_memory_operand, there could be a memory operand inside,
+	     and it would cause a mismatch for constraint_satisfied_p.  */
+	  if (UNARY_P (op) && op == extract_mem_from_operand (op))
 	    op = XEXP (op, 0);
 
 	  if (GET_CODE (op) == SUBREG)
@@ -3277,6 +3755,78 @@ peep2_reinit_state (regset live)
   COPY_REG_SET (peep2_insn_data[MAX_INSNS_PER_PEEP2].live_before, live);
 }
 
+/* Copies frame related info of an insn (OLD_INSN) to the single
+   insn (NEW_INSN) that was obtained by splitting OLD_INSN.  */
+
+void
+copy_frame_info_to_split_insn (rtx_insn *old_insn, rtx_insn *new_insn)
+{
+  bool any_note = false;
+  rtx note;
+
+  if (!RTX_FRAME_RELATED_P (old_insn))
+    return;
+
+  RTX_FRAME_RELATED_P (new_insn) = 1;
+
+  /* Allow the backend to fill in a note during the split.  */
+  for (note = REG_NOTES (new_insn); note ; note = XEXP (note, 1))
+    switch (REG_NOTE_KIND (note))
+      {
+      case REG_FRAME_RELATED_EXPR:
+      case REG_CFA_DEF_CFA:
+      case REG_CFA_ADJUST_CFA:
+      case REG_CFA_OFFSET:
+      case REG_CFA_REGISTER:
+      case REG_CFA_EXPRESSION:
+      case REG_CFA_RESTORE:
+      case REG_CFA_SET_VDRAP:
+        any_note = true;
+        break;
+      default:
+        break;
+      }
+
+  /* If the backend didn't supply a note, copy one over.  */
+  if (!any_note)
+    for (note = REG_NOTES (old_insn); note ; note = XEXP (note, 1))
+      switch (REG_NOTE_KIND (note))
+        {
+        case REG_FRAME_RELATED_EXPR:
+        case REG_CFA_DEF_CFA:
+        case REG_CFA_ADJUST_CFA:
+        case REG_CFA_OFFSET:
+        case REG_CFA_REGISTER:
+        case REG_CFA_EXPRESSION:
+        case REG_CFA_RESTORE:
+        case REG_CFA_SET_VDRAP:
+          add_reg_note (new_insn, REG_NOTE_KIND (note), XEXP (note, 0));
+          any_note = true;
+          break;
+        default:
+          break;
+        }
+
+  /* If there still isn't a note, make sure the unwind info sees the
+     same expression as before the split.  */
+  if (!any_note)
+    {
+      rtx old_set, new_set;
+
+      /* The old insn had better have been simple, or annotated.  */
+      old_set = single_set (old_insn);
+      gcc_assert (old_set != NULL);
+
+      new_set = single_set (new_insn);
+      if (!new_set || !rtx_equal_p (new_set, old_set))
+        add_reg_note (new_insn, REG_FRAME_RELATED_EXPR, old_set);
+    }
+
+  /* Copy prologue/epilogue status.  This is required in order to keep
+     proper placement of EPILOGUE_BEG and the DW_CFA_remember_state.  */
+  maybe_copy_prologue_epilogue_insn (old_insn, new_insn);
+}
+
 /* While scanning basic block BB, we found a match of length MATCH_LEN,
    starting at INSN.  Perform the replacement, removing the old insns and
    replacing them with ATTEMPT.  Returns the last insn emitted, or NULL
@@ -3297,9 +3847,6 @@ peep2_attempt (basic_block bb, rtx_insn *insn, int match_len, rtx_insn *attempt)
   old_insn = peep2_insn_data[peep2_current].insn;
   if (RTX_FRAME_RELATED_P (old_insn))
     {
-      bool any_note = false;
-      rtx note;
-
       if (match_len != 0)
 	return NULL;
 
@@ -3313,64 +3860,7 @@ peep2_attempt (basic_block bb, rtx_insn *insn, int match_len, rtx_insn *attempt)
 	return NULL;
 
       /* We have a 1-1 replacement.  Copy over any frame-related info.  */
-      RTX_FRAME_RELATED_P (new_insn) = 1;
-
-      /* Allow the backend to fill in a note during the split.  */
-      for (note = REG_NOTES (new_insn); note ; note = XEXP (note, 1))
-	switch (REG_NOTE_KIND (note))
-	  {
-	  case REG_FRAME_RELATED_EXPR:
-	  case REG_CFA_DEF_CFA:
-	  case REG_CFA_ADJUST_CFA:
-	  case REG_CFA_OFFSET:
-	  case REG_CFA_REGISTER:
-	  case REG_CFA_EXPRESSION:
-	  case REG_CFA_RESTORE:
-	  case REG_CFA_SET_VDRAP:
-	    any_note = true;
-	    break;
-	  default:
-	    break;
-	  }
-
-      /* If the backend didn't supply a note, copy one over.  */
-      if (!any_note)
-        for (note = REG_NOTES (old_insn); note ; note = XEXP (note, 1))
-	  switch (REG_NOTE_KIND (note))
-	    {
-	    case REG_FRAME_RELATED_EXPR:
-	    case REG_CFA_DEF_CFA:
-	    case REG_CFA_ADJUST_CFA:
-	    case REG_CFA_OFFSET:
-	    case REG_CFA_REGISTER:
-	    case REG_CFA_EXPRESSION:
-	    case REG_CFA_RESTORE:
-	    case REG_CFA_SET_VDRAP:
-	      add_reg_note (new_insn, REG_NOTE_KIND (note), XEXP (note, 0));
-	      any_note = true;
-	      break;
-	    default:
-	      break;
-	    }
-
-      /* If there still isn't a note, make sure the unwind info sees the
-	 same expression as before the split.  */
-      if (!any_note)
-	{
-	  rtx old_set, new_set;
-
-	  /* The old insn had better have been simple, or annotated.  */
-	  old_set = single_set (old_insn);
-	  gcc_assert (old_set != NULL);
-
-	  new_set = single_set (new_insn);
-	  if (!new_set || !rtx_equal_p (new_set, old_set))
-	    add_reg_note (new_insn, REG_FRAME_RELATED_EXPR, old_set);
-	}
-
-      /* Copy prologue/epilogue status.  This is required in order to keep
-	 proper placement of EPILOGUE_BEG and the DW_CFA_remember_state.  */
-      maybe_copy_prologue_epilogue_insn (old_insn, new_insn);
+      copy_frame_info_to_split_insn (old_insn, new_insn);
     }
 
   /* If we are splitting a CALL_INSN, look for the CALL_INSN
@@ -4043,8 +4533,13 @@ pass_split_before_regstack::gate (function *)
   /* If flow2 creates new instructions which need splitting
      and scheduling after reload is not done, they might not be
      split until final which doesn't allow splitting
-     if HAVE_ATTR_length.  */
+     if HAVE_ATTR_length.  Selective scheduling can result in
+     further instructions that need splitting.  */
+#ifdef INSN_SCHEDULING
+  return !enable_split_before_sched2 () || flag_selective_scheduling2;
+#else
   return !enable_split_before_sched2 ();
+#endif
 #else
   return false;
 #endif

@@ -1,5 +1,5 @@
 /* Command line option handling.
-   Copyright (C) 2006-2020 Free Software Foundation, Inc.
+   Copyright (C) 2006-2021 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -529,7 +529,7 @@ add_misspelling_candidates (auto_vec<char *> *candidates,
    consumed.  */
 
 static unsigned int
-decode_cmdline_option (const char **argv, unsigned int lang_mask,
+decode_cmdline_option (const char *const *argv, unsigned int lang_mask,
 		       struct cl_decoded_option *decoded)
 {
   size_t opt_index;
@@ -766,6 +766,7 @@ decode_cmdline_option (const char **argv, unsigned int lang_mask,
       werror_arg[0] = 'W';
 
       size_t warning_index = find_opt (werror_arg, lang_mask);
+      free (werror_arg);
       if (warning_index != OPT_SPECIAL_unknown)
 	{
 	  const struct cl_option *warning_option
@@ -944,7 +945,8 @@ decode_cmdline_options_to_array (unsigned int argc, const char **argv,
   struct cl_decoded_option *opt_array;
   unsigned int num_decoded_options;
 
-  opt_array = XNEWVEC (struct cl_decoded_option, argc);
+  int opt_array_len = argc;
+  opt_array = XNEWVEC (struct cl_decoded_option, opt_array_len);
 
   opt_array[0].opt_index = OPT_SPECIAL_program_name;
   opt_array[0].warn_message = NULL;
@@ -979,6 +981,41 @@ decode_cmdline_options_to_array (unsigned int argc, const char **argv,
 	  const char *replacement
 	    = opts_concat (needle, "=", argv[i + 1], NULL);
 	  argv[++i] = replacement;
+	}
+
+      /* Expand -fdiagnostics-plain-output to its constituents.  This needs
+	 to happen here so that prune_options can handle -fdiagnostics-color
+	 specially.  */
+      if (!strcmp (opt, "-fdiagnostics-plain-output"))
+	{
+	  /* If you have changed the default diagnostics output, and this new
+	     output is not appropriately "plain" (e.g., the change needs to be
+	     undone in order for the testsuite to work properly), then please do
+	     the following:
+		 1.  Add the necessary option to undo the new behavior to
+		     the array below.
+		 2.  Update the documentation for -fdiagnostics-plain-output
+		     in invoke.texi.  */
+	  const char *const expanded_args[] = {
+	    "-fno-diagnostics-show-caret",
+	    "-fno-diagnostics-show-line-numbers",
+	    "-fdiagnostics-color=never",
+	    "-fdiagnostics-urls=never",
+	    "-fdiagnostics-path-format=separate-events",
+	  };
+	  const int num_expanded = ARRAY_SIZE (expanded_args);
+	  opt_array_len += num_expanded - 1;
+	  opt_array = XRESIZEVEC (struct cl_decoded_option,
+				  opt_array, opt_array_len);
+	  for (int j = 0, nj; j < num_expanded; j += nj)
+	    {
+	      nj = decode_cmdline_option (expanded_args + j, lang_mask,
+					  &opt_array[num_decoded_options]);
+	      num_decoded_options++;
+	    }
+
+	  n = 1;
+	  continue;
 	}
 
       n = decode_cmdline_option (argv + i, lang_mask,
@@ -1430,9 +1467,15 @@ set_option (struct gcc_options *opts, struct gcc_options *opts_set,
 	  }
 	else
 	  {
-	    *(int *) flag_var = value;
-	    if (set_flag_var)
-	      *(int *) set_flag_var = 1;
+	    if (value > INT_MAX)
+	      error_at (loc, "argument to %qs is bigger than %d",
+			option->opt_text, INT_MAX);
+	    else
+	      {
+		*(int *) flag_var = value;
+		if (set_flag_var)
+		  *(int *) set_flag_var = 1;
+	      }
 	  }
 
 	break;
@@ -1762,7 +1805,7 @@ parse_options_from_collect_gcc_options (const char *collect_gcc_options,
 	      if (argv_storage[j] == '\0')
 		fatal_error (input_location,
 			     "malformed %<COLLECT_GCC_OPTIONS%>");
-	      else if (strncmp (&argv_storage[j], "'\\''", 4) == 0)
+	      else if (startswith (&argv_storage[j], "'\\''"))
 		{
 		  argv_storage[k++] = '\'';
 		  j += 4;

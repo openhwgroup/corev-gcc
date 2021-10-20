@@ -6,7 +6,7 @@
  *                                                                          *
  *                          C Implementation File                           *
  *                                                                          *
- *          Copyright (C) 1992-2020, Free Software Foundation, Inc.         *
+ *          Copyright (C) 1992-2021, Free Software Foundation, Inc.         *
  *                                                                          *
  * GNAT is free software;  you can  redistribute it  and/or modify it under *
  * terms of the  GNU General Public License as published  by the Free Soft- *
@@ -73,7 +73,7 @@ get_base_type (tree type)
 
   return type;
 }
-
+
 /* EXP is a GCC tree representing an address.  See if we can find how strictly
    the object at this address is aligned and, if so, return the alignment of
    the object in bits.  Otherwise return 0.  */
@@ -203,7 +203,7 @@ known_alignment (tree exp)
 
   return this_alignment;
 }
-
+
 /* We have a comparison or assignment operation on two types, T1 and T2, which
    are either both array types or both record types.  T1 is assumed to be for
    the left hand side operand, and T2 for the right hand side.  Return the
@@ -271,7 +271,7 @@ find_common_type (tree t1, tree t2)
      could cause a bad self-referential reference.  */
   return NULL_TREE;
 }
-
+
 /* Return an expression tree representing an equality comparison of A1 and A2,
    two objects of type ARRAY_TYPE.  The result should be of type RESULT_TYPE.
 
@@ -533,7 +533,7 @@ compare_fat_pointers (location_t loc, tree result_type, tree p1, tree p2)
 			  build_binary_op (TRUTH_ORIF_EXPR, result_type,
 					   p1_array_is_null, same_bounds));
 }
-
+
 /* Compute the result of applying OP_CODE to LHS and RHS, where both are of
    type TYPE.  We know that TYPE is a modular type with a nonbinary
    modulus.  */
@@ -629,7 +629,7 @@ nonbinary_modular_operation (enum tree_code op_code, tree type, tree lhs,
 
   return convert (type, result);
 }
-
+
 /* This page contains routines that implement the Ada semantics with regard
    to atomic objects.  They are fully piggybacked on the middle-end support
    for atomic loads and stores.
@@ -663,7 +663,7 @@ nonbinary_modular_operation (enum tree_code op_code, tree type, tree lhs,
 
 /* Return the size of TYPE, which must be a positive power of 2.  */
 
-static unsigned int
+unsigned int
 resolve_atomic_size (tree type)
 {
   unsigned HOST_WIDE_INT size = tree_to_uhwi (TYPE_SIZE_UNIT (type));
@@ -828,7 +828,7 @@ build_load_modify_store (tree dest, tree src, Node_Id gnat_node)
   /* Something went wrong earlier if we have not found the atomic load.  */
   gcc_unreachable ();
 }
-
+
 /* Make a binary operation of kind OP_CODE.  RESULT_TYPE is the type
    desired for the result.  Usually the operation is to be performed
    in that type.  For INIT_EXPR and MODIFY_EXPR, RESULT_TYPE must be
@@ -1301,11 +1301,11 @@ build_binary_op (enum tree_code op_code, tree result_type,
       if (TYPE_VOLATILE (operation_type))
 	TREE_THIS_VOLATILE (result) = 1;
     }
-  else
-    TREE_CONSTANT (result)
-      |= (TREE_CONSTANT (left_operand) && TREE_CONSTANT (right_operand));
+  else if (TREE_CONSTANT (left_operand) && TREE_CONSTANT (right_operand))
+    TREE_CONSTANT (result) = 1;
 
-  TREE_SIDE_EFFECTS (result) |= has_side_effects;
+  if (has_side_effects)
+    TREE_SIDE_EFFECTS (result) = 1;
 
   /* If we are working with modular types, perform the MOD operation
      if something above hasn't eliminated the need for it.  */
@@ -1323,7 +1323,7 @@ build_binary_op (enum tree_code op_code, tree result_type,
 
   return result;
 }
-
+
 /* Similar, but for unary operations.  */
 
 tree
@@ -1528,7 +1528,9 @@ build_unary_op (enum tree_code op_code, tree result_type, tree operand)
 	  result = build_fold_addr_expr (operand);
 	}
 
-      TREE_CONSTANT (result) = staticp (operand) || TREE_CONSTANT (operand);
+      if (TREE_CONSTANT (operand) || staticp (operand))
+	TREE_CONSTANT (result) = 1;
+
       break;
 
     case INDIRECT_REF:
@@ -1683,7 +1685,7 @@ build_unary_op (enum tree_code op_code, tree result_type, tree operand)
 
   return result;
 }
-
+
 /* Similar, but for COND_EXPR.  */
 
 tree
@@ -1758,7 +1760,7 @@ build_compound_expr (tree result_type, tree stmt_operand, tree expr_operand)
 
   return result;
 }
-
+
 /* Conveniently construct a function call expression.  FNDECL names the
    function to be called, N is the number of arguments, and the "..."
    parameters are the argument expressions.  Unlike build_call_expr
@@ -1776,7 +1778,7 @@ build_call_n_expr (tree fndecl, int n, ...)
   va_end (ap);
   return fn;
 }
-
+
 /* Build a goto to LABEL for a raise, with an optional call to Local_Raise.
    MSG gives the exception's identity for the call to Local_Raise, if any.  */
 
@@ -1924,7 +1926,7 @@ build_call_raise_range (int msg, Node_Id gnat_node, char kind,
 		       convert (integer_type_node, first),
 		       convert (integer_type_node, last));
 }
-
+
 /* qsort comparer for the bit positions of two constructor elements
    for record components.  */
 
@@ -1957,14 +1959,19 @@ gnat_build_constructor (tree type, vec<constructor_elt, va_gc> *v)
      the elements along the way for possible sorting purposes below.  */
   FOR_EACH_CONSTRUCTOR_ELT (v, n_elmts, obj, val)
     {
-      /* The predicate must be in keeping with output_constructor.  */
+      /* The predicate must be in keeping with output_constructor and, unlike
+	 initializer_constant_valid_p, we accept "&{...}" because we'll put
+	 the CONSTRUCTOR into the constant pool during gimplification.  */
       if ((!TREE_CONSTANT (val) && !TREE_STATIC (val))
 	  || (TREE_CODE (type) == RECORD_TYPE
 	      && CONSTRUCTOR_BITFIELD_P (obj)
 	      && !initializer_constant_valid_for_bitfield_p (val))
-	  || !initializer_constant_valid_p (val,
-					    TREE_TYPE (val),
-					    TYPE_REVERSE_STORAGE_ORDER (type)))
+	  || (!initializer_constant_valid_p (val,
+					     TREE_TYPE (val),
+					     TYPE_REVERSE_STORAGE_ORDER (type))
+	      && !(TREE_CODE (val) == ADDR_EXPR
+		   && TREE_CODE (TREE_OPERAND (val, 0)) == CONSTRUCTOR
+		   && TREE_CONSTANT (TREE_OPERAND (val, 0)))))
 	allconstant = false;
 
       if (!TREE_READONLY (val))
@@ -1987,7 +1994,7 @@ gnat_build_constructor (tree type, vec<constructor_elt, va_gc> *v)
   TREE_READONLY (result) = TYPE_READONLY (type) || read_only || allconstant;
   return result;
 }
-
+
 /* Return a COMPONENT_REF to access FIELD in RECORD, or NULL_TREE if the field
    is not found in the record.  Don't fold the result if NO_FOLD is true.  */
 
@@ -2064,7 +2071,9 @@ build_simple_component_ref (tree record, tree field, bool no_fold)
      need to warn since this will be done on trying to declare the object.  */
   if (TREE_CODE (DECL_FIELD_OFFSET (field)) == INTEGER_CST
       && TREE_OVERFLOW (DECL_FIELD_OFFSET (field)))
-    return NULL_TREE;
+    return build1 (NULL_EXPR, TREE_TYPE (field),
+		   build_call_raise (SE_Object_Too_Large, Empty,
+				     N_Raise_Storage_Error));
 
   ref = build3 (COMPONENT_REF, TREE_TYPE (field), record, field, NULL_TREE);
 
@@ -2098,7 +2107,7 @@ build_simple_component_ref (tree record, tree field, bool no_fold)
   return fold (ref);
 }
 
-/* Likewise, but return NULL_EXPR and generate a Constraint_Error if the
+/* Likewise, but return NULL_EXPR and generate a Program_Error if the
    field is not found in the record.  */
 
 tree
@@ -2108,12 +2117,15 @@ build_component_ref (tree record, tree field, bool no_fold)
   if (ref)
     return ref;
 
-  /* Assume this is an invalid user field so raise Constraint_Error.  */
+  /* The missing field should have been detected in the front-end.  */
+  gigi_checking_assert (false);
+
+  /* Assume this is an invalid user field so raise Program_Error.  */
   return build1 (NULL_EXPR, TREE_TYPE (field),
-		 build_call_raise (CE_Discriminant_Check_Failed, Empty,
-				   N_Raise_Constraint_Error));
+		 build_call_raise (PE_Explicit_Raise, Empty,
+				   N_Raise_Program_Error));
 }
-
+
 /* Helper for build_call_alloc_dealloc, with arguments to be interpreted
    identically.  Process the case where a GNAT_PROC to call is provided.  */
 
@@ -2326,7 +2338,7 @@ build_call_alloc_dealloc (tree gnu_obj, tree gnu_size, tree gnu_type,
       return maybe_wrap_malloc (gnu_size, gnu_type, gnat_node);
     }
 }
-
+
 /* Build a GCC tree that corresponds to allocating an object of TYPE whose
    initial value is INIT, if INIT is nonzero.  Convert the expression to
    RESULT_TYPE, which must be some pointer type, and return the result.
@@ -2457,7 +2469,7 @@ build_allocator (tree type, tree init, tree result_type, Entity_Id gnat_proc,
 
   return storage;
 }
-
+
 /* Indicate that we need to take the address of T and that it therefore
    should not be allocated in a register.  Return true if successful.  */
 
@@ -2505,7 +2517,7 @@ gnat_mark_addressable (tree t)
 	return true;
     }
 }
-
+
 /* Return true if EXP is a stable expression for the purpose of the functions
    below and, therefore, can be returned unmodified by them.  We accept things
    that are actual constants or that have already been handled.  */
@@ -2676,9 +2688,12 @@ gnat_stabilize_reference_1 (tree e, void *data)
       gcc_unreachable ();
     }
 
+  /* See gnat_rewrite_reference below for the rationale.  */
   TREE_READONLY (result) = TREE_READONLY (e);
-  TREE_SIDE_EFFECTS (result) |= TREE_SIDE_EFFECTS (e);
   TREE_THIS_VOLATILE (result) = TREE_THIS_VOLATILE (e);
+
+  if (TREE_SIDE_EFFECTS (e))
+    TREE_SIDE_EFFECTS (result) = 1;
 
   return result;
 }
@@ -2796,17 +2811,17 @@ gnat_rewrite_reference (tree ref, rewrite_fn func, void *data, tree *init)
       gcc_unreachable ();
     }
 
-  /* TREE_THIS_VOLATILE and TREE_SIDE_EFFECTS set on the initial expression
-     may not be sustained across some paths, such as the way via build1 for
-     INDIRECT_REF.  We reset those flags here in the general case, which is
-     consistent with the GCC version of this routine.
+  /* TREE_READONLY and TREE_THIS_VOLATILE set on the initial expression may
+     not be sustained across some paths, such as the one for INDIRECT_REF.
 
      Special care should be taken regarding TREE_SIDE_EFFECTS, because some
      paths introduce side-effects where there was none initially (e.g. if a
      SAVE_EXPR is built) and we also want to keep track of that.  */
   TREE_READONLY (result) = TREE_READONLY (ref);
-  TREE_SIDE_EFFECTS (result) |= TREE_SIDE_EFFECTS (ref);
   TREE_THIS_VOLATILE (result) = TREE_THIS_VOLATILE (ref);
+
+  if (TREE_SIDE_EFFECTS (ref))
+    TREE_SIDE_EFFECTS (result) = 1;
 
   if (code == INDIRECT_REF
       || code == UNCONSTRAINED_ARRAY_REF
@@ -2945,6 +2960,17 @@ gnat_invariant_expr (tree expr)
 
   if (TREE_CONSTANT (expr))
     return fold_convert (type, expr);
+
+  /* Deal with aligning patterns.  */
+  if (TREE_CODE (expr) == BIT_AND_EXPR
+      && TREE_CONSTANT (TREE_OPERAND (expr, 1)))
+    {
+      tree op0 = gnat_invariant_expr (TREE_OPERAND (expr, 0));
+      if (op0)
+	return fold_build2 (BIT_AND_EXPR, type, op0, TREE_OPERAND (expr, 1));
+      else
+	return NULL_TREE;
+    }
 
   /* Deal with addition or subtraction of constants.  */
   if (is_simple_additive_expression (expr, &add, &cst, &minus_p))

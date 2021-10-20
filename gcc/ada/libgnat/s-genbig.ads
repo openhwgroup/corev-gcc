@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---            Copyright (C) 2012-2020, Free Software Foundation, Inc.       --
+--            Copyright (C) 2012-2021, Free Software Foundation, Inc.       --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -101,9 +101,17 @@ package System.Generic_Bignums is
    --  Convert Long_Long_Integer to a big integer. No exception can be raised
    --  for any input argument.
 
+   function To_Bignum (X : Long_Long_Long_Integer) return Big_Integer;
+   --  Convert Long_Long_Long_Integer to a big integer. No exception can be
+   --  raised.
+
    function To_Bignum (X : Interfaces.Unsigned_64) return Big_Integer;
    --  Convert Unsigned_64 to a big integer. No exception can be raised for any
    --  input argument.
+
+   function To_Bignum (X : Interfaces.Unsigned_128) return Big_Integer;
+   --  Convert Unsigned_128 to a big integer. No exception can be raised for
+   --  any input argument.
 
    function From_Bignum (X : Bignum) return Long_Long_Integer;
    --  Convert Bignum to Long_Long_Integer. Constraint_Error raised with

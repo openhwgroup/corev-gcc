@@ -1,5 +1,5 @@
 /* Get CPU type and Features for x86 processors.
-   Copyright (C) 2012-2020 Free Software Foundation, Inc.
+   Copyright (C) 2012-2021 Free Software Foundation, Inc.
    Contributed by Sriraman Tallam (tmsriram@google.com)
 
 This file is part of GCC.
@@ -44,6 +44,10 @@ struct __processor_model2
 
 #ifndef CHECK___builtin_cpu_is
 # define CHECK___builtin_cpu_is(cpu)
+#endif
+
+#ifndef CHECK___builtin_cpu_supports
+# define CHECK___builtin_cpu_supports(isa)
 #endif
 
 /* Return non-zero if the processor has feature F.  */
@@ -241,6 +245,23 @@ get_amd_cpu (struct __processor_model *cpu_model,
 	  cpu_model->__cpu_subtype = AMDFAM17H_ZNVER1;
 	}
       break;
+    case 0x19:
+      cpu_model->__cpu_type = AMDFAM19H;
+      /* AMD family 19h version 1.  */
+      if (model <= 0x0f)
+	{
+	  cpu = "znver3";
+	  CHECK___builtin_cpu_is ("znver3");
+	  cpu_model->__cpu_subtype = AMDFAM19H_ZNVER3;
+	}
+      else if (has_cpu_feature (cpu_model, cpu_features2,
+				FEATURE_VAES))
+	{
+	  cpu = "znver3";
+	  CHECK___builtin_cpu_is ("znver3");
+	  cpu_model->__cpu_subtype = AMDFAM19H_ZNVER3;
+	}
+      break;
     default:
       break;
     }
@@ -393,6 +414,14 @@ get_intel_cpu (struct __processor_model *cpu_model,
       cpu_model->__cpu_type = INTEL_COREI7;
       cpu_model->__cpu_subtype = INTEL_COREI7_SKYLAKE;
       break;
+    case 0xa7:
+      /* Rocket Lake.  */
+      cpu = "rocketlake";
+      CHECK___builtin_cpu_is ("corei7");
+      CHECK___builtin_cpu_is ("rocketlake");
+      cpu_model->__cpu_type = INTEL_COREI7;
+      cpu_model->__cpu_subtype = INTEL_COREI7_ROCKETLAKE;
+      break;
     case 0x55:
       CHECK___builtin_cpu_is ("corei7");
       cpu_model->__cpu_type = INTEL_COREI7;
@@ -456,6 +485,15 @@ get_intel_cpu (struct __processor_model *cpu_model,
       cpu_model->__cpu_type = INTEL_COREI7;
       cpu_model->__cpu_subtype = INTEL_COREI7_TIGERLAKE;
       break;
+    case 0x97:
+    case 0x9a:
+      /* Alder Lake.  */
+      cpu = "alderlake";
+      CHECK___builtin_cpu_is ("corei7");
+      CHECK___builtin_cpu_is ("alderlake");
+      cpu_model->__cpu_type = INTEL_COREI7;
+      cpu_model->__cpu_subtype = INTEL_COREI7_ALDERLAKE;
+      break;
     case 0x8f:
       /* Sapphire Rapids.  */
       cpu = "sapphirerapids";
@@ -499,15 +537,22 @@ get_available_features (struct __processor_model *cpu_model,
 #define XSTATE_OPMASK			0x20
 #define XSTATE_ZMM			0x40
 #define XSTATE_HI_ZMM			0x80
+#define XSTATE_TILECFG			0x20000
+#define XSTATE_TILEDATA		0x40000
 
 #define XCR_AVX_ENABLED_MASK \
   (XSTATE_SSE | XSTATE_YMM)
 #define XCR_AVX512F_ENABLED_MASK \
   (XSTATE_SSE | XSTATE_YMM | XSTATE_OPMASK | XSTATE_ZMM | XSTATE_HI_ZMM)
+#define XCR_AMX_ENABLED_MASK \
+  (XSTATE_TILECFG | XSTATE_TILEDATA)
 
   /* Check if AVX and AVX512 are usable.  */
   int avx_usable = 0;
   int avx512_usable = 0;
+  int amx_usable = 0;
+  /* Check if KL is usable.  */
+  int has_kl = 0;
   if ((ecx & bit_OSXSAVE))
     {
       /* Check if XMM, YMM, OPMASK, upper 256 bits of ZMM0-ZMM15 and
@@ -523,6 +568,8 @@ get_available_features (struct __processor_model *cpu_model,
 	  avx512_usable = ((xcrlow & XCR_AVX512F_ENABLED_MASK)
 			   == XCR_AVX512F_ENABLED_MASK);
 	}
+      amx_usable = ((xcrlow & XCR_AMX_ENABLED_MASK)
+		    == XCR_AMX_ENABLED_MASK);
     }
 
 #define set_feature(f) \
@@ -633,6 +680,8 @@ get_available_features (struct __processor_model *cpu_model,
 	set_feature (FEATURE_WAITPKG);
       if (ecx & bit_SHSTK)
 	set_feature (FEATURE_SHSTK);
+      if (ecx & bit_KL)
+	has_kl = 1;
       if (edx & bit_SERIALIZE)
 	set_feature (FEATURE_SERIALIZE);
       if (edx & bit_TSXLDTRK)
@@ -641,6 +690,17 @@ get_available_features (struct __processor_model *cpu_model,
 	set_feature (FEATURE_PCONFIG);
       if (edx & bit_IBT)
 	set_feature (FEATURE_IBT);
+      if (edx & bit_UINTR)
+	set_feature (FEATURE_UINTR);
+      if (amx_usable)
+	{
+	  if (edx & bit_AMX_TILE)
+	    set_feature (FEATURE_AMX_TILE);
+	  if (edx & bit_AMX_INT8)
+	    set_feature (FEATURE_AMX_INT8);
+	  if (edx & bit_AMX_BF16)
+	    set_feature (FEATURE_AMX_BF16);
+	}
       if (avx512_usable)
 	{
 	  if (ebx & bit_AVX512F)
@@ -675,8 +735,20 @@ get_available_features (struct __processor_model *cpu_model,
 	    set_feature (FEATURE_AVX5124FMAPS);
 	  if (edx & bit_AVX512VP2INTERSECT)
 	    set_feature (FEATURE_AVX512VP2INTERSECT);
+	  if (edx & bit_AVX512FP16)
+	    set_feature (FEATURE_AVX512FP16);
+	}
 
-	  __cpuid_count (7, 1, eax, ebx, ecx, edx);
+      __cpuid_count (7, 1, eax, ebx, ecx, edx);
+      if (eax & bit_HRESET)
+	set_feature (FEATURE_HRESET);
+      if (avx_usable)
+	{
+	  if (eax & bit_AVXVNNI)
+	    set_feature (FEATURE_AVXVNNI);
+	}
+      if (avx512_usable)
+	{
 	  if (eax & bit_AVX512BF16)
 	    set_feature (FEATURE_AVX512BF16);
 	}
@@ -700,6 +772,21 @@ get_available_features (struct __processor_model *cpu_model,
       __cpuid_count (0x14, 0, eax, ebx, ecx, edx);
       if (ebx & bit_PTWRITE)
 	set_feature (FEATURE_PTWRITE);
+    }
+
+  /* Get Advanced Features at level 0x19 (eax = 0x19).  */
+  if (max_cpuid_level >= 0x19)
+    {
+      set_feature (FEATURE_AESKLE);
+      __cpuid (19, eax, ebx, ecx, edx);
+      /* Check if OS support keylocker.  */
+      if (ebx & bit_AESKLE)
+	{
+	  if (ebx & bit_WIDEKL)
+	    set_feature (FEATURE_WIDEKL);
+	  if (has_kl)
+	    set_feature (FEATURE_KL);
+	}
     }
 
   /* Check cpuid level of extended features.  */
@@ -849,6 +936,50 @@ cpu_indicator_init (struct __processor_model *cpu_model,
     cpu_model->__cpu_vendor = VENDOR_NSC;
   else
     cpu_model->__cpu_vendor = VENDOR_OTHER;
+
+  if (has_cpu_feature (cpu_model, cpu_features2, FEATURE_LM)
+      && has_cpu_feature (cpu_model, cpu_features2, FEATURE_SSE2))
+    {
+      CHECK___builtin_cpu_supports ("x86-64");
+      set_cpu_feature (cpu_model, cpu_features2,
+		       FEATURE_X86_64_BASELINE);
+      if (has_cpu_feature (cpu_model, cpu_features2, FEATURE_CMPXCHG16B)
+	  && has_cpu_feature (cpu_model, cpu_features2, FEATURE_POPCNT)
+	  && has_cpu_feature (cpu_model, cpu_features2, FEATURE_LAHF_LM)
+	  && has_cpu_feature (cpu_model, cpu_features2, FEATURE_SSE4_2))
+	{
+	  CHECK___builtin_cpu_supports ("x86-64-v2");
+	  set_cpu_feature (cpu_model, cpu_features2,
+			   FEATURE_X86_64_V2);
+	  if (has_cpu_feature (cpu_model, cpu_features2, FEATURE_AVX2)
+	      && has_cpu_feature (cpu_model, cpu_features2, FEATURE_BMI)
+	      && has_cpu_feature (cpu_model, cpu_features2, FEATURE_BMI2)
+	      && has_cpu_feature (cpu_model, cpu_features2, FEATURE_F16C)
+	      && has_cpu_feature (cpu_model, cpu_features2, FEATURE_FMA)
+	      && has_cpu_feature (cpu_model, cpu_features2,
+				  FEATURE_LZCNT)
+	      && has_cpu_feature (cpu_model, cpu_features2,
+				  FEATURE_MOVBE))
+	    {
+	      CHECK___builtin_cpu_supports ("x86-64-v3");
+	      set_cpu_feature (cpu_model, cpu_features2,
+			       FEATURE_X86_64_V3);
+	      if (has_cpu_feature (cpu_model, cpu_features2,
+				   FEATURE_AVX512BW)
+		  && has_cpu_feature (cpu_model, cpu_features2,
+				      FEATURE_AVX512CD)
+		  && has_cpu_feature (cpu_model, cpu_features2,
+				      FEATURE_AVX512DQ)
+		  && has_cpu_feature (cpu_model, cpu_features2,
+				      FEATURE_AVX512VL))
+		{
+		  CHECK___builtin_cpu_supports ("x86-64-v4");
+		  set_cpu_feature (cpu_model, cpu_features2,
+				   FEATURE_X86_64_V4);
+		}
+	    }
+	}
+    }
 
   gcc_assert (cpu_model->__cpu_vendor < VENDOR_MAX);
   gcc_assert (cpu_model->__cpu_type < CPU_TYPE_MAX);

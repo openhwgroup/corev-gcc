@@ -1,5 +1,5 @@
 /* Structure for saving state for a nested function.
-   Copyright (C) 1989-2020 Free Software Foundation, Inc.
+   Copyright (C) 1989-2021 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -157,6 +157,7 @@ struct GTY(()) rtl_eh {
 struct gimple_df;
 struct call_site_record_d;
 struct dw_fde_node;
+class range_query;
 
 struct GTY(()) varasm_status {
   /* If we're using a per-function constant pool, this is it.  */
@@ -269,6 +270,13 @@ struct GTY(()) function {
   /* Value histograms attached to particular statements.  */
   htab_t GTY((skip)) value_histograms;
 
+  /* Different from normal TODO_flags which are handled right at the
+     beginning or the end of one pass execution, the pending_TODOs
+     are passed down in the pipeline until one of its consumers can
+     perform the requested action.  Consumers should then clear the
+     flags for the actions that they have taken.  */
+  unsigned int pending_TODOs;
+
   /* For function.c.  */
 
   /* Points to the FUNCTION_DECL of this function.  */
@@ -301,6 +309,12 @@ struct GTY(()) function {
      used for unwinding.  Only set when either dwarf2 unwinding or dwarf2
      debugging is enabled.  */
   struct dw_fde_node *fde;
+
+  /* Range query mechanism for functions.  The default is to pick up
+     global ranges.  If a pass wants on-demand ranges OTOH, it must
+     call enable/disable_ranger().  The pointer is never null.  It
+     should be queried by calling get_range_query().  */
+  range_query * GTY ((skip)) x_range_query;
 
   /* Last statement uid.  */
   int last_stmt_uid;
@@ -704,5 +718,16 @@ extern const char *function_name (struct function *);
 extern const char *current_function_name (void);
 
 extern void used_types_insert (tree);
+
+/* Returns the currently active range access class.  When there is no active
+   range class, global ranges are used.  Never returns null.  */
+
+ATTRIBUTE_RETURNS_NONNULL inline range_query *
+get_range_query (const struct function *fun)
+{
+  return fun->x_range_query;
+}
+
+extern range_query *get_global_range_query ();
 
 #endif  /* GCC_FUNCTION_H */

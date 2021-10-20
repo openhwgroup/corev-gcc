@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---             Copyright (C) 2011-2020, Free Software Foundation, Inc.      --
+--             Copyright (C) 2011-2021, Free Software Foundation, Inc.      --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -29,6 +29,7 @@
 
 with Ada.Finalization;
 with System; use type System.Address;
+with System.Put_Images;
 
 package body Ada.Containers.Bounded_Multiway_Trees with
   SPARK_Mode => Off
@@ -599,7 +600,7 @@ is
            Container.TC'Unrestricted_Access;
       begin
          return R : constant Constant_Reference_Type :=
-           (Element => Container.Elements (Position.Node)'Access,
+           (Element => Container.Elements (Position.Node)'Unchecked_Access,
             Control => (Controlled with TC))
          do
             Busy (TC.all);
@@ -2322,6 +2323,49 @@ is
       end;
    end Query_Element;
 
+   ---------------
+   -- Put_Image --
+   ---------------
+
+   procedure Put_Image
+     (S : in out Ada.Strings.Text_Buffers.Root_Buffer_Type'Class; V : Tree)
+   is
+      use System.Put_Images;
+
+      procedure Rec (Position : Cursor);
+      --  Recursive routine operating on cursors
+
+      procedure Rec (Position : Cursor) is
+         First_Time : Boolean := True;
+      begin
+         Array_Before (S);
+
+         for X in Iterate_Children (V, Position) loop
+            if First_Time then
+               First_Time := False;
+            else
+               Array_Between (S);
+            end if;
+
+            Element_Type'Put_Image (S, Element (X));
+            if Child_Count (X) > 0 then
+               Simple_Array_Between (S);
+               Rec (X);
+            end if;
+         end loop;
+
+         Array_After (S);
+      end Rec;
+
+   begin
+      if First_Child (Root (V)) = No_Element then
+         Array_Before (S);
+         Array_After (S);
+      else
+         Rec (First_Child (Root (V)));
+      end if;
+   end Put_Image;
+
    ----------
    -- Read --
    ----------
@@ -2489,7 +2533,7 @@ is
            Container.TC'Unrestricted_Access;
       begin
          return R : constant Reference_Type :=
-           (Element => Container.Elements (Position.Node)'Access,
+           (Element => Container.Elements (Position.Node)'Unchecked_Access,
             Control => (Controlled with TC))
          do
             Busy (TC.all);

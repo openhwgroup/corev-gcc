@@ -123,6 +123,7 @@ namespace __sanitizer {
   unsigned struct_ElfW_Phdr_sz = sizeof(ElfW(Phdr));
 
   int glob_nomatch = GLOB_NOMATCH;
+  const int wordexp_wrde_dooffs = WRDE_DOOFFS;
 
   unsigned path_max = PATH_MAX;
 
@@ -202,7 +203,8 @@ CHECK_SIZE_AND_OFFSET(dl_phdr_info, dlpi_name);
 CHECK_SIZE_AND_OFFSET(dl_phdr_info, dlpi_phdr);
 CHECK_SIZE_AND_OFFSET(dl_phdr_info, dlpi_phnum);
 
-CHECK_TYPE_SIZE(glob_t);
+// There are additional fields we are not interested in.
+COMPILER_CHECK(sizeof(__sanitizer_glob_t) <= sizeof(glob_t));
 CHECK_SIZE_AND_OFFSET(glob_t, gl_pathc);
 CHECK_SIZE_AND_OFFSET(glob_t, gl_pathv);
 CHECK_SIZE_AND_OFFSET(glob_t, gl_offs);

@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2020, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2021, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -49,10 +49,11 @@ package body Osint is
    use type CRTL.size_t;
 
    Running_Program : Program_Type := Unspecified;
-   --  comment required here ???
+   --  Set by Set_Program to indicate which of Compiler, Binder, etc is
+   --  running.
 
    Program_Set : Boolean := False;
-   --  comment required here ???
+   --  True if Set_Program has been called; used to detect duplicate calls.
 
    Std_Prefix : String_Ptr;
    --  Standard prefix, computed dynamically the first time Relocate_Path
@@ -151,9 +152,9 @@ package body Osint is
    function To_Path_String_Access
      (Path_Addr : Address;
       Path_Len  : CRTL.size_t) return String_Access;
-   --  Converts a C String to an Ada String. Are we doing this to avoid withing
-   --  Interfaces.C.Strings ???
-   --  Caller must free result.
+   --  Converts a C String to an Ada String. We don't use a more general
+   --  purpose facility, because we are dealing with low-level types like
+   --  Address. Caller must free result.
 
    function Include_Dir_Default_Prefix return String_Access;
    --  Same as exported version, except returns a String_Access
@@ -1072,7 +1073,7 @@ package body Osint is
 
    function File_Hash (F : File_Name_Type) return File_Hash_Num is
    begin
-      return File_Hash_Num (Int (F) rem File_Hash_Num'Range_Length);
+      return File_Hash_Num (Int (F) mod File_Hash_Num'Range_Length);
    end File_Hash;
 
    -----------------
@@ -1348,11 +1349,8 @@ package body Osint is
       Lib_File : out File_Name_Type;
       Attr     : out File_Attributes)
    is
-      A : aliased File_Attributes;
    begin
-      --  ??? seems we could use Smart_Find_File here
-      Find_File (N, Library, Lib_File, A'Access);
-      Attr := A;
+      Smart_Find_File (N, Library, Lib_File, Attr);
    end Full_Lib_File_Name;
 
    ------------------------
@@ -1891,7 +1889,7 @@ package body Osint is
                Name_Len := Full_Name'Length - 1;
                Name_Buffer (1 .. Name_Len) :=
                  Full_Name (1 .. Full_Name'Last - 1);
-               Found := Name_Find;  --  ??? Was Name_Enter, no obvious reason
+               Found := Name_Find;
             end if;
          end if;
       end;
@@ -1917,7 +1915,8 @@ package body Osint is
       begin
          if Opt.Look_In_Primary_Dir then
             Locate_File
-              (N, Source, Primary_Directory, File_Name, File, Attr'Access);
+              (N, Source, Primary_Directory, File_Name, File,
+               Attr'Unchecked_Access);
 
             if File /= No_File and then T = File_Stamp (N) then
                return File;
@@ -1927,7 +1926,7 @@ package body Osint is
          Last_Dir := Src_Search_Directories.Last;
 
          for D in Primary_Directory + 1 .. Last_Dir loop
-            Locate_File (N, Source, D, File_Name, File, Attr'Access);
+            Locate_File (N, Source, D, File_Name, File, Attr'Unchecked_Access);
 
             if File /= No_File and then T = File_Stamp (File) then
                return File;
@@ -2193,8 +2192,7 @@ package body Osint is
       GNAT_Time : Time_Stamp_Type;
 
       type Underlying_OS_Time is
-        range -(2 ** (Standard'Address_Size - Integer'(1))) ..
-              +(2 ** (Standard'Address_Size - Integer'(1)) - 1);
+        range -(2 ** 63) ..  +(2 ** 63 - 1);
       --  Underlying_OS_Time is a redeclaration of OS_Time to allow integer
       --  manipulation. Remove this in favor of To_Ada/To_C once newer
       --  GNAT releases are available with these functions.
@@ -2375,14 +2373,12 @@ package body Osint is
       Nb_Relative_Dir := 0;
       for J in 1 .. Len loop
 
-         --  Treat any control character as a path separator. Note that we do
+         --  Treat any EOL character as a path separator. Note that we do
          --  not treat space as a path separator (we used to treat space as a
          --  path separator in an earlier version). That way space can appear
          --  as a legitimate character in a path name.
 
-         --  Why do we treat all control characters as path separators???
-
-         if S (J) in ASCII.NUL .. ASCII.US then
+         if S (J) = ASCII.LF or else S (J) = ASCII.CR then
             S (J) := Path_Separator;
          end if;
 
@@ -2566,7 +2562,7 @@ package body Osint is
       --  Read data from the file
 
       declare
-         Actual_Len : Integer := 0;
+         Actual_Len : Integer;
 
          Lo : constant Text_Ptr := 0;
          --  Low bound for allocated text buffer
@@ -3164,7 +3160,7 @@ package body Osint is
    -- Write_With_Check --
    ----------------------
 
-   procedure Write_With_Check (A  : Address; N  : Integer) is
+   procedure Write_With_Check (A : Address; N : Integer) is
       Ignore : Boolean;
    begin
       if N = Write (Output_FD, A, N) then

@@ -1,5 +1,5 @@
 /* PowerPC AltiVec include file.
-   Copyright (C) 2002-2020 Free Software Foundation, Inc.
+   Copyright (C) 2002-2021 Free Software Foundation, Inc.
    Contributed by Aldy Hernandez (aldyh@redhat.com).
    Rewritten by Paolo Bonzini (bonzini@gnu.org).
 
@@ -129,7 +129,7 @@
 #define vec_vcfux __builtin_vec_vcfux
 #define vec_cts __builtin_vec_cts
 #define vec_ctu __builtin_vec_ctu
-#define vec_cpsgn __builtin_vec_copysign
+#define vec_cpsgn(x,y) __builtin_vec_copysign(y,x)
 #define vec_double __builtin_vec_double
 #define vec_doublee __builtin_vec_doublee
 #define vec_doubleo __builtin_vec_doubleo
@@ -236,6 +236,9 @@
 #define vec_lvebx __builtin_vec_lvebx
 #define vec_lvehx __builtin_vec_lvehx
 #define vec_lvewx __builtin_vec_lvewx
+#define vec_xl_zext __builtin_vec_ze_lxvrx
+#define vec_xl_sext __builtin_vec_se_lxvrx
+#define vec_xst_trunc __builtin_vec_tr_stxvrx
 #define vec_neg __builtin_vec_neg
 #define vec_pmsum_be __builtin_vec_vpmsum
 #define vec_shasigma_be __builtin_crypto_vshasigma
@@ -407,10 +410,6 @@
 #define vec_vpopcnth __builtin_vec_vpopcnth
 #define vec_vpopcntw __builtin_vec_vpopcntw
 #define vec_popcnt __builtin_vec_vpopcntu
-#define vec_popcntb __builtin_vec_vpopcntub
-#define vec_popcnth __builtin_vec_vpopcntuh
-#define vec_popcntw __builtin_vec_vpopcntuw
-#define vec_popcntd __builtin_vec_vpopcntud
 #define vec_vrld __builtin_vec_vrld
 #define vec_vsld __builtin_vec_vsld
 #define vec_vsrad __builtin_vec_vsrad
@@ -498,7 +497,34 @@
 
 #define vec_xlx __builtin_vec_vextulx
 #define vec_xrx __builtin_vec_vexturx
+#define vec_signexti  __builtin_vec_vsignexti
+#define vec_signextll __builtin_vec_vsignextll
+
 #endif
+
+/* BCD builtins, map ABI builtin name to existing builtin name.  */
+#define __builtin_bcdadd     __builtin_vec_bcdadd
+#define __builtin_bcdadd_lt  __builtin_vec_bcdadd_lt
+#define __builtin_bcdadd_eq  __builtin_vec_bcdadd_eq
+#define __builtin_bcdadd_gt  __builtin_vec_bcdadd_gt
+#define __builtin_bcdadd_ofl __builtin_vec_bcdadd_ov
+#define __builtin_bcdadd_ov  __builtin_vec_bcdadd_ov
+#define __builtin_bcdsub     __builtin_vec_bcdsub
+#define __builtin_bcdsub_lt  __builtin_vec_bcdsub_lt
+#define __builtin_bcdsub_eq  __builtin_vec_bcdsub_eq
+#define __builtin_bcdsub_gt  __builtin_vec_bcdsub_gt
+#define __builtin_bcdsub_ofl __builtin_vec_bcdsub_ov
+#define __builtin_bcdsub_ov  __builtin_vec_bcdsub_ov
+#define __builtin_bcdinvalid __builtin_vec_bcdinvalid
+#define __builtin_bcdmul10   __builtin_vec_bcdmul10
+#define __builtin_bcddiv10   __builtin_vec_bcddiv10
+#define __builtin_bcd2dfp    __builtin_vec_denb2dfp
+#define __builtin_bcdcmpeq(a,b)   __builtin_vec_bcdsub_eq(a,b,0)
+#define __builtin_bcdcmpgt(a,b)   __builtin_vec_bcdsub_gt(a,b,0)
+#define __builtin_bcdcmplt(a,b)   __builtin_vec_bcdsub_lt(a,b,0)
+#define __builtin_bcdcmpge(a,b)   __builtin_vec_bcdsub_ge(a,b,0)
+#define __builtin_bcdcmple(a,b)   __builtin_vec_bcdsub_le(a,b,0)
+
 
 /* Predicates.
    For C++, we use templates in order to allow non-parenthesized arguments.
@@ -691,6 +717,10 @@ __altivec_scalar_pred(vec_any_nle,
 #define vec_step(x) __builtin_vec_step (* (__typeof__ (x) *) 0)
 
 #ifdef _ARCH_PWR10
+#define vec_signextq  __builtin_vec_vsignextq
+#define vec_dive __builtin_vec_dive
+#define vec_mod  __builtin_vec_mod
+
 /* May modify these macro definitions if future capabilities overload
    with support for different vector argument and result types.  */
 #define vec_cntlzm(a, b)	__builtin_altivec_vclzdm (a, b)
@@ -725,6 +755,10 @@ __altivec_scalar_pred(vec_any_nle,
 
 #define vec_strir_p(a)	__builtin_vec_strir_p (a)
 #define vec_stril_p(a)	__builtin_vec_stril_p (a)
+
+#define vec_mulh(a, b) __builtin_vec_mulh ((a), (b))
+#define vec_dive(a, b) __builtin_vec_dive ((a), (b))
+#define vec_mod(a, b) __builtin_vec_mod ((a), (b))
 
 /* VSX Mask Manipulation builtin. */
 #define vec_genbm __builtin_vec_mtvsrbm

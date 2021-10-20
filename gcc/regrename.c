@@ -1,5 +1,5 @@
 /* Register renaming for the GNU compiler.
-   Copyright (C) 2000-2020 Free Software Foundation, Inc.
+   Copyright (C) 2000-2021 Free Software Foundation, Inc.
 
    This file is part of GCC.
 
@@ -1456,7 +1456,6 @@ scan_rtx (rtx_insn *insn, rtx *loc, enum reg_class cl, enum scan_actions action,
     CASE_CONST_ANY:
     case SYMBOL_REF:
     case LABEL_REF:
-    case CC0:
     case PC:
       return;
 
@@ -1948,7 +1947,7 @@ regrename_init (bool insn_info)
   gcc_obstack_init (&rename_obstack);
   insn_rr.create (0);
   if (insn_info)
-    insn_rr.safe_grow_cleared (get_max_uid ());
+    insn_rr.safe_grow_cleared (get_max_uid (), true);
 }
 
 /* Free all global data used by the register renamer.  */

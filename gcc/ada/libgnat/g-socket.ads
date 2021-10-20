@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---                     Copyright (C) 2001-2020, AdaCore                     --
+--                     Copyright (C) 2001-2021, AdaCore                     --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -449,10 +449,10 @@ package GNAT.Sockets is
 
    type Selector_Status is (Completed, Expired, Aborted);
    --  Completion status of a selector operation, indicated as follows:
-   --    Complete: one of the expected events occurred
-   --    Expired:  no event occurred before the expiration of the timeout
-   --    Aborted:  an external action cancelled the wait operation before
-   --              any event occurred.
+   --    Completed: one of the expected events occurred
+   --    Expired:   no event occurred before the expiration of the timeout
+   --    Aborted:   an external action cancelled the wait operation before
+   --               any event occurred.
 
    Socket_Error : exception;
    --  There is only one exception in this package to deal with an error during
@@ -845,10 +845,19 @@ package GNAT.Sockets is
       -- IP_Protocol_For_TCP_Level --
       -------------------------------
 
-      No_Delay, -- TCP_NODELAY
+      No_Delay,            -- TCP_NODELAY
       --  Disable the Nagle algorithm. This means that output buffer content
       --  is always sent as soon as possible, even if there is only a small
       --  amount of data.
+
+      Keep_Alive_Count,    -- TCP_KEEPCNT
+      --  Maximum number of keepalive probes
+
+      Keep_Alive_Idle,     -- TCP_KEEPIDLE
+      --  Idle time before TCP starts sending keepalive probes
+
+      Keep_Alive_Interval, -- TCP_KEEPINTVL
+      --  Time between individual keepalive probes
 
       ------------------------------
       -- IP_Protocol_For_IP_Level --
@@ -923,26 +932,35 @@ package GNAT.Sockets is
             Enabled : Boolean;
 
             case Name is
-               when Linger    =>
+               when Linger =>
                   Seconds : Natural;
-               when others    =>
+               when others =>
                   null;
             end case;
 
-         when Busy_Polling    =>
+         when Keep_Alive_Count    =>
+            Count : Natural;
+
+         when Keep_Alive_Idle     =>
+            Idle_Seconds : Natural;
+
+         when Keep_Alive_Interval =>
+            Interval_Seconds : Natural;
+
+         when Busy_Polling        =>
             Microseconds : Natural;
 
-         when Send_Buffer     |
-              Receive_Buffer  =>
+         when Send_Buffer         |
+              Receive_Buffer      =>
             Size : Natural;
 
-         when Error           =>
+         when Error               =>
             Error : Error_Type;
 
-         when Add_Membership_V4  |
-              Add_Membership_V6  |
-              Drop_Membership_V4 |
-              Drop_Membership_V6 =>
+         when Add_Membership_V4   |
+              Add_Membership_V6   |
+              Drop_Membership_V4  |
+              Drop_Membership_V6  =>
             Multicast_Address : Inet_Addr_Type;
             case Name is
                when Add_Membership_V4  |
@@ -958,13 +976,13 @@ package GNAT.Sockets is
          when Multicast_If_V6 =>
             Outgoing_If_Index : Natural;
 
-         when Multicast_TTL  =>
+         when Multicast_TTL   =>
             Time_To_Live : Natural;
 
-         when Multicast_Hops =>
+         when Multicast_Hops  =>
             Hop_Limit : Integer range -1 .. 255;
 
-         when Send_Timeout |
+         when Send_Timeout    |
               Receive_Timeout =>
             Timeout : Timeval_Duration;
 
@@ -1572,5 +1590,9 @@ private
    Peek_At_Incoming_Data     : constant Request_Flag_Type := 2;
    Wait_For_A_Full_Reception : constant Request_Flag_Type := 4;
    Send_End_Of_Record        : constant Request_Flag_Type := 8;
+
+   procedure Raise_Socket_Error (Error : Integer);
+   --  Raise Socket_Error with an exception message describing the error code
+   --  from errno.
 
 end GNAT.Sockets;

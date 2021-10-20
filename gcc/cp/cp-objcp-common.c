@@ -1,5 +1,5 @@
 /* Some code common to C++ and ObjC++ front ends.
-   Copyright (C) 2004-2020 Free Software Foundation, Inc.
+   Copyright (C) 2004-2021 Free Software Foundation, Inc.
    Contributed by Ziemowit Laski  <zlaski@apple.com>
 
 This file is part of GCC.
@@ -72,10 +72,13 @@ cp_tree_size (enum tree_code code)
     case DEFERRED_NOEXCEPT:	return sizeof (tree_deferred_noexcept);
     case OVERLOAD:		return sizeof (tree_overload);
     case STATIC_ASSERT:         return sizeof (tree_static_assert);
-    case TYPE_ARGUMENT_PACK:
-    case TYPE_PACK_EXPANSION:	return sizeof (tree_type_non_common);
-    case NONTYPE_ARGUMENT_PACK:
-    case EXPR_PACK_EXPANSION:	return sizeof (tree_exp);
+#if 0
+      /* This would match cp_common_init_ts, but breaks GC because
+	 tree_node_structure_for_code returns TS_TYPE_NON_COMMON for all
+	 types.  */
+    case UNBOUND_CLASS_TEMPLATE:
+    case TYPE_ARGUMENT_PACK:	return sizeof (tree_type_common);
+#endif
     case ARGUMENT_PACK_SELECT:	return sizeof (tree_argument_pack_select);
     case TRAIT_EXPR:		return sizeof (tree_trait_expr);
     case LAMBDA_EXPR:           return sizeof (tree_lambda_expr);
@@ -314,13 +317,17 @@ cxx_block_may_fallthru (const_tree stmt)
 	return true;
       return block_may_fallthru (ELSE_CLAUSE (stmt));
 
-    case SWITCH_STMT:
-      return (!SWITCH_STMT_ALL_CASES_P (stmt)
-	      || !SWITCH_STMT_NO_BREAK_P (stmt)
-	      || block_may_fallthru (SWITCH_STMT_BODY (stmt)));
+    case CLEANUP_STMT:
+      /* Just handle the try/finally cases.  */
+      if (!CLEANUP_EH_ONLY (stmt))
+	{
+	  return (block_may_fallthru (CLEANUP_BODY (stmt))
+		  && block_may_fallthru (CLEANUP_EXPR (stmt)));
+	}
+      return true;
 
     default:
-      return true;
+      return c_block_may_fallthru (stmt);
     }
 }
 
@@ -355,7 +362,7 @@ identifier_global_value (tree name)
 tree
 identifier_global_tag (tree name)
 {
-  tree ret = lookup_qualified_name (global_namespace, name, /*prefer_type*/2,
+  tree ret = lookup_qualified_name (global_namespace, name, LOOK_want::TYPE,
 				    /*complain*/false);
   if (ret == error_mark_node)
     return NULL_TREE;
@@ -371,7 +378,8 @@ names_builtin_p (const char *name)
   tree id = get_identifier (name);
   if (tree binding = get_global_binding (id))
     {
-      if (TREE_CODE (binding) == FUNCTION_DECL && DECL_IS_BUILTIN (binding))
+      if (TREE_CODE (binding) == FUNCTION_DECL
+	  && DECL_IS_UNDECLARED_BUILTIN (binding))
 	return true;
 
       /* Handle the case when an overload for a  built-in name exists.  */
@@ -381,7 +389,7 @@ names_builtin_p (const char *name)
       for (ovl_iterator it (binding); it; ++it)
 	{
 	  tree decl = *it;
-	  if (DECL_IS_BUILTIN (decl))
+	  if (DECL_IS_UNDECLARED_BUILTIN (decl))
 	    return true;
 	}
     }
@@ -394,7 +402,9 @@ names_builtin_p (const char *name)
     case RID_BUILTIN_CONVERTVECTOR:
     case RID_BUILTIN_HAS_ATTRIBUTE:
     case RID_BUILTIN_SHUFFLE:
+    case RID_BUILTIN_SHUFFLEVECTOR:
     case RID_BUILTIN_LAUNDER:
+    case RID_BUILTIN_BIT_CAST:
     case RID_OFFSETOF:
     case RID_HAS_NOTHROW_ASSIGN:
     case RID_HAS_NOTHROW_CONSTRUCTOR:
@@ -412,7 +422,9 @@ names_builtin_p (const char *name)
     case RID_IS_EMPTY:
     case RID_IS_ENUM:
     case RID_IS_FINAL:
+    case RID_IS_LAYOUT_COMPATIBLE:
     case RID_IS_LITERAL_TYPE:
+    case RID_IS_POINTER_INTERCONVERTIBLE_BASE_OF:
     case RID_IS_POD:
     case RID_IS_POLYMORPHIC:
     case RID_IS_SAME_AS:
@@ -441,6 +453,9 @@ cp_register_dumps (gcc::dump_manager *dumps)
   class_dump_id = dumps->dump_register
     (".class", "lang-class", "lang-class", DK_lang, OPTGROUP_NONE, false);
 
+  module_dump_id = dumps->dump_register
+    (".module", "lang-module", "lang-module", DK_lang, OPTGROUP_NONE, false);
+
   raw_dump_id = dumps->dump_register
     (".raw", "lang-raw", "lang-raw", DK_lang, OPTGROUP_NONE, false);
 }
@@ -455,13 +470,8 @@ cp_common_init_ts (void)
 
   /* Random new trees.  */
   MARK_TS_COMMON (BASELINK);
-  MARK_TS_COMMON (DECLTYPE_TYPE);
   MARK_TS_COMMON (OVERLOAD);
   MARK_TS_COMMON (TEMPLATE_PARM_INDEX);
-  MARK_TS_COMMON (TYPENAME_TYPE);
-  MARK_TS_COMMON (TYPEOF_TYPE);
-  MARK_TS_COMMON (UNBOUND_CLASS_TEMPLATE);
-  MARK_TS_COMMON (UNDERLYING_TYPE);
 
   /* New decls.  */
   MARK_TS_DECL_COMMON (TEMPLATE_DECL);
@@ -471,27 +481,27 @@ cp_common_init_ts (void)
   MARK_TS_DECL_NON_COMMON (USING_DECL);
 
   /* New Types.  */
+  MARK_TS_TYPE_COMMON (UNBOUND_CLASS_TEMPLATE);
+  MARK_TS_TYPE_COMMON (TYPE_ARGUMENT_PACK);
+
+  MARK_TS_TYPE_NON_COMMON (DECLTYPE_TYPE);
+  MARK_TS_TYPE_NON_COMMON (TYPENAME_TYPE);
+  MARK_TS_TYPE_NON_COMMON (TYPEOF_TYPE);
+  MARK_TS_TYPE_NON_COMMON (UNDERLYING_TYPE);
   MARK_TS_TYPE_NON_COMMON (BOUND_TEMPLATE_TEMPLATE_PARM);
   MARK_TS_TYPE_NON_COMMON (TEMPLATE_TEMPLATE_PARM);
   MARK_TS_TYPE_NON_COMMON (TEMPLATE_TYPE_PARM);
-  MARK_TS_TYPE_NON_COMMON (TYPE_ARGUMENT_PACK);
   MARK_TS_TYPE_NON_COMMON (TYPE_PACK_EXPANSION);
 
   /* Statements.  */
-  MARK_TS_EXP (BREAK_STMT);
   MARK_TS_EXP (CLEANUP_STMT);
-  MARK_TS_EXP (CONTINUE_STMT);
-  MARK_TS_EXP (DO_STMT);
   MARK_TS_EXP (EH_SPEC_BLOCK);
-  MARK_TS_EXP (FOR_STMT);
   MARK_TS_EXP (HANDLER);
   MARK_TS_EXP (IF_STMT);
   MARK_TS_EXP (OMP_DEPOBJ);
   MARK_TS_EXP (RANGE_FOR_STMT);
-  MARK_TS_EXP (SWITCH_STMT);
   MARK_TS_EXP (TRY_BLOCK);
   MARK_TS_EXP (USING_STMT);
-  MARK_TS_EXP (WHILE_STMT);
 
   /* Random expressions.  */
   MARK_TS_EXP (ADDRESSOF_EXPR);
@@ -499,6 +509,7 @@ cp_common_init_ts (void)
   MARK_TS_EXP (ALIGNOF_EXPR);
   MARK_TS_EXP (ARROW_EXPR);
   MARK_TS_EXP (AT_ENCODE_EXPR);
+  MARK_TS_EXP (BIT_CAST_EXPR);
   MARK_TS_EXP (CAST_EXPR);
   MARK_TS_EXP (CONST_CAST_EXPR);
   MARK_TS_EXP (CTOR_INITIALIZER);
@@ -557,6 +568,18 @@ cp_common_init_ts (void)
   MARK_TS_EXP (CO_RETURN_EXPR);
 
   c_common_init_ts ();
+}
+
+/* Handle C++-specficic options here.  Punt to c_common otherwise.  */
+
+bool
+cp_handle_option (size_t scode, const char *arg, HOST_WIDE_INT value,
+		  int kind, location_t loc,
+		  const struct cl_option_handlers *handlers)
+{
+  if (handle_module_option (unsigned (scode), arg, value))
+    return true;
+  return c_common_handle_option (scode, arg, value, kind, loc, handlers);
 }
 
 #include "gt-cp-cp-objcp-common.h"

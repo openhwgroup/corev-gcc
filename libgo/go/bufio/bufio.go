@@ -425,7 +425,7 @@ func (b *Reader) ReadLine() (line []byte, isPrefix bool, err error) {
 // of bytes in the combined first two elements, error).
 // The complete result is equal to
 // `bytes.Join(append(fullBuffers, finalFragment), nil)`, which has a
-// length of `totalLen`. The result is strucured in this way to allow callers
+// length of `totalLen`. The result is structured in this way to allow callers
 // to minimize allocations and copies.
 func (b *Reader) collectFragments(delim byte) (fullBuffers [][]byte, finalFragment []byte, totalLen int, err error) {
 	var frag []byte
@@ -670,7 +670,8 @@ func (b *Writer) WriteByte(c byte) error {
 // WriteRune writes a single Unicode code point, returning
 // the number of bytes written and any error.
 func (b *Writer) WriteRune(r rune) (size int, err error) {
-	if r < utf8.RuneSelf {
+	// Compare as uint32 to correctly handle negative runes.
+	if uint32(r) < utf8.RuneSelf {
 		err = b.WriteByte(byte(r))
 		if err != nil {
 			return 0, err

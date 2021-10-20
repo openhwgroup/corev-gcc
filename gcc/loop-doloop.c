@@ -1,5 +1,5 @@
 /* Perform doloop optimizations
-   Copyright (C) 2004-2020 Free Software Foundation, Inc.
+   Copyright (C) 2004-2021 Free Software Foundation, Inc.
    Based on code by Michael P. Hayes (m.hayes@elec.canterbury.ac.nz)
 
 This file is part of GCC.
@@ -378,7 +378,7 @@ add_test (rtx cond, edge *e, basic_block dest)
   bb = split_edge_and_insert (*e, seq);
   *e = single_succ_edge (bb);
 
-  if (any_uncondjump_p (jump))
+  if (any_uncondjump_p (jump) && onlyjump_p (jump))
     {
       /* The condition is always true.  */
       delete_insn (jump);
@@ -789,18 +789,14 @@ doloop_optimize (class loop *loop)
 void
 doloop_optimize_loops (void)
 {
-  class loop *loop;
-
   if (optimize == 1)
     {
       df_live_add_problem ();
       df_live_set_all_dirty ();
     }
 
-  FOR_EACH_LOOP (loop, 0)
-    {
-      doloop_optimize (loop);
-    }
+  for (auto loop : loops_list (cfun, 0))
+    doloop_optimize (loop);
 
   if (optimize == 1)
     df_remove_problem (df_live);

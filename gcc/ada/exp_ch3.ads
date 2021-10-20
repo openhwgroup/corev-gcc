@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---          Copyright (C) 1992-2020, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2021, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -134,6 +134,11 @@ package Exp_Ch3 is
    --  Normalize_Scalars. A call to this routine where Typ denotes a scalar
    --  type is valid only when Normalize_Scalars or Initialize_Scalars is
    --  active, or if N is the node for a 'Invalid_Value attribute node.
+
+   function Init_Proc_Level_Formal (Proc : Entity_Id) return Entity_Id;
+   --  Fetch the extra formal from an initalization procedure "proc"
+   --  corresponding to the level of the object being initialized. When none
+   --  is present Empty is returned.
 
    procedure Init_Secondary_Tags
      (Typ            : Entity_Id;

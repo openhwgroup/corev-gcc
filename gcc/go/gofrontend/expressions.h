@@ -62,6 +62,7 @@ class Type_guard_expression;
 class Heap_expression;
 class Receive_expression;
 class Slice_value_expression;
+class Slice_info_expression;
 class Conditional_expression;
 class Compound_expression;
 class Numeric_constant;
@@ -549,6 +550,16 @@ class Expression
   location() const
   { return this->location_; }
 
+  // Set the location of an expression and all its subexpressions.
+  // This is used for const declarations where the expression is
+  // copied from an earlier declaration.
+  void
+  set_location(Location loc);
+
+  // For set_location.  This should really be a local class in
+  // Expression, but it needs types defined in gogo.h.
+  friend class Set_location;
+
   // Return whether this is a constant expression.
   bool
   is_constant() const
@@ -721,6 +732,10 @@ class Expression
   call_expression()
   { return this->convert<Call_expression, EXPRESSION_CALL>(); }
 
+  const Call_expression*
+  call_expression() const
+  { return this->convert<const Call_expression, EXPRESSION_CALL>(); }
+
   // If this is a call_result expression, return the Call_result_expression
   // structure.  Otherwise, return NULL.  This is a controlled dynamic
   // cast.
@@ -890,6 +905,14 @@ class Expression
   compound_expression()
   { return this->convert<Compound_expression, EXPRESSION_COMPOUND>(); }
 
+  // If this is a slice info expression, return the
+  // Slice_info_expression structure.  Otherwise, return NULL.
+  Slice_info_expression*
+  slice_info_expression()
+  {
+    return this->convert<Slice_info_expression, EXPRESSION_SLICE_INFO>();
+  }
+
   // Return true if this is a composite literal.
   bool
   is_composite_literal() const;
@@ -905,6 +928,11 @@ class Expression
   // Return true if this is a reference to a local variable.
   bool
   is_local_variable() const;
+
+  // Return true if multiple evaluations of this expression are OK.
+  // This is true for simple variable references and constants.
+  bool
+  is_multi_eval_safe();
 
   // Return true if two expressions refer to the same variable or
   // struct field.
@@ -971,7 +999,9 @@ class Expression
   determine_type_no_context();
 
   // Return the current type of the expression.  This may be changed
-  // by determine_type.
+  // by determine_type.  This should not be called before the lowering
+  // pass, unless the is_type_expression method returns true (i.e.,
+  // this is an EXPRESSION_TYPE).
   Type*
   type()
   { return this->do_type(); }
@@ -1236,6 +1266,14 @@ class Expression
   // Child class implements dumping to a dump context.
   virtual void
   do_dump_expression(Ast_dump_context*) const = 0;
+
+  // Start exporting a type conversion for a constant, if needed.
+  static bool
+  export_constant_type(Export_function_body*, Type*);
+
+  // Finish exporting a type conversion for a constant.
+  static void
+  finish_export_constant_type(Export_function_body*, bool);
 
   // Varargs lowering creates a slice object (unnamed compiler temp)
   // to contain the variable length collection of values. The enum
@@ -2318,8 +2356,8 @@ class Call_expression : public Expression
       fn_(fn), args_(args), type_(NULL), call_(NULL), call_temp_(NULL)
     , expected_result_count_(0), is_varargs_(is_varargs),
       varargs_are_lowered_(false), types_are_determined_(false),
-      is_deferred_(false), is_concurrent_(false), issued_error_(false),
-      is_multi_value_arg_(false), is_flattened_(false)
+      is_deferred_(false), is_concurrent_(false), is_equal_function_(false),
+      issued_error_(false), is_multi_value_arg_(false), is_flattened_(false)
   { }
 
   // The function to call.
@@ -2400,6 +2438,11 @@ class Call_expression : public Expression
   set_is_concurrent()
   { this->is_concurrent_ = true; }
 
+  // Note that this is a call to a generated equality function.
+  void
+  set_is_equal_function()
+  { this->is_equal_function_ = true; }
+
   // We have found an error with this call expression; return true if
   // we should report it.
   bool
@@ -2423,12 +2466,15 @@ class Call_expression : public Expression
 
   // Whether this is a call to builtin function.
   virtual bool
-  is_builtin()
+  is_builtin() const
   { return false; }
 
   // Convert to a Builtin_call_expression, or return NULL.
   inline Builtin_call_expression*
   builtin_call_expression();
+
+  inline const Builtin_call_expression*
+  builtin_call_expression() const;
 
  protected:
   int
@@ -2537,6 +2583,8 @@ class Call_expression : public Expression
   bool is_deferred_;
   // True if the call is an argument to a go statement.
   bool is_concurrent_;
+  // True if this is a call to a generated equality function.
+  bool is_equal_function_;
   // True if we reported an error about a mismatch between call
   // results and uses.  This is to avoid producing multiple errors
   // when there are multiple Call_result_expressions.
@@ -2578,18 +2626,20 @@ class Builtin_call_expression : public Call_expression
       BUILTIN_RECOVER,
 
       // Builtin functions from the unsafe package.
+      BUILTIN_ADD,
       BUILTIN_ALIGNOF,
       BUILTIN_OFFSETOF,
-      BUILTIN_SIZEOF
+      BUILTIN_SIZEOF,
+      BUILTIN_SLICE
     };
 
   Builtin_function_code
-  code()
+  code() const
   { return this->code_; }
 
   // This overrides Call_expression::is_builtin.
   bool
-  is_builtin()
+  is_builtin() const
   { return true; }
 
   // Return whether EXPR, of array type, is a constant if passed to
@@ -2682,6 +2732,14 @@ Call_expression::builtin_call_expression()
 {
   return (this->is_builtin()
           ? static_cast<Builtin_call_expression*>(this)
+          : NULL);
+}
+
+inline const Builtin_call_expression*
+Call_expression::builtin_call_expression() const
+{
+  return (this->is_builtin()
+          ? static_cast<const Builtin_call_expression*>(this)
           : NULL);
 }
 
@@ -3776,9 +3834,6 @@ class Struct_construction_expression : public Expression,
   Expression*
   do_copy();
 
-  Expression*
-  do_flatten(Gogo*, Named_object*, Statement_inserter*);
-
   Bexpression*
   do_get_backend(Translate_context*);
 
@@ -3850,9 +3905,6 @@ protected:
   const std::vector<unsigned long>*
   indexes()
   { return this->indexes_; }
-
-  Expression*
-  do_flatten(Gogo*, Named_object*, Statement_inserter*);
 
   // Get the backend constructor for the array values.
   Bexpression*
@@ -4236,6 +4288,60 @@ class Slice_value_expression : public Expression
   Expression* cap_;
 };
 
+// An expression that evaluates to some characteristic of a slice.
+// This is used when indexing, bound-checking, or nil checking a slice.
+
+class Slice_info_expression : public Expression
+{
+ public:
+  Slice_info_expression(Expression* slice, Slice_info slice_info,
+                        Location location)
+    : Expression(EXPRESSION_SLICE_INFO, location),
+      slice_(slice), slice_info_(slice_info)
+  { }
+
+  // The slice operand of this slice info expression.
+  Expression*
+  slice() const
+  { return this->slice_; }
+
+  // The info this expression is about.
+  Slice_info
+  info() const
+  { return this->slice_info_; }
+
+ protected:
+  Type*
+  do_type();
+
+  void
+  do_determine_type(const Type_context*)
+  { }
+
+  Expression*
+  do_copy()
+  {
+    return new Slice_info_expression(this->slice_->copy(), this->slice_info_,
+                                     this->location());
+  }
+
+  Bexpression*
+  do_get_backend(Translate_context* context);
+
+  void
+  do_dump_expression(Ast_dump_context*) const;
+
+  void
+  do_issue_nil_check()
+  { this->slice_->issue_nil_check(); }
+
+ private:
+  // The slice for which we are getting information.
+  Expression* slice_;
+  // What information we want.
+  Slice_info slice_info_;
+};
+
 // Conditional expressions.
 
 class Conditional_expression : public Expression
@@ -4250,6 +4356,14 @@ class Conditional_expression : public Expression
   Expression*
   condition() const
   { return this->cond_; }
+
+  Expression*
+  then_expr() const
+  { return this->then_; }
+
+  Expression*
+  else_expr() const
+  { return this->else_; }
 
  protected:
   int
@@ -4295,6 +4409,10 @@ class Compound_expression : public Expression
   Expression*
   init() const
   { return this->init_; }
+
+  Expression*
+  expr() const
+  { return this->expr_; }
 
  protected:
   int

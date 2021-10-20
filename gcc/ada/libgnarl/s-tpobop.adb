@@ -6,7 +6,7 @@
 --                                                                          --
 --                                  B o d y                                 --
 --                                                                          --
---         Copyright (C) 1998-2020, Free Software Foundation, Inc.          --
+--         Copyright (C) 1998-2021, Free Software Foundation, Inc.          --
 --                                                                          --
 -- GNARL is free software; you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -246,17 +246,7 @@ package body System.Tasking.Protected_Objects.Operations is
          Entry_Call.Exception_To_Raise := Ex;
 
          if Ex /= Ada.Exceptions.Null_Id then
-
-            --  An exception was raised and abort was deferred, so adjust
-            --  before propagating, otherwise the task will stay with deferral
-            --  enabled for its remaining life.
-
             Self_Id := STPO.Self;
-
-            if not ZCX_By_Default then
-               Initialization.Undefer_Abort_Nestable (Self_Id);
-            end if;
-
             Transfer_Occurrence
               (Entry_Call.Self.Common.Compiler_Data.Current_Excep'Access,
                Self_Id.Common.Compiler_Data.Current_Excep);
@@ -611,7 +601,7 @@ package body System.Tasking.Protected_Objects.Operations is
             when Asynchronous_Call
                | Timed_Call
             =>
-               pragma Assert (False);
+               pragma Assert (Standard.False);
                null;
          end case;
       end if;

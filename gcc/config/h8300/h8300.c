@@ -1,5 +1,5 @@
 /* Subroutines for insn-output.c for Renesas H8/300.
-   Copyright (C) 1992-2020 Free Software Foundation, Inc.
+   Copyright (C) 1992-2021 Free Software Foundation, Inc.
    Contributed by Steve Chamberlain (sac@cygnus.com),
    Jim Wilson (wilson@cygnus.com), and Doug Evans (dje@cygnus.com).
 
@@ -91,7 +91,7 @@ static int h8300_interrupt_function_p (tree);
 static int h8300_saveall_function_p (tree);
 static int h8300_monitor_function_p (tree);
 static int h8300_os_task_function_p (tree);
-static void h8300_emit_stack_adjustment (int, HOST_WIDE_INT, bool);
+static void h8300_emit_stack_adjustment (int, HOST_WIDE_INT);
 static HOST_WIDE_INT round_frame_size (HOST_WIDE_INT);
 static unsigned int compute_saved_regs (void);
 static const char *cond_string (enum rtx_code);
@@ -132,13 +132,13 @@ static int pragma_interrupt;
 static int pragma_saveall;
 
 static const char *const names_big[] =
-{ "r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7" };
+{ "r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7", "cc" };
 
 static const char *const names_extended[] =
-{ "er0", "er1", "er2", "er3", "er4", "er5", "er6", "er7" };
+{ "er0", "er1", "er2", "er3", "er4", "er5", "er6", "er7", "cc" };
 
 static const char *const names_upper_extended[] =
-{ "e0", "e1", "e2", "e3", "e4", "e5", "e6", "e7" };
+{ "e0", "e1", "e2", "e3", "e4", "e5", "e6", "e7", "cc" };
 
 /* Points to one of the above.  */
 /* ??? The above could be put in an array indexed by CPU_TYPE.  */
@@ -213,9 +213,9 @@ static enum shift_alg shift_alg_hi[2][3][16] = {
     /*  0    1    2    3    4    5    6    7  */
     /*  8    9   10   11   12   13   14   15  */
     { INL, INL, INL, INL, INL, INL, INL, INL,
-      SPC, SPC, SPC, SPC, SPC, ROT, ROT, ROT }, /* SHIFT_ASHIFT   */
+      SPC, SPC, SPC, SPC, ROT, ROT, ROT, ROT }, /* SHIFT_ASHIFT   */
     { INL, INL, INL, INL, INL, INL, INL, INL,
-      SPC, SPC, SPC, SPC, SPC, ROT, ROT, ROT }, /* SHIFT_LSHIFTRT */
+      SPC, SPC, SPC, SPC, ROT, ROT, ROT, ROT }, /* SHIFT_LSHIFTRT */
     { INL, INL, INL, INL, INL, INL, INL, INL,
       SPC, SPC, SPC, SPC, SPC, SPC, SPC, SPC }, /* SHIFT_ASHIFTRT */
   }
@@ -228,18 +228,18 @@ static enum shift_alg shift_alg_si[2][3][32] = {
     /*  8    9   10   11   12   13   14   15  */
     /* 16   17   18   19   20   21   22   23  */
     /* 24   25   26   27   28   29   30   31  */
-    { INL, INL, INL, INL, INL, LOP, LOP, LOP,
+    { INL, INL, INL, INL, INL, INL, INL, LOP,
       SPC, LOP, LOP, LOP, LOP, LOP, LOP, SPC,
-      SPC, SPC, SPC, SPC, LOP, LOP, LOP, LOP,
-      SPC, LOP, LOP, LOP, SPC, SPC, SPC, SPC }, /* SHIFT_ASHIFT   */
-    { INL, INL, INL, INL, INL, LOP, LOP, LOP,
+      SPC, SPC, SPC, SPC, SPC, SPC, SPC, SPC,
+      SPC, SPC, SPC, SPC, SPC, SPC, SPC, SPC }, /* SHIFT_ASHIFT   */
+    { INL, INL, INL, INL, INL, INL, INL, LOP,
       SPC, LOP, LOP, LOP, LOP, LOP, LOP, SPC,
-      SPC, SPC, SPC, SPC, LOP, LOP, LOP, LOP,
-      SPC, LOP, LOP, LOP, SPC, SPC, SPC, SPC }, /* SHIFT_LSHIFTRT */
-    { INL, INL, INL, INL, INL, LOP, LOP, LOP,
-      SPC, LOP, LOP, LOP, LOP, LOP, LOP, LOP,
-      SPC, SPC, SPC, SPC, LOP, LOP, LOP, LOP,
-      SPC, LOP, LOP, LOP, LOP, LOP, LOP, SPC }, /* SHIFT_ASHIFTRT */
+      SPC, SPC, SPC, SPC, SPC, SPC, SPC, SPC,
+      SPC, SPC, SPC, SPC, SPC, SPC, SPC, SPC }, /* SHIFT_LSHIFTRT */
+    { INL, INL, INL, INL, INL, INL, INL, LOP,
+      SPC, LOP, LOP, LOP, LOP, LOP, LOP, SPC,
+      SPC, SPC, SPC, SPC, SPC, SPC, SPC, SPC,
+      SPC, SPC, SPC, SPC, SPC, SPC, SPC, SPC }, /* SHIFT_ASHIFTRT */
   },
   {
     /* TARGET_H8300S  */
@@ -248,17 +248,17 @@ static enum shift_alg shift_alg_si[2][3][32] = {
     /* 16   17   18   19   20   21   22   23  */
     /* 24   25   26   27   28   29   30   31  */
     { INL, INL, INL, INL, INL, INL, INL, INL,
-      INL, INL, INL, LOP, LOP, LOP, LOP, SPC,
-      SPC, SPC, SPC, SPC, SPC, SPC, LOP, LOP,
-      SPC, SPC, LOP, LOP, SPC, SPC, SPC, SPC }, /* SHIFT_ASHIFT   */
+      INL, INL, INL, INL, INL, INL, INL, SPC,
+      SPC, SPC, SPC, SPC, SPC, SPC, SPC, SPC,
+      SPC, SPC, SPC, SPC, SPC, SPC, SPC, SPC }, /* SHIFT_ASHIFT   */
     { INL, INL, INL, INL, INL, INL, INL, INL,
-      INL, INL, INL, LOP, LOP, LOP, LOP, SPC,
-      SPC, SPC, SPC, SPC, SPC, SPC, LOP, LOP,
-      SPC, SPC, LOP, LOP, SPC, SPC, SPC, SPC }, /* SHIFT_LSHIFTRT */
+      INL, INL, INL, INL, INL, INL, INL, SPC,
+      SPC, SPC, SPC, SPC, SPC, SPC, SPC, SPC,
+      SPC, SPC, SPC, SPC, SPC, SPC, SPC, SPC }, /* SHIFT_LSHIFTRT */
     { INL, INL, INL, INL, INL, INL, INL, INL,
-      INL, INL, INL, LOP, LOP, LOP, LOP, LOP,
-      SPC, SPC, SPC, SPC, SPC, SPC, LOP, LOP,
-      SPC, SPC, LOP, LOP, LOP, LOP, LOP, SPC }, /* SHIFT_ASHIFTRT */
+      INL, INL, INL, INL, INL, INL, INL, SPC,
+      SPC, SPC, SPC, SPC, SPC, SPC, SPC, SPC,
+      SPC, SPC, SPC, SPC, SPC, SPC, SPC, SPC }, /* SHIFT_ASHIFTRT */
   }
 };
 
@@ -343,8 +343,71 @@ h8300_option_override (void)
       shift_alg_hi[H8_300H][SHIFT_ASHIFTRT][13] = SHIFT_LOOP;
       shift_alg_hi[H8_300H][SHIFT_ASHIFTRT][14] = SHIFT_LOOP;
 
+      shift_alg_si[H8_300H][SHIFT_ASHIFT][5] = SHIFT_LOOP;
+      shift_alg_si[H8_300H][SHIFT_ASHIFT][6] = SHIFT_LOOP;
+      shift_alg_si[H8_300H][SHIFT_ASHIFT][20] = SHIFT_LOOP;
+      shift_alg_si[H8_300H][SHIFT_ASHIFT][21] = SHIFT_LOOP;
+      shift_alg_si[H8_300H][SHIFT_ASHIFT][22] = SHIFT_LOOP;
+      shift_alg_si[H8_300H][SHIFT_ASHIFT][23] = SHIFT_LOOP;
+      shift_alg_si[H8_300H][SHIFT_ASHIFT][25] = SHIFT_LOOP;
+      shift_alg_si[H8_300H][SHIFT_ASHIFT][26] = SHIFT_LOOP;
+      shift_alg_si[H8_300H][SHIFT_ASHIFT][27] = SHIFT_LOOP;
+
+      shift_alg_si[H8_300H][SHIFT_LSHIFTRT][5] = SHIFT_LOOP;
+      shift_alg_si[H8_300H][SHIFT_LSHIFTRT][6] = SHIFT_LOOP;
+      shift_alg_si[H8_300H][SHIFT_LSHIFTRT][20] = SHIFT_LOOP;
+      shift_alg_si[H8_300H][SHIFT_LSHIFTRT][21] = SHIFT_LOOP;
+      shift_alg_si[H8_300H][SHIFT_LSHIFTRT][22] = SHIFT_LOOP;
+      shift_alg_si[H8_300H][SHIFT_LSHIFTRT][23] = SHIFT_LOOP;
+      shift_alg_si[H8_300H][SHIFT_LSHIFTRT][25] = SHIFT_LOOP;
+      shift_alg_si[H8_300H][SHIFT_LSHIFTRT][26] = SHIFT_LOOP;
+      shift_alg_si[H8_300H][SHIFT_LSHIFTRT][27] = SHIFT_LOOP;
+
+      shift_alg_si[H8_300H][SHIFT_ASHIFTRT][5] = SHIFT_LOOP;
+      shift_alg_si[H8_300H][SHIFT_ASHIFTRT][6] = SHIFT_LOOP;
+      shift_alg_si[H8_300H][SHIFT_ASHIFTRT][20] = SHIFT_LOOP;
+      shift_alg_si[H8_300H][SHIFT_ASHIFTRT][21] = SHIFT_LOOP;
+      shift_alg_si[H8_300H][SHIFT_ASHIFTRT][22] = SHIFT_LOOP;
+      shift_alg_si[H8_300H][SHIFT_ASHIFTRT][23] = SHIFT_LOOP;
+      shift_alg_si[H8_300H][SHIFT_ASHIFTRT][25] = SHIFT_LOOP;
+      shift_alg_si[H8_300H][SHIFT_ASHIFTRT][26] = SHIFT_LOOP;
+      shift_alg_si[H8_300H][SHIFT_ASHIFTRT][27] = SHIFT_LOOP;
+      shift_alg_si[H8_300H][SHIFT_ASHIFTRT][28] = SHIFT_LOOP;
+      shift_alg_si[H8_300H][SHIFT_ASHIFTRT][29] = SHIFT_LOOP;
+      shift_alg_si[H8_300H][SHIFT_ASHIFTRT][30] = SHIFT_LOOP;
+
       /* H8S */
       shift_alg_hi[H8_S][SHIFT_ASHIFTRT][14] = SHIFT_LOOP;
+
+      shift_alg_si[H8_S][SHIFT_ASHIFT][11] = SHIFT_LOOP;
+      shift_alg_si[H8_S][SHIFT_ASHIFT][12] = SHIFT_LOOP;
+      shift_alg_si[H8_S][SHIFT_ASHIFT][13] = SHIFT_LOOP;
+      shift_alg_si[H8_S][SHIFT_ASHIFT][14] = SHIFT_LOOP;
+      shift_alg_si[H8_S][SHIFT_ASHIFT][22] = SHIFT_LOOP;
+      shift_alg_si[H8_S][SHIFT_ASHIFT][23] = SHIFT_LOOP;
+      shift_alg_si[H8_S][SHIFT_ASHIFT][26] = SHIFT_LOOP;
+      shift_alg_si[H8_S][SHIFT_ASHIFT][27] = SHIFT_LOOP;
+
+      shift_alg_si[H8_S][SHIFT_LSHIFTRT][11] = SHIFT_LOOP;
+      shift_alg_si[H8_S][SHIFT_LSHIFTRT][12] = SHIFT_LOOP;
+      shift_alg_si[H8_S][SHIFT_LSHIFTRT][13] = SHIFT_LOOP;
+      shift_alg_si[H8_S][SHIFT_LSHIFTRT][14] = SHIFT_LOOP;
+      shift_alg_si[H8_S][SHIFT_LSHIFTRT][22] = SHIFT_LOOP;
+      shift_alg_si[H8_S][SHIFT_LSHIFTRT][23] = SHIFT_LOOP;
+      shift_alg_si[H8_S][SHIFT_LSHIFTRT][26] = SHIFT_LOOP;
+      shift_alg_si[H8_S][SHIFT_LSHIFTRT][27] = SHIFT_LOOP;
+
+      shift_alg_si[H8_S][SHIFT_ASHIFTRT][11] = SHIFT_LOOP;
+      shift_alg_si[H8_S][SHIFT_ASHIFTRT][12] = SHIFT_LOOP;
+      shift_alg_si[H8_S][SHIFT_ASHIFTRT][13] = SHIFT_LOOP;
+      shift_alg_si[H8_S][SHIFT_ASHIFTRT][14] = SHIFT_LOOP;
+      shift_alg_si[H8_S][SHIFT_ASHIFTRT][22] = SHIFT_LOOP;
+      shift_alg_si[H8_S][SHIFT_ASHIFTRT][23] = SHIFT_LOOP;
+      shift_alg_si[H8_S][SHIFT_ASHIFTRT][26] = SHIFT_LOOP;
+      shift_alg_si[H8_S][SHIFT_ASHIFTRT][27] = SHIFT_LOOP;
+      shift_alg_si[H8_S][SHIFT_ASHIFTRT][28] = SHIFT_LOOP;
+      shift_alg_si[H8_S][SHIFT_ASHIFTRT][29] = SHIFT_LOOP;
+      shift_alg_si[H8_S][SHIFT_ASHIFTRT][30] = SHIFT_LOOP;
     }
 
   /* Work out a value for MOVE_RATIO.  */
@@ -452,7 +515,7 @@ Fpa (rtx par)
    SIZE to adjust the stack pointer.  */
 
 static void
-h8300_emit_stack_adjustment (int sign, HOST_WIDE_INT size, bool in_prologue)
+h8300_emit_stack_adjustment (int sign, HOST_WIDE_INT size)
 {
   /* If the frame size is 0, we don't have anything to do.  */
   if (size == 0)
@@ -469,11 +532,11 @@ h8300_emit_stack_adjustment (int sign, HOST_WIDE_INT size, bool in_prologue)
 					   stack_pointer_rtx,
 					    GEN_INT (sign * size)));
       if (size < 4)
-        F (x, in_prologue);
+        F (x, 0);
     }
   else
     F (emit_insn (gen_addsi3 (stack_pointer_rtx,
-			      stack_pointer_rtx, GEN_INT (sign * size))), in_prologue);
+			      stack_pointer_rtx, GEN_INT (sign * size))), 0);
 }
 
 /* Round up frame size SIZE.  */
@@ -511,7 +574,7 @@ compute_saved_regs (void)
 /* Emit an insn to push register RN.  */
 
 static rtx
-push (int rn, bool in_prologue)
+push (int rn)
 {
   rtx reg = gen_rtx_REG (word_mode, rn);
   rtx x;
@@ -520,7 +583,7 @@ push (int rn, bool in_prologue)
     x = gen_push_h8300hs_advanced (reg);
   else
     x = gen_push_h8300hs_normal (reg);
-  x = F (emit_insn (x), in_prologue);
+  x = F (emit_insn (x), 0);
   add_reg_note (x, REG_INC, stack_pointer_rtx);
   return x;
 }
@@ -571,7 +634,7 @@ h8300_push_pop (int regno, int nregs, bool pop_p, bool return_p)
       if (pop_p)
 	pop (regno);
       else
-	push (regno, false);
+	push (regno);
       return;
     }
 
@@ -755,8 +818,8 @@ h8300_expand_prologue (void)
   if (frame_pointer_needed)
     {
       /* Push fp.  */
-      push (HARD_FRAME_POINTER_REGNUM, true);
-      F (emit_move_insn (hard_frame_pointer_rtx, stack_pointer_rtx), true);
+      push (HARD_FRAME_POINTER_REGNUM);
+      F (emit_move_insn (hard_frame_pointer_rtx, stack_pointer_rtx), 0);
     }
 
   /* Push the rest of the registers in ascending order.  */
@@ -787,7 +850,7 @@ h8300_expand_prologue (void)
     }
 
   /* Leave room for locals.  */
-  h8300_emit_stack_adjustment (-1, round_frame_size (get_frame_size ()), true);
+  h8300_emit_stack_adjustment (-1, round_frame_size (get_frame_size ()));
 
   if (flag_stack_usage_info)
     current_function_static_stack_size
@@ -811,7 +874,7 @@ h8300_can_use_return_insn_p (void)
 /* Generate RTL code for the function epilogue.  */
 
 void
-h8300_expand_epilogue (void)
+h8300_expand_epilogue (bool sibcall_p)
 {
   int regno;
   int saved_regs;
@@ -828,7 +891,7 @@ h8300_expand_epilogue (void)
   returned_p = false;
 
   /* Deallocate locals.  */
-  h8300_emit_stack_adjustment (1, frame_size, false);
+  h8300_emit_stack_adjustment (1, frame_size);
 
   /* Pop the saved registers in descending order.  */
   saved_regs = compute_saved_regs ();
@@ -856,6 +919,7 @@ h8300_expand_epilogue (void)
 	  /* See if this pop would be the last insn before the return.
 	     If so, use rte/l or rts/l instead of pop or ldm.l.  */
 	  if (TARGET_H8300SX
+	      && !sibcall_p
 	      && !frame_pointer_needed
 	      && frame_size == 0
 	      && (saved_regs & ((1 << (regno - n_regs + 1)) - 1)) == 0)
@@ -868,12 +932,12 @@ h8300_expand_epilogue (void)
   /* Pop frame pointer if we had one.  */
   if (frame_pointer_needed)
     {
-      if (TARGET_H8300SX)
+      if (TARGET_H8300SX && !sibcall_p)
 	returned_p = true;
       h8300_push_pop (HARD_FRAME_POINTER_REGNUM, 1, true, returned_p);
     }
 
-  if (!returned_p)
+  if (!returned_p && !sibcall_p)
     emit_jump_insn (ret_rtx);
 }
 
@@ -1100,7 +1164,7 @@ h8300_and_costs (rtx x)
   operands[1] = XEXP (x, 0);
   operands[2] = XEXP (x, 1);
   operands[3] = x;
-  return compute_logical_op_length (GET_MODE (x), operands) / 2;
+  return compute_logical_op_length (GET_MODE (x), AND, operands, NULL) / 2;
 }
 
 /* Compute the cost of a shift insn.  */
@@ -1108,18 +1172,17 @@ h8300_and_costs (rtx x)
 static int
 h8300_shift_costs (rtx x)
 {
-  rtx operands[4];
+  rtx operands[3];
 
   if (GET_MODE (x) != QImode
       && GET_MODE (x) != HImode
       && GET_MODE (x) != SImode)
     return 100;
 
-  operands[0] = NULL;
+  operands[0] = gen_rtx_REG (GET_MODE (x), 0);
   operands[1] = NULL;
   operands[2] = XEXP (x, 1);
-  operands[3] = x;
-  return compute_a_shift_length (NULL, operands) / 2;
+  return compute_a_shift_length (operands, GET_CODE (x)) / 2;
 }
 
 /* Worker function for TARGET_RTX_COSTS.  */
@@ -1199,6 +1262,16 @@ h8300_rtx_costs (rtx x, machine_mode mode ATTRIBUTE_UNUSED, int outer_code,
       return true;
 
     case COMPARE:
+    case NE:
+    case EQ:
+    case GE:
+    case GT:
+    case LE:
+    case LT:
+    case GEU:
+    case GTU:
+    case LEU:
+    case LTU:
       if (XEXP (x, 1) == const0_rtx)
 	*total = 0;
       return false;
@@ -1508,10 +1581,20 @@ h8300_print_operand (FILE *file, rtx x, int code)
 	}
       break;
     case 'j':
-      fputs (cond_string (GET_CODE (x)), file);
+      if (GET_CODE (x) == LT && GET_MODE (XEXP (x, 0)) == E_CCZNmode)
+	fputs ("mi", file);
+      else if (GET_CODE (x) == GE && GET_MODE (XEXP (x, 0)) == E_CCZNmode)
+	fputs ("pl", file);
+      else
+	fputs (cond_string (GET_CODE (x)), file);
       break;
     case 'k':
-      fputs (cond_string (reverse_condition (GET_CODE (x))), file);
+      if (GET_CODE (x) == LT && GET_MODE (XEXP (x, 0)) == E_CCZNmode)
+	fputs ("pl", file);
+      else if (GET_CODE (x) == GE && GET_MODE (XEXP (x, 0)) == E_CCZNmode)
+	fputs ("mi", file);
+      else
+	fputs (cond_string (reverse_condition (GET_CODE (x))), file);
       break;
     case 'm':
       gcc_assert (GET_CODE (x) == CONST_INT);
@@ -1920,72 +2003,25 @@ h8300_return_addr_rtx (int count, rtx frame)
   return ret;
 }
 
-/* Update the condition code from the insn.  */
 
-void
-notice_update_cc (rtx body, rtx_insn *insn)
+machine_mode
+h8300_select_cc_mode (enum rtx_code cond, rtx op0, rtx op1)
 {
-  rtx set;
+  if (op1 == const0_rtx
+      && (cond == EQ || cond == NE || cond == LT || cond == GE)
+      && (GET_CODE (op0) == PLUS || GET_CODE (op0) == MINUS
+	  || GET_CODE (op0) == NEG || GET_CODE (op0) == AND
+	  || GET_CODE (op0) == IOR || GET_CODE (op0) == XOR
+	  || GET_CODE (op0) == NOT || GET_CODE (op0) == ASHIFT
+	  || GET_CODE (op0) == ASHIFTRT || GET_CODE (op0) == LSHIFTRT
+	  || GET_CODE (op0) == MULT || GET_CODE (op0) == SYMBOL_REF
+	  || GET_CODE (op0) == SIGN_EXTEND || GET_CODE (op0) == ZERO_EXTEND
+	  || REG_P (op0) || MEM_P (op0)))
+    return CCZNmode;
 
-  switch (get_attr_cc (insn))
-    {
-    case CC_NONE:
-      /* Insn does not affect CC at all.  */
-      break;
-
-    case CC_NONE_0HIT:
-      /* Insn does not change CC, but the 0'th operand has been changed.  */
-      if (cc_status.value1 != 0
-	  && reg_overlap_mentioned_p (recog_data.operand[0], cc_status.value1))
-	cc_status.value1 = 0;
-      if (cc_status.value2 != 0
-	  && reg_overlap_mentioned_p (recog_data.operand[0], cc_status.value2))
-	cc_status.value2 = 0;
-      break;
-
-    case CC_SET_ZN:
-      /* Insn sets the Z,N flags of CC to recog_data.operand[0].
-	 The V flag is unusable.  The C flag may or may not be known but
-	 that's ok because alter_cond will change tests to use EQ/NE.  */
-      CC_STATUS_INIT;
-      cc_status.flags |= CC_OVERFLOW_UNUSABLE | CC_NO_CARRY;
-      set = single_set (insn);
-      cc_status.value1 = SET_SRC (set);
-      if (SET_DEST (set) != cc0_rtx)
-	cc_status.value2 = SET_DEST (set);
-      break;
-
-    case CC_SET_ZNV:
-      /* Insn sets the Z,N,V flags of CC to recog_data.operand[0].
-	 The C flag may or may not be known but that's ok because
-	 alter_cond will change tests to use EQ/NE.  */
-      CC_STATUS_INIT;
-      cc_status.flags |= CC_NO_CARRY;
-      set = single_set (insn);
-      cc_status.value1 = SET_SRC (set);
-      if (SET_DEST (set) != cc0_rtx)
-	{
-	  /* If the destination is STRICT_LOW_PART, strip off
-	     STRICT_LOW_PART.  */
-	  if (GET_CODE (SET_DEST (set)) == STRICT_LOW_PART)
-	    cc_status.value2 = XEXP (SET_DEST (set), 0);
-	  else
-	    cc_status.value2 = SET_DEST (set);
-	}
-      break;
-
-    case CC_COMPARE:
-      /* The insn is a compare instruction.  */
-      CC_STATUS_INIT;
-      cc_status.value1 = SET_SRC (body);
-      break;
-
-    case CC_CLOBBER:
-      /* Insn doesn't leave CC in a usable state.  */
-      CC_STATUS_INIT;
-      break;
-    }
+  return CCmode;
 }
+
 
 /* Given that X occurs in an address of the form (plus X constant),
    return the part of X that is expected to be a register.  There are
@@ -2344,8 +2380,18 @@ static unsigned int
 h8300_binary_length (rtx_insn *insn, const h8300_length_table *table)
 {
   rtx set;
+  rtx pattern;
 
-  set = single_set (insn);
+  if (GET_CODE (insn) != INSN)
+    gcc_unreachable ();
+
+  pattern = PATTERN (insn);
+  if (GET_CODE (pattern) == PARALLEL
+      && GET_CODE (XVECEXP (pattern, 0, 0)) == SET
+      && GET_CODE (SET_SRC (XVECEXP (pattern, 0, 0))) == COMPARE)
+    set = XVECEXP (pattern, 0, 1);
+  else
+    set = single_set (insn);
   gcc_assert (set);
 
   if (BINARY_P (SET_SRC (set)))
@@ -2678,7 +2724,7 @@ compute_mov_length (rtx *operands)
 /* Output an addition insn.  */
 
 const char *
-output_plussi (rtx *operands)
+output_plussi (rtx *operands, bool need_flags)
 {
   machine_mode mode = GET_MODE (operands[0]);
 
@@ -2698,25 +2744,63 @@ output_plussi (rtx *operands)
 
       switch ((unsigned int) intval & 0xffffffff)
 	{
+	/* INC/DEC set the flags, but adds/subs do not.  So if we
+	   need flags, use the former and not the latter.  */
 	case 0x00000001:
+	  if (need_flags)
+	    return "inc.l\t#1,%S0";
+	  else
+	    return "adds\t%2,%S0";
 	case 0x00000002:
-	case 0x00000004:
-	  return "adds\t%2,%S0";
-
+	  if (need_flags)
+	    return "inc.l\t#2,%S0";
+	  else
+	    return "adds\t%2,%S0";
 	case 0xffffffff:
+	  if (need_flags)
+	    return "dec.l\t#1,%S0";
+	  else
+	    return "subs\t%G2,%S0";
 	case 0xfffffffe:
+	  if (need_flags)
+	    return "dec.l\t#2,%S0";
+	  else
+	    return "subs\t%G2,%S0";
+
+	/* These six cases have optimized paths when we do not
+	   need flags.  Otherwise we let them fallthru.  */
+	case 0x00000004:
+	  if (!need_flags)
+	    return "adds\t%2,%S0";
+
+	  /* FALLTHRU */
+
 	case 0xfffffffc:
-	  return "subs\t%G2,%S0";
+	  if (!need_flags)
+	    return "subs\t%G2,%S0";
+
+	  /* FALLTHRU */
 
 	case 0x00010000:
 	case 0x00020000:
-	  operands[2] = GEN_INT (intval >> 16);
-	  return "inc.w\t%2,%e0";
+	  if (!need_flags)
+	    {
+	      operands[2] = GEN_INT (intval >> 16);
+	      return "inc.w\t%2,%e0";
+	    }
+
+	  /* FALLTHRU */
 
 	case 0xffff0000:
 	case 0xfffe0000:
-	  operands[2] = GEN_INT (intval >> 16);
-	  return "dec.w\t%G2,%e0";
+	  if (!need_flags)
+	    {
+	      operands[2] = GEN_INT (intval >> 16);
+	      return "dec.w\t%G2,%e0";
+	    }
+
+	  /* FALLTHRU */
+
 	}
 
       /* See if we can finish with 4 bytes.  */
@@ -2740,7 +2824,7 @@ output_plussi (rtx *operands)
 /* Compute the length of an addition insn.  */
 
 unsigned int
-compute_plussi_length (rtx *operands)
+compute_plussi_length (rtx *operands, bool need_flags)
 {
   machine_mode mode = GET_MODE (operands[0]);
 
@@ -2762,21 +2846,36 @@ compute_plussi_length (rtx *operands)
 	{
 	case 0x00000001:
 	case 0x00000002:
-	case 0x00000004:
 	  return 2;
+	case 0x00000004:
+	  if (need_flags)
+	    return 6;
+	  else
+	    return 2;
 
 	case 0xffffffff:
 	case 0xfffffffe:
-	case 0xfffffffc:
 	  return 2;
+	case 0xfffffffc:
+	  if (need_flags)
+	    return 6;
+	  else
+	    return 2;
 
 	case 0x00010000:
 	case 0x00020000:
-	  return 2;
+	  if (!need_flags)
+	    return 2;
+
+	  /* FALLTHRU */
 
 	case 0xffff0000:
 	case 0xfffe0000:
-	  return 2;
+	  if (!need_flags)
+	    return 2;
+
+	  /* FALLTHRU */
+
 	}
 
       /* See if we can finish with 4 bytes.  */
@@ -2795,7 +2894,7 @@ compute_plussi_length (rtx *operands)
 
 /* Compute which flag bits are valid after an addition insn.  */
 
-enum attr_cc
+enum attr_old_cc
 compute_plussi_cc (rtx *operands)
 {
   machine_mode mode = GET_MODE (operands[0]);
@@ -2808,9 +2907,9 @@ compute_plussi_cc (rtx *operands)
       HOST_WIDE_INT intval = INTVAL (operands[2]);
 
       if (TARGET_H8300SX && (intval >= 1 && intval <= 7))
-	return CC_SET_ZN;
+	return OLD_CC_SET_ZN;
       if (TARGET_H8300SX && (intval >= -7 && intval <= -1))
-	return CC_SET_ZN;
+	return OLD_CC_SET_ZN;
 
       /* See if we can finish with 2 bytes.  */
 
@@ -2819,37 +2918,35 @@ compute_plussi_cc (rtx *operands)
 	case 0x00000001:
 	case 0x00000002:
 	case 0x00000004:
-	  return CC_NONE_0HIT;
+	  return OLD_CC_NONE_0HIT;
 
 	case 0xffffffff:
 	case 0xfffffffe:
 	case 0xfffffffc:
-	  return CC_NONE_0HIT;
+	  return OLD_CC_NONE_0HIT;
 
 	case 0x00010000:
 	case 0x00020000:
-	  return CC_CLOBBER;
+	  return OLD_CC_CLOBBER;
 
 	case 0xffff0000:
 	case 0xfffe0000:
-	  return CC_CLOBBER;
+	  return OLD_CC_CLOBBER;
 	}
 
       /* See if we can finish with 4 bytes.  */
       if ((intval & 0xffff) == 0)
-	return CC_CLOBBER;
+	return OLD_CC_CLOBBER;
     }
 
-  return CC_SET_ZN;
+  return OLD_CC_SET_ZN;
 }
 
 /* Output a logical insn.  */
 
 const char *
-output_logical_op (machine_mode mode, rtx *operands)
+output_logical_op (machine_mode mode, rtx_code code, rtx *operands, rtx_insn *insn)
 {
-  /* Figure out the logical op that we need to perform.  */
-  enum rtx_code code = GET_CODE (operands[3]);
   /* Pretend that every byte is affected if both operands are registers.  */
   const unsigned HOST_WIDE_INT intval =
     (unsigned HOST_WIDE_INT) ((GET_CODE (operands[2]) == CONST_INT)
@@ -2873,6 +2970,19 @@ output_logical_op (machine_mode mode, rtx *operands)
   const char *opname;
   char insn_buf[100];
 
+  /* INSN is the current insn, we examine its overall form to see if we're
+     supposed to set or clobber the condition codes.
+
+     This is important to know.  If we are setting condition codes, then we
+     must do the operation in MODE and not in some smaller size.
+
+     The key is to look at the second object in the PARALLEL. If it is not
+     a CLOBBER, then we care about the condition codes.  */
+  rtx pattern = PATTERN (insn);
+  gcc_assert (GET_CODE (pattern) == PARALLEL);
+  rtx second_op = XVECEXP (pattern, 0, 1);
+  bool cc_meaningful = (GET_CODE (second_op) != CLOBBER);
+
   switch (code)
     {
     case AND:
@@ -2890,9 +3000,14 @@ output_logical_op (machine_mode mode, rtx *operands)
 
   switch (mode)
     {
+    case E_QImode:
+      sprintf (insn_buf, "%s.b\t%%X2,%%X0", opname);
+      output_asm_insn (insn_buf, operands);
+      break;
     case E_HImode:
-      /* First, see if we can finish with one insn.  */
-      if (b0 != 0 && b1 != 0)
+      /* First, see if we can (or must) finish with one insn.  */
+      if (cc_meaningful
+	  || (b0 != 0 && b1 != 0))
 	{
 	  sprintf (insn_buf, "%s.w\t%%T2,%%T0", opname);
 	  output_asm_insn (insn_buf, operands);
@@ -2927,10 +3042,11 @@ output_logical_op (machine_mode mode, rtx *operands)
 
       /* Check if doing everything with one insn is no worse than
 	 using multiple insns.  */
-      if (w0 != 0 && w1 != 0
-	  && !(lower_half_easy_p && upper_half_easy_p)
-	  && !(code == IOR && w1 == 0xffff
-	       && (w0 & 0x8000) != 0 && lower_half_easy_p))
+      if (cc_meaningful
+	  || (w0 != 0 && w1 != 0
+	      && !(lower_half_easy_p && upper_half_easy_p)
+	      && !(code == IOR && w1 == 0xffff
+		   && (w0 & 0x8000) != 0 && lower_half_easy_p)))
 	{
 	  sprintf (insn_buf, "%s.l\t%%S2,%%S0", opname);
 	  output_asm_insn (insn_buf, operands);
@@ -3000,10 +3116,8 @@ output_logical_op (machine_mode mode, rtx *operands)
 /* Compute the length of a logical insn.  */
 
 unsigned int
-compute_logical_op_length (machine_mode mode, rtx *operands)
+compute_logical_op_length (machine_mode mode, rtx_code code, rtx *operands, rtx_insn *insn)
 {
-  /* Figure out the logical op that we need to perform.  */
-  enum rtx_code code = GET_CODE (operands[3]);
   /* Pretend that every byte is affected if both operands are registers.  */
   const unsigned HOST_WIDE_INT intval =
     (unsigned HOST_WIDE_INT) ((GET_CODE (operands[2]) == CONST_INT)
@@ -3026,11 +3140,32 @@ compute_logical_op_length (machine_mode mode, rtx *operands)
   /* Insn length.  */
   unsigned int length = 0;
 
+  /* INSN is the current insn, we examine its overall form to see if we're
+     supposed to set or clobber the condition codes.
+
+     This is important to know.  If we are setting condition codes, then we
+     must do the operation in MODE and not in some smaller size.
+
+     The key is to look at the second object in the PARALLEL. If it is not
+     a CLOBBER, then we care about the condition codes.  */
+  bool cc_meaningful = false;
+  if (insn)
+    {
+      rtx pattern = PATTERN (insn);
+      gcc_assert (GET_CODE (pattern) == PARALLEL);
+      rtx second_op = XVECEXP (pattern, 0, 1);
+      cc_meaningful = (GET_CODE (second_op) != CLOBBER);
+    }
+
   switch (mode)
     {
+    case E_QImode:
+      return 2;
+
     case E_HImode:
       /* First, see if we can finish with one insn.  */
-      if (b0 != 0 && b1 != 0)
+      if (cc_meaningful
+	  || (b0 != 0 && b1 != 0))
 	{
 	  length = h8300_length_from_table (operands[1], operands[2],
 					    &logicw_length_table);
@@ -3060,10 +3195,11 @@ compute_logical_op_length (machine_mode mode, rtx *operands)
 
       /* Check if doing everything with one insn is no worse than
 	 using multiple insns.  */
-      if (w0 != 0 && w1 != 0
-	  && !(lower_half_easy_p && upper_half_easy_p)
-	  && !(code == IOR && w1 == 0xffff
-	       && (w0 & 0x8000) != 0 && lower_half_easy_p))
+      if (cc_meaningful
+	  || (w0 != 0 && w1 != 0
+	      && !(lower_half_easy_p && upper_half_easy_p)
+	      && !(code == IOR && w1 == 0xffff
+		   && (w0 & 0x8000) != 0 && lower_half_easy_p)))
 	{
 	  length = h8300_length_from_table (operands[1], operands[2],
 					    &logicl_length_table);
@@ -3120,103 +3256,8 @@ compute_logical_op_length (machine_mode mode, rtx *operands)
   return length;
 }
 
-/* Compute which flag bits are valid after a logical insn.  */
-
-enum attr_cc
-compute_logical_op_cc (machine_mode mode, rtx *operands)
-{
-  /* Figure out the logical op that we need to perform.  */
-  enum rtx_code code = GET_CODE (operands[3]);
-  /* Pretend that every byte is affected if both operands are registers.  */
-  const unsigned HOST_WIDE_INT intval =
-    (unsigned HOST_WIDE_INT) ((GET_CODE (operands[2]) == CONST_INT)
-			      /* Always use the full instruction if the
-				 first operand is in memory.  It is better
-				 to use define_splits to generate the shorter
-				 sequence where valid.  */
-			      && register_operand (operands[1], VOIDmode)
-			      ? INTVAL (operands[2]) : 0x55555555);
-  /* The determinant of the algorithm.  If we perform an AND, 0
-     affects a bit.  Otherwise, 1 affects a bit.  */
-  const unsigned HOST_WIDE_INT det = (code != AND) ? intval : ~intval;
-  /* Break up DET into pieces.  */
-  const unsigned HOST_WIDE_INT b0 = (det >>  0) & 0xff;
-  const unsigned HOST_WIDE_INT b1 = (det >>  8) & 0xff;
-  const unsigned HOST_WIDE_INT w0 = (det >>  0) & 0xffff;
-  const unsigned HOST_WIDE_INT w1 = (det >> 16) & 0xffff;
-  int lower_half_easy_p = 0;
-  int upper_half_easy_p = 0;
-  /* Condition code.  */
-  enum attr_cc cc = CC_CLOBBER;
-
-  switch (mode)
-    {
-    case E_HImode:
-      /* First, see if we can finish with one insn.  */
-      if (b0 != 0 && b1 != 0)
-	{
-	  cc = CC_SET_ZNV;
-	}
-      break;
-    case E_SImode:
-      /* Determine if the lower half can be taken care of in no more
-	 than two bytes.  */
-      lower_half_easy_p = (b0 == 0
-			   || b1 == 0
-			   || (code != IOR && w0 == 0xffff));
-
-      /* Determine if the upper half can be taken care of in no more
-         than two bytes.  */
-      upper_half_easy_p = ((code != IOR && w1 == 0xffff)
-			   || (code == AND && w1 == 0xff00));
-
-      /* Check if doing everything with one insn is no worse than
-	 using multiple insns.  */
-      if (w0 != 0 && w1 != 0
-	  && !(lower_half_easy_p && upper_half_easy_p)
-	  && !(code == IOR && w1 == 0xffff
-	       && (w0 & 0x8000) != 0 && lower_half_easy_p))
-	{
-	  cc = CC_SET_ZNV;
-	}
-      else
-	{
-	  if (code == IOR
-	      && w1 == 0xffff
-	      && (w0 & 0x8000) != 0)
-	    {
-	      cc = CC_SET_ZNV;
-	    }
-	}
-      break;
-    default:
-      gcc_unreachable ();
-    }
-  return cc;
-}
+#if 0
 
-/* Expand a conditional branch.  */
-
-void
-h8300_expand_branch (rtx operands[])
-{
-  enum rtx_code code = GET_CODE (operands[0]);
-  rtx op0 = operands[1];
-  rtx op1 = operands[2];
-  rtx label = operands[3];
-  rtx tmp;
-
-  tmp = gen_rtx_COMPARE (VOIDmode, op0, op1);
-  emit_insn (gen_rtx_SET (cc0_rtx, tmp));
-
-  tmp = gen_rtx_fmt_ee (code, VOIDmode, cc0_rtx, const0_rtx);
-  tmp = gen_rtx_IF_THEN_ELSE (VOIDmode, tmp,
-			      gen_rtx_LABEL_REF (VOIDmode, label),
-			      pc_rtx);
-  emit_jump_insn (gen_rtx_SET (pc_rtx, tmp));
-}
-
-
 /* Expand a conditional store.  */
 
 void
@@ -3234,6 +3275,7 @@ h8300_expand_store (rtx operands[])
   tmp = gen_rtx_fmt_ee (code, GET_MODE (dest), cc0_rtx, const0_rtx);
   emit_insn (gen_rtx_SET (dest, tmp));
 }
+#endif
 
 /* Shifts.
 
@@ -3381,19 +3423,25 @@ expand_a_shift (machine_mode mode, enum rtx_code code, rtx operands[])
       break;
     }
 
-  emit_move_insn (copy_rtx (operands[0]), operands[1]);
-
   /* Need a loop to get all the bits we want  - we generate the
      code at emit time, but need to allocate a scratch reg now.  */
-
-  emit_insn (gen_rtx_PARALLEL
-	     (VOIDmode,
-	      gen_rtvec (2,
-			 gen_rtx_SET (copy_rtx (operands[0]),
-				      gen_rtx_fmt_ee (code, mode,
-						      copy_rtx (operands[0]), operands[2])),
-			 gen_rtx_CLOBBER (VOIDmode,
-					  gen_rtx_SCRATCH (QImode)))));
+  emit_move_insn (copy_rtx (operands[0]), operands[1]);
+  if (operands[2] == CONST0_RTX (QImode))
+    ;
+  else if (GET_CODE (operands[2]) == CONST_INT
+      && !h8300_shift_needs_scratch_p (INTVAL (operands[2]), mode, code))
+    emit_insn (gen_rtx_SET (copy_rtx (operands[0]),
+			      gen_rtx_fmt_ee (code, mode,
+					      copy_rtx (operands[1]), operands[2])));
+  else
+    emit_insn (gen_rtx_PARALLEL
+	       (VOIDmode,
+		gen_rtvec (2,
+			   gen_rtx_SET (copy_rtx (operands[0]),
+					gen_rtx_fmt_ee (code, mode,
+							copy_rtx (operands[0]), operands[2])),
+			   gen_rtx_CLOBBER (VOIDmode,
+					    gen_rtx_SCRATCH (QImode)))));
   return true;
 }
 
@@ -3405,13 +3453,13 @@ enum shift_mode
 };
 
 /* For single bit shift insns, record assembler and what bits of the
-   condition code are valid afterwards (represented as various CC_FOO
+   condition code are valid afterwards (represented as various OLD_CC_FOO
    bits, 0 means CC isn't left in a usable state).  */
 
 struct shift_insn
 {
   const char *const assembler;
-  const enum attr_cc cc_valid;
+  const enum attr_old_cc cc_valid;
 };
 
 /* Assembler instruction shift table.
@@ -3425,42 +3473,42 @@ static const struct shift_insn shift_one[2][3][3] =
   {
 /* SHIFT_ASHIFT */
     {
-      { "shll\t%X0", CC_SET_ZNV },
-      { "add.w\t%T0,%T0", CC_SET_ZN },
-      { "add.w\t%f0,%f0\n\taddx\t%y0,%y0\n\taddx\t%z0,%z0", CC_CLOBBER }
+      { "shll\t%X0", OLD_CC_SET_ZNV },
+      { "add.w\t%T0,%T0", OLD_CC_SET_ZN },
+      { "add.w\t%f0,%f0\n\taddx\t%y0,%y0\n\taddx\t%z0,%z0", OLD_CC_CLOBBER }
     },
 /* SHIFT_LSHIFTRT */
     {
-      { "shlr\t%X0", CC_SET_ZNV },
-      { "shlr\t%t0\n\trotxr\t%s0", CC_CLOBBER },
-      { "shlr\t%z0\n\trotxr\t%y0\n\trotxr\t%x0\n\trotxr\t%w0", CC_CLOBBER }
+      { "shlr\t%X0", OLD_CC_SET_ZNV },
+      { "shlr\t%t0\n\trotxr\t%s0", OLD_CC_CLOBBER },
+      { "shlr\t%z0\n\trotxr\t%y0\n\trotxr\t%x0\n\trotxr\t%w0", OLD_CC_CLOBBER }
     },
 /* SHIFT_ASHIFTRT */
     {
-      { "shar\t%X0", CC_SET_ZNV },
-      { "shar\t%t0\n\trotxr\t%s0", CC_CLOBBER },
-      { "shar\t%z0\n\trotxr\t%y0\n\trotxr\t%x0\n\trotxr\t%w0", CC_CLOBBER }
+      { "shar\t%X0", OLD_CC_SET_ZNV },
+      { "shar\t%t0\n\trotxr\t%s0", OLD_CC_CLOBBER },
+      { "shar\t%z0\n\trotxr\t%y0\n\trotxr\t%x0\n\trotxr\t%w0", OLD_CC_CLOBBER }
     }
   },
 /* H8/300H */
   {
 /* SHIFT_ASHIFT */
     {
-      { "shll.b\t%X0", CC_SET_ZNV },
-      { "shll.w\t%T0", CC_SET_ZNV },
-      { "shll.l\t%S0", CC_SET_ZNV }
+      { "shll.b\t%X0", OLD_CC_SET_ZNV },
+      { "shll.w\t%T0", OLD_CC_SET_ZNV },
+      { "shll.l\t%S0", OLD_CC_SET_ZNV }
     },
 /* SHIFT_LSHIFTRT */
     {
-      { "shlr.b\t%X0", CC_SET_ZNV },
-      { "shlr.w\t%T0", CC_SET_ZNV },
-      { "shlr.l\t%S0", CC_SET_ZNV }
+      { "shlr.b\t%X0", OLD_CC_SET_ZNV },
+      { "shlr.w\t%T0", OLD_CC_SET_ZNV },
+      { "shlr.l\t%S0", OLD_CC_SET_ZNV }
     },
 /* SHIFT_ASHIFTRT */
     {
-      { "shar.b\t%X0", CC_SET_ZNV },
-      { "shar.w\t%T0", CC_SET_ZNV },
-      { "shar.l\t%S0", CC_SET_ZNV }
+      { "shar.b\t%X0", OLD_CC_SET_ZNV },
+      { "shar.w\t%T0", OLD_CC_SET_ZNV },
+      { "shar.l\t%S0", OLD_CC_SET_ZNV }
     }
   }
 };
@@ -3469,21 +3517,21 @@ static const struct shift_insn shift_two[3][3] =
 {
 /* SHIFT_ASHIFT */
     {
-      { "shll.b\t#2,%X0", CC_SET_ZNV },
-      { "shll.w\t#2,%T0", CC_SET_ZNV },
-      { "shll.l\t#2,%S0", CC_SET_ZNV }
+      { "shll.b\t#2,%X0", OLD_CC_SET_ZNV },
+      { "shll.w\t#2,%T0", OLD_CC_SET_ZNV },
+      { "shll.l\t#2,%S0", OLD_CC_SET_ZNV }
     },
 /* SHIFT_LSHIFTRT */
     {
-      { "shlr.b\t#2,%X0", CC_SET_ZNV },
-      { "shlr.w\t#2,%T0", CC_SET_ZNV },
-      { "shlr.l\t#2,%S0", CC_SET_ZNV }
+      { "shlr.b\t#2,%X0", OLD_CC_SET_ZNV },
+      { "shlr.w\t#2,%T0", OLD_CC_SET_ZNV },
+      { "shlr.l\t#2,%S0", OLD_CC_SET_ZNV }
     },
 /* SHIFT_ASHIFTRT */
     {
-      { "shar.b\t#2,%X0", CC_SET_ZNV },
-      { "shar.w\t#2,%T0", CC_SET_ZNV },
-      { "shar.l\t#2,%S0", CC_SET_ZNV }
+      { "shar.b\t#2,%X0", OLD_CC_SET_ZNV },
+      { "shar.w\t#2,%T0", OLD_CC_SET_ZNV },
+      { "shar.l\t#2,%S0", OLD_CC_SET_ZNV }
     }
 };
 
@@ -3579,10 +3627,10 @@ struct shift_info {
   const char *shift2;
 
   /* CC status for SHIFT_INLINE.  */
-  enum attr_cc cc_inline;
+  enum attr_old_cc cc_inline;
 
   /* CC status  for SHIFT_SPECIAL.  */
-  enum attr_cc cc_special;
+  enum attr_old_cc cc_special;
 };
 
 static void get_shift_alg (enum shift_type,
@@ -3651,7 +3699,7 @@ get_shift_alg (enum shift_type shift_type, enum shift_mode shift_mode,
     case SHIFT_ROT_AND:
       info->shift1 = rotate_one[cpu_type][shift_type][shift_mode];
       info->shift2 = rotate_two[shift_type][shift_mode];
-      info->cc_inline = CC_CLOBBER;
+      info->cc_inline = OLD_CC_CLOBBER;
       goto end;
 
     case SHIFT_SPECIAL:
@@ -3660,7 +3708,7 @@ get_shift_alg (enum shift_type shift_type, enum shift_mode shift_mode,
       info->shift1 = shift_one[cpu_type][shift_type][shift_mode].assembler;
       info->shift2 = shift_two[shift_type][shift_mode].assembler;
       info->cc_inline = shift_one[cpu_type][shift_type][shift_mode].cc_valid;
-      info->cc_special = CC_CLOBBER;
+      info->cc_special = OLD_CC_CLOBBER;
       break;
     }
 
@@ -3702,11 +3750,11 @@ get_shift_alg (enum shift_type shift_type, enum shift_mode shift_mode,
 	      goto end;
 	    case SHIFT_LSHIFTRT:
 	      info->special = "mov.b\t%t0,%s0\n\textu.w\t%T0";
-	      info->cc_special = CC_SET_ZNV;
+	      info->cc_special = OLD_CC_SET_ZNV;
 	      goto end;
 	    case SHIFT_ASHIFTRT:
 	      info->special = "mov.b\t%t0,%s0\n\texts.w\t%T0";
-	      info->cc_special = CC_SET_ZNV;
+	      info->cc_special = OLD_CC_SET_ZNV;
 	      goto end;
 	    }
 	}
@@ -3722,7 +3770,7 @@ get_shift_alg (enum shift_type shift_type, enum shift_mode shift_mode,
 	      if (TARGET_H8300H)
 		{
 		  info->special = "shll.b\t%t0\n\tsubx.b\t%s0,%s0\n\tshll.b\t%t0\n\trotxl.b\t%s0\n\texts.w\t%T0";
-		  info->cc_special = CC_SET_ZNV;
+		  info->cc_special = OLD_CC_SET_ZNV;
 		}
 	      else /* TARGET_H8300S */
 		gcc_unreachable ();
@@ -3752,34 +3800,39 @@ get_shift_alg (enum shift_type shift_type, enum shift_mode shift_mode,
 	  switch (shift_type)
 	    {
 	    case SHIFT_ASHIFT:
-	      info->special = "mov.w\t%e0,%f4\n\tmov.b\t%s4,%t4\n\tmov.b\t%t0,%s4\n\tmov.b\t%s0,%t0\n\tsub.b\t%s0,%s0\n\tmov.w\t%f4,%e0";
+	      info->special = "mov.w\t%e0,%f3\n\tmov.b\t%s3,%t3\n\tmov.b\t%t0,%s3\n\tmov.b\t%s0,%t0\n\tsub.b\t%s0,%s0\n\tmov.w\t%f3,%e0";
 	      goto end;
 	    case SHIFT_LSHIFTRT:
-	      info->special = "mov.w\t%e0,%f4\n\tmov.b\t%t0,%s0\n\tmov.b\t%s4,%t0\n\tmov.b\t%t4,%s4\n\textu.w\t%f4\n\tmov.w\t%f4,%e0";
+	      info->special = "mov.w\t%e0,%f3\n\tmov.b\t%t0,%s0\n\tmov.b\t%s3,%t0\n\tmov.b\t%t3,%s3\n\textu.w\t%f3\n\tmov.w\t%f3,%e0";
 	      goto end;
 	    case SHIFT_ASHIFTRT:
-	      info->special = "mov.w\t%e0,%f4\n\tmov.b\t%t0,%s0\n\tmov.b\t%s4,%t0\n\tmov.b\t%t4,%s4\n\texts.w\t%f4\n\tmov.w\t%f4,%e0";
+	      info->special = "mov.w\t%e0,%f3\n\tmov.b\t%t0,%s0\n\tmov.b\t%s3,%t0\n\tmov.b\t%t3,%s3\n\texts.w\t%f3\n\tmov.w\t%f3,%e0";
 	      goto end;
 	    }
 	}
       else if (count == 15)
 	{
+	  /* The basic idea here is to use the shift-by-16 idiom to make things
+	     small and efficient.  Of course, that loses one bit that we need,
+	     so we stuff the bit into C, shift by 16, then rotate the bit
+	     back in.  */
 	  switch (shift_type)
 	    {
 	    case SHIFT_ASHIFT:
 	      info->special = "shlr.w\t%e0\n\tmov.w\t%f0,%e0\n\txor.w\t%f0,%f0\n\trotxr.l\t%S0";
-	      info->cc_special = CC_SET_ZNV;
+	      info->cc_special = OLD_CC_SET_ZNV;
 	      goto end;
 	    case SHIFT_LSHIFTRT:
 	      info->special = "shll.w\t%f0\n\tmov.w\t%e0,%f0\n\txor.w\t%e0,%e0\n\trotxl.l\t%S0";
-	      info->cc_special = CC_SET_ZNV;
+	      info->cc_special = OLD_CC_SET_ZNV;
 	      goto end;
 	    case SHIFT_ASHIFTRT:
-	      gcc_unreachable ();
+	      info->special = "shll.w\t%f0\n\tmov.w\t%e0,%f0\n\texts.l\t%S0\n\trotxl.l\t%S0";
+	      info->cc_special = OLD_CC_SET_ZNV;
+	      goto end;
 	    }
 	}
-      else if ((TARGET_H8300H && count >= 16 && count <= 19)
-	       || (TARGET_H8300S && count >= 16 && count <= 21))
+      else if (count >= 16 && count <= 23)
 	{
 	  info->remainder = count - 16;
 
@@ -3790,16 +3843,32 @@ get_shift_alg (enum shift_type shift_type, enum shift_mode shift_mode,
 	      goto end;
 	    case SHIFT_LSHIFTRT:
 	      info->special = "mov.w\t%e0,%f0\n\textu.l\t%S0";
-	      info->cc_special = CC_SET_ZNV;
+	      info->cc_special = OLD_CC_SET_ZNV;
 	      goto end;
 	    case SHIFT_ASHIFTRT:
 	      info->special = "mov.w\t%e0,%f0\n\texts.l\t%S0";
-	      info->cc_special = CC_SET_ZNV;
+	      info->cc_special = OLD_CC_SET_ZNV;
 	      goto end;
 	    }
 	}
-      else if ((TARGET_H8300H && count == 24)
-	       || (TARGET_H8300S && count >= 24 && count <= 25))
+      else if (TARGET_H8300S && count == 27)
+	{
+	  switch (shift_type)
+	    {
+	    case SHIFT_ASHIFT:
+	      info->special = "sub.w\t%e0,%e0\n\trotr.l\t#2,%S0\n\trotr.l\t#2,%S0\n\trotr.l\t%S0\n\tsub.w\t%f0,%f0";
+	      goto end;
+	    case SHIFT_LSHIFTRT:
+	      info->special = "sub.w\t%f0,%f0\n\trotl.l\t#2,%S0\n\trotl.l\t#2,%S0\n\trotl.l\t%S0\n\textu.l\t%S0";
+	      goto end;
+	    case SHIFT_ASHIFTRT:
+	      info->remainder = count - 24;
+	      info->special = "mov.w\t%e0,%f0\n\tmov.b\t%t0,%s0\n\texts.w\t%f0\n\texts.l\t%S0";
+	      info->cc_special = OLD_CC_SET_ZNV;
+	      goto end;
+	    }
+	}
+      else if (count >= 24 && count <= 27)
 	{
 	  info->remainder = count - 24;
 
@@ -3810,11 +3879,11 @@ get_shift_alg (enum shift_type shift_type, enum shift_mode shift_mode,
 	      goto end;
 	    case SHIFT_LSHIFTRT:
 	      info->special = "mov.w\t%e0,%f0\n\tmov.b\t%t0,%s0\n\textu.w\t%f0\n\textu.l\t%S0";
-	      info->cc_special = CC_SET_ZNV;
+	      info->cc_special = OLD_CC_SET_ZNV;
 	      goto end;
 	    case SHIFT_ASHIFTRT:
 	      info->special = "mov.w\t%e0,%f0\n\tmov.b\t%t0,%s0\n\texts.w\t%f0\n\texts.l\t%S0";
-	      info->cc_special = CC_SET_ZNV;
+	      info->cc_special = OLD_CC_SET_ZNV;
 	      goto end;
 	    }
 	}
@@ -3832,13 +3901,16 @@ get_shift_alg (enum shift_type shift_type, enum shift_mode shift_mode,
 	      if (TARGET_H8300H)
 		{
 		  info->special = "sub.w\t%f0,%f0\n\trotl.l\t%S0\n\trotl.l\t%S0\n\trotl.l\t%S0\n\trotl.l\t%S0\n\textu.l\t%S0";
-		  info->cc_special = CC_SET_ZNV;
+		  info->cc_special = OLD_CC_SET_ZNV;
 		}
 	      else
 		info->special = "sub.w\t%f0,%f0\n\trotl.l\t#2,%S0\n\trotl.l\t#2,%S0\n\textu.l\t%S0";
 	      goto end;
 	    case SHIFT_ASHIFTRT:
-	      gcc_unreachable ();
+	      info->remainder = count - 24;
+	      info->special = "mov.w\t%e0,%f0\n\tmov.b\t%t0,%s0\n\texts.w\t%f0\n\texts.l\t%S0";
+	      info->cc_special = OLD_CC_SET_ZNV;
+	      goto end;
 	    }
 	}
       else if (count == 29)
@@ -3855,16 +3927,19 @@ get_shift_alg (enum shift_type shift_type, enum shift_mode shift_mode,
 	      if (TARGET_H8300H)
 		{
 		  info->special = "sub.w\t%f0,%f0\n\trotl.l\t%S0\n\trotl.l\t%S0\n\trotl.l\t%S0\n\textu.l\t%S0";
-		  info->cc_special = CC_SET_ZNV;
+		  info->cc_special = OLD_CC_SET_ZNV;
 		}
 	      else
 		{
 		  info->special = "sub.w\t%f0,%f0\n\trotl.l\t#2,%S0\n\trotl.l\t%S0\n\textu.l\t%S0";
-		  info->cc_special = CC_SET_ZNV;
+		  info->cc_special = OLD_CC_SET_ZNV;
 		}
 	      goto end;
 	    case SHIFT_ASHIFTRT:
-	      gcc_unreachable ();
+	      info->remainder = count - 24;
+	      info->special = "mov.w\t%e0,%f0\n\tmov.b\t%t0,%s0\n\texts.w\t%f0\n\texts.l\t%S0";
+	      info->cc_special = OLD_CC_SET_ZNV;
+	      goto end;
 	    }
 	}
       else if (count == 30)
@@ -3884,7 +3959,10 @@ get_shift_alg (enum shift_type shift_type, enum shift_mode shift_mode,
 		info->special = "sub.w\t%f0,%f0\n\trotl.l\t#2,%S0\n\textu.l\t%S0";
 	      goto end;
 	    case SHIFT_ASHIFTRT:
-	      gcc_unreachable ();
+	      info->remainder = count - 24;
+	      info->special = "mov.w\t%e0,%f0\n\tmov.b\t%t0,%s0\n\texts.w\t%f0\n\texts.l\t%S0";
+	      info->cc_special = OLD_CC_SET_ZNV;
+	      goto end;
 	    }
 	}
       else if (count == 31)
@@ -3893,15 +3971,15 @@ get_shift_alg (enum shift_type shift_type, enum shift_mode shift_mode,
 	    {
 	    case SHIFT_ASHIFT:
 	      info->special = "shlr.l\t%S0\n\txor.l\t%S0,%S0\n\trotxr.l\t%S0";
-	      info->cc_special = CC_SET_ZNV;
+	      info->cc_special = OLD_CC_SET_ZNV;
 	      goto end;
 	    case SHIFT_LSHIFTRT:
 	      info->special = "shll.l\t%S0\n\txor.l\t%S0,%S0\n\trotxl.l\t%S0";
-	      info->cc_special = CC_SET_ZNV;
+	      info->cc_special = OLD_CC_SET_ZNV;
 	      goto end;
 	    case SHIFT_ASHIFTRT:
 	      info->special = "shll\t%e0\n\tsubx\t%w0,%w0\n\texts.w\t%T0\n\texts.l\t%S0";
-	      info->cc_special = CC_SET_ZNV;
+	      info->cc_special = OLD_CC_SET_ZNV;
 	      goto end;
 	    }
 	}
@@ -3920,7 +3998,7 @@ get_shift_alg (enum shift_type shift_type, enum shift_mode shift_mode,
    needed for some shift with COUNT and MODE.  Return 0 otherwise.  */
 
 int
-h8300_shift_needs_scratch_p (int count, machine_mode mode)
+h8300_shift_needs_scratch_p (int count, machine_mode mode, enum rtx_code type)
 {
   enum h8_cpu cpu;
   int a, lr, ar;
@@ -3960,19 +4038,28 @@ h8300_shift_needs_scratch_p (int count, machine_mode mode)
     }
 
   /* On H8/300H, count == 8 uses a scratch register.  */
-  return (a == SHIFT_LOOP || lr == SHIFT_LOOP || ar == SHIFT_LOOP
-	  || (TARGET_H8300H && mode == SImode && count == 8));
+  if (type == CLOBBER)
+    return (a == SHIFT_LOOP || lr == SHIFT_LOOP || ar == SHIFT_LOOP
+	    || (TARGET_H8300H && mode == SImode && count == 8));
+  else if (type == ASHIFT)
+    return (a == SHIFT_LOOP
+	    || (TARGET_H8300H && mode == SImode && count == 8));
+  else if (type == LSHIFTRT)
+    return (lr == SHIFT_LOOP
+	    || (TARGET_H8300H && mode == SImode && count == 8));
+  else if (type == ASHIFTRT)
+    return (ar == SHIFT_LOOP
+	    || (TARGET_H8300H && mode == SImode && count == 8));
+  gcc_unreachable ();
 }
 
 /* Output the assembler code for doing shifts.  */
 
 const char *
-output_a_shift (rtx *operands)
+output_a_shift (rtx operands[4], rtx_code code)
 {
   static int loopend_lab;
-  rtx shift = operands[3];
-  machine_mode mode = GET_MODE (shift);
-  enum rtx_code code = GET_CODE (shift);
+  machine_mode mode = GET_MODE (operands[0]);
   enum shift_type shift_type;
   enum shift_mode shift_mode;
   struct shift_info info;
@@ -4096,10 +4183,10 @@ output_a_shift (rtx *operands)
       if (info.shift2 != NULL)
 	{
 	  fprintf (asm_out_file, "\tmov.b	#%d,%sl\n", n / 2,
-		   names_big[REGNO (operands[4])]);
+		   names_big[REGNO (operands[3])]);
 	  fprintf (asm_out_file, ".Llt%d:\n", loopend_lab);
 	  output_asm_insn (info.shift2, operands);
-	  output_asm_insn ("add	#0xff,%X4", operands);
+	  output_asm_insn ("add	#0xff,%X3", operands);
 	  fprintf (asm_out_file, "\tbne	.Llt%d\n", loopend_lab);
 	  if (n % 2)
 	    output_asm_insn (info.shift1, operands);
@@ -4107,10 +4194,10 @@ output_a_shift (rtx *operands)
       else
 	{
 	  fprintf (asm_out_file, "\tmov.b	#%d,%sl\n", n,
-		   names_big[REGNO (operands[4])]);
+		   names_big[REGNO (operands[3])]);
 	  fprintf (asm_out_file, ".Llt%d:\n", loopend_lab);
 	  output_asm_insn (info.shift1, operands);
-	  output_asm_insn ("add	#0xff,%X4", operands);
+	  output_asm_insn ("add	#0xff,%X3", operands);
 	  fprintf (asm_out_file, "\tbne	.Llt%d\n", loopend_lab);
 	}
       return "";
@@ -4137,11 +4224,9 @@ h8300_asm_insn_count (const char *templ)
 /* Compute the length of a shift insn.  */
 
 unsigned int
-compute_a_shift_length (rtx insn ATTRIBUTE_UNUSED, rtx *operands)
+compute_a_shift_length (rtx operands[3], rtx_code code)
 {
-  rtx shift = operands[3];
-  machine_mode mode = GET_MODE (shift);
-  enum rtx_code code = GET_CODE (shift);
+  enum machine_mode mode = GET_MODE (operands[0]);
   enum shift_type shift_type;
   enum shift_mode shift_mode;
   struct shift_info info;
@@ -4283,12 +4368,10 @@ compute_a_shift_length (rtx insn ATTRIBUTE_UNUSED, rtx *operands)
 
 /* Compute which flag bits are valid after a shift insn.  */
 
-enum attr_cc
-compute_a_shift_cc (rtx insn ATTRIBUTE_UNUSED, rtx *operands)
+int
+compute_a_shift_cc (rtx operands[3], rtx_code code)
 {
-  rtx shift = operands[3];
-  machine_mode mode = GET_MODE (shift);
-  enum rtx_code code = GET_CODE (shift);
+  machine_mode mode = GET_MODE (operands[0]);
   enum shift_type shift_type;
   enum shift_mode shift_mode;
   struct shift_info info;
@@ -4345,16 +4428,18 @@ compute_a_shift_cc (rtx insn ATTRIBUTE_UNUSED, rtx *operands)
     {
     case SHIFT_SPECIAL:
       if (info.remainder == 0)
-	return info.cc_special;
+	return (info.cc_special == OLD_CC_SET_ZN
+		|| info.cc_special == OLD_CC_SET_ZNV);
 
       /* Fall through.  */
 
     case SHIFT_INLINE:
-      return info.cc_inline;
+      return (info.cc_inline == OLD_CC_SET_ZN
+	      || info.cc_inline == OLD_CC_SET_ZNV);
       
     case SHIFT_ROT_AND:
       /* This case always ends with an and instruction.  */
-      return CC_SET_ZNV;
+      return true;
       
     case SHIFT_LOOP:
       /* A loop to shift by a "large" constant value.
@@ -4362,9 +4447,11 @@ compute_a_shift_cc (rtx insn ATTRIBUTE_UNUSED, rtx *operands)
       if (info.shift2 != NULL)
 	{
 	  if (n % 2)
-	    return info.cc_inline;
+	    return (info.cc_inline == OLD_CC_SET_ZN
+		    || info.cc_inline == OLD_CC_SET_ZNV);
+		
 	}
-      return CC_CLOBBER;
+      return false;
       
     default:
       gcc_unreachable ();
@@ -5425,6 +5512,25 @@ h8300_push_rounding (poly_int64 bytes)
 {
   return ((bytes + PARM_BOUNDARY / 8 - 1) & (-PARM_BOUNDARY / 8));
 }
+
+static bool
+h8300_ok_for_sibcall_p (tree fndecl, tree)
+{
+  /* If either the caller or target are special, then assume sibling
+     calls are not OK.  */
+  if (!fndecl
+      || h8300_os_task_function_p (fndecl)
+      || h8300_monitor_function_p (fndecl)
+      || h8300_interrupt_function_p (fndecl)
+      || h8300_saveall_function_p (fndecl)
+      || h8300_os_task_function_p (current_function_decl)
+      || h8300_monitor_function_p (current_function_decl)
+      || h8300_interrupt_function_p (current_function_decl)
+      || h8300_saveall_function_p (current_function_decl))
+    return false;
+
+  return 1;
+}
 
 /* Initialize the GCC target structure.  */
 #undef TARGET_ATTRIBUTE_TABLE
@@ -5516,5 +5622,11 @@ h8300_push_rounding (poly_int64 bytes)
 
 #undef TARGET_HAVE_SPECULATION_SAFE_VALUE
 #define TARGET_HAVE_SPECULATION_SAFE_VALUE speculation_safe_value_not_needed
+
+#undef TARGET_FLAGS_REGNUM
+#define TARGET_FLAGS_REGNUM 12
+
+#undef TARGET_FUNCTION_OK_FOR_SIBCALL
+#define TARGET_FUNCTION_OK_FOR_SIBCALL h8300_ok_for_sibcall_p
 
 struct gcc_target targetm = TARGET_INITIALIZER;

@@ -38,6 +38,7 @@ import (
 //go:linkname goPanicSlice3BU
 //go:linkname goPanicSlice3C
 //go:linkname goPanicSlice3CU
+//go:linkname goPanicSliceConvert
 //go:linkname panicshift
 //go:linkname panicdivide
 //go:linkname panicmem
@@ -175,6 +176,12 @@ func goPanicSlice3CU(x uint, y int) {
 	panic(boundsError{x: int64(x), signed: false, y: y, code: boundsSlice3C})
 }
 
+// failures in the conversion (*[x]T)s, 0 <= x <= y, x == cap(s)
+func goPanicSliceConvert(x int, y int) {
+	panicCheck1(getcallerpc(), "slice length too short to convert to pointer to array")
+	panic(boundsError{x: int64(x), signed: true, y: y, code: boundsConvert})
+}
+
 var shiftError = error(errorString("negative shift amount"))
 
 func panicshift() {
@@ -208,6 +215,11 @@ var memoryError = error(errorString("invalid memory address or nil pointer deref
 func panicmem() {
 	panicCheck2("invalid memory address or nil pointer dereference")
 	panic(memoryError)
+}
+
+func panicmemAddr(addr uintptr) {
+	panicCheck2("invalid memory address or nil pointer dereference")
+	panic(errorAddressString{msg: "invalid memory address or nil pointer dereference", addr: addr})
 }
 
 // deferproc creates a new deferred function.
@@ -292,15 +304,6 @@ func newdefer() *_defer {
 		systemstack(func() {
 			d = new(_defer)
 		})
-		if debugCachedWork {
-			// Duplicate the tail below so if there's a
-			// crash in checkPut we can tell if d was just
-			// allocated or came from the pool.
-			d.heap = true
-			d.link = gp._defer
-			gp._defer = d
-			return d
-		}
 	}
 	d.heap = true
 	return d
@@ -1176,12 +1179,6 @@ func startpanic_m() bool {
 	}
 }
 
-// throwReportQuirk, if non-nil, is called by throw after dumping the stacks.
-//
-// TODO(austin): Remove this after Go 1.15 when we remove the
-// mlockGsignal workaround.
-var throwReportQuirk func()
-
 var didothers bool
 var deadlock mutex
 
@@ -1227,10 +1224,6 @@ func dopanic_m(gp *g, pc, sp uintptr) bool {
 	}
 
 	printDebugLog()
-
-	if throwReportQuirk != nil {
-		throwReportQuirk()
-	}
 
 	return docrash
 }

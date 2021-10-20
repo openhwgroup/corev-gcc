@@ -1,4 +1,4 @@
-// Copyright (C) 2020 Free Software Foundation, Inc.
+// Copyright (C) 2020-2021 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -70,10 +70,38 @@ test03()
   b = ranges::end(v);
 }
 
+void
+test04()
+{
+  // LWG 3450
+  auto v = views::single(1) | views::take_while([](int& x) { return true;});
+  static_assert(ranges::range<decltype(v)>);
+  static_assert(!ranges::range<decltype(v) const>);
+}
+
+template<auto take_while = views::take_while>
+void
+test05()
+{
+  // Verify SFINAE behavior.
+  extern int x[5];
+  auto p = [] (int*) { return true; };
+  static_assert(!requires { take_while(); });
+  static_assert(!requires { take_while(x, p, p); });
+  static_assert(!requires { take_while(x, p); });
+  static_assert(!requires { take_while(p)(x); });
+  static_assert(!requires { x | (take_while(p) | views::all); });
+  static_assert(!requires { (take_while(p) | views::all)(x); });
+  static_assert(!requires { take_while | views::all; });
+  static_assert(!requires { views::all | take_while; });
+}
+
 int
 main()
 {
   test01();
   test02();
   test03();
+  test04();
+  test05();
 }

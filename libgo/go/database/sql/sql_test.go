@@ -431,25 +431,24 @@ func TestTxContextWait(t *testing.T) {
 	db := newTestDB(t, "people")
 	defer closeDB(t, db)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Millisecond)
-	defer cancel()
+	ctx, cancel := context.WithCancel(context.Background())
 
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
-		// Guard against the context being canceled before BeginTx completes.
-		if err == context.DeadlineExceeded {
-			t.Skip("tx context canceled prior to first use")
-		}
 		t.Fatal(err)
 	}
 	tx.keepConnOnRollback = false
 
+	go func() {
+		time.Sleep(15 * time.Millisecond)
+		cancel()
+	}()
 	// This will trigger the *fakeConn.Prepare method which will take time
 	// performing the query. The ctxDriverPrepare func will check the context
 	// after this and close the rows and return an error.
 	_, err = tx.QueryContext(ctx, "WAIT|1s|SELECT|people|age,name|")
-	if err != context.DeadlineExceeded {
-		t.Fatalf("expected QueryContext to error with context deadline exceeded but returned %v", err)
+	if err != context.Canceled {
+		t.Fatalf("expected QueryContext to error with context canceled but returned %v", err)
 	}
 
 	waitForFree(t, db, 5*time.Second, 0)
@@ -657,7 +656,7 @@ func TestPoolExhaustOnCancel(t *testing.T) {
 	db.SetMaxOpenConns(max)
 
 	// First saturate the connection pool.
-	// Then start new requests for a connection that is cancelled after it is requested.
+	// Then start new requests for a connection that is canceled after it is requested.
 
 	state = 1
 	for i := 0; i < max; i++ {
@@ -1820,6 +1819,30 @@ func TestNullInt32Param(t *testing.T) {
 	nullTestRun(t, spec)
 }
 
+func TestNullInt16Param(t *testing.T) {
+	spec := nullTestSpec{"nullint16", "int16", [6]nullTestRow{
+		{NullInt16{31, true}, 1, NullInt16{31, true}},
+		{NullInt16{-22, false}, 1, NullInt16{0, false}},
+		{22, 1, NullInt16{22, true}},
+		{NullInt16{33, true}, 1, NullInt16{33, true}},
+		{NullInt16{222, false}, 1, NullInt16{0, false}},
+		{0, NullInt16{31, false}, nil},
+	}}
+	nullTestRun(t, spec)
+}
+
+func TestNullByteParam(t *testing.T) {
+	spec := nullTestSpec{"nullbyte", "byte", [6]nullTestRow{
+		{NullByte{31, true}, 1, NullByte{31, true}},
+		{NullByte{0, false}, 1, NullByte{0, false}},
+		{22, 1, NullByte{22, true}},
+		{NullByte{33, true}, 1, NullByte{33, true}},
+		{NullByte{222, false}, 1, NullByte{0, false}},
+		{0, NullByte{31, false}, nil},
+	}}
+	nullTestRun(t, spec)
+}
+
 func TestNullFloat64Param(t *testing.T) {
 	spec := nullTestSpec{"nullfloat64", "float64", [6]nullTestRow{
 		{NullFloat64{31.2, true}, 1, NullFloat64{31.2, true}},
@@ -2785,7 +2808,7 @@ func TestTxCannotCommitAfterRollback(t *testing.T) {
 	// 3. Check if 2.A has committed in Tx (pass) or outside of Tx (fail).
 	sendQuery := make(chan struct{})
 	// The Tx status is returned through the row results, ensure
-	// that the rows results are not cancelled.
+	// that the rows results are not canceled.
 	bypassRowsAwaitDone = true
 	hookTxGrabConn = func() {
 		cancel()
@@ -2808,6 +2831,35 @@ func TestTxCannotCommitAfterRollback(t *testing.T) {
 	if g, w := txStatus, "transaction"; g != w {
 		t.Fatalf("tx_status=%q, wanted %q", g, w)
 	}
+}
+
+// Issue 40985 transaction statement deadlock while context cancel.
+func TestTxStmtDeadlock(t *testing.T) {
+	db := newTestDB(t, "people")
+	defer closeDB(t, db)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	stmt, err := tx.Prepare("SELECT|people|name,age|age=?")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	// Run number of stmt queries to reproduce deadlock from context cancel
+	for i := 0; i < 1e3; i++ {
+		// Encounter any close related errors (e.g. ErrTxDone, stmt is closed)
+		// is expected due to context cancel.
+		_, err = stmt.Query(1)
+		if err != nil {
+			break
+		}
+	}
+	_ = tx.Rollback()
 }
 
 // Issue32530 encounters an issue where a connection may
@@ -2860,20 +2912,26 @@ func TestConnExpiresFreshOutOfPool(t *testing.T) {
 			waitingForConn := make(chan struct{})
 
 			go func() {
+				defer close(afterPutConn)
+
 				conn, err := db.conn(ctx, alwaysNewConn)
-				if err != nil {
-					t.Fatal(err)
+				if err == nil {
+					db.putConn(conn, err, false)
+				} else {
+					t.Errorf("db.conn: %v", err)
 				}
-				db.putConn(conn, err, false)
-				close(afterPutConn)
 			}()
 			go func() {
+				defer close(waitingForConn)
+
 				for {
+					if t.Failed() {
+						return
+					}
 					db.mu.Lock()
 					ct := len(db.connRequests)
 					db.mu.Unlock()
 					if ct > 0 {
-						close(waitingForConn)
 						return
 					}
 					time.Sleep(10 * time.Millisecond)
@@ -2881,6 +2939,10 @@ func TestConnExpiresFreshOutOfPool(t *testing.T) {
 			}()
 
 			<-waitingForConn
+
+			if t.Failed() {
+				return
+			}
 
 			offsetMu.Lock()
 			if ec.expired {
@@ -4022,8 +4084,17 @@ func TestOpenConnector(t *testing.T) {
 	}
 	defer db.Close()
 
-	if _, is := db.connector.(*fakeConnector); !is {
+	c, ok := db.connector.(*fakeConnector)
+	if !ok {
 		t.Fatal("not using *fakeConnector")
+	}
+
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if !c.closed {
+		t.Fatal("connector is not closed")
 	}
 }
 
@@ -4146,6 +4217,41 @@ func TestQueryExecContextOnly(t *testing.T) {
 	}
 	if !coc.queryCtxCalled {
 		t.Error("QueryContext not called")
+	}
+}
+
+type alwaysErrScanner struct{}
+
+var errTestScanWrap = errors.New("errTestScanWrap")
+
+func (alwaysErrScanner) Scan(interface{}) error {
+	return errTestScanWrap
+}
+
+// Issue 38099: Ensure that Rows.Scan properly wraps underlying errors.
+func TestRowsScanProperlyWrapsErrors(t *testing.T) {
+	db := newTestDB(t, "people")
+	defer closeDB(t, db)
+
+	rows, err := db.Query("SELECT|people|age|")
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+
+	var res alwaysErrScanner
+
+	for rows.Next() {
+		err = rows.Scan(&res)
+		if err == nil {
+			t.Fatal("expecting back an error")
+		}
+		if !errors.Is(err, errTestScanWrap) {
+			t.Fatalf("errors.Is mismatch\n%v\nWant: %v", err, errTestScanWrap)
+		}
+		// Ensure that error substring matching still correctly works.
+		if !strings.Contains(err.Error(), errTestScanWrap.Error()) {
+			t.Fatalf("Error %v does not contain %v", err, errTestScanWrap)
+		}
 	}
 }
 

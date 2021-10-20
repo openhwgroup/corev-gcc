@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2020 Free Software Foundation, Inc.
+// Copyright (C) 2019-2021 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -19,6 +19,10 @@
 // { dg-do compile { target c++2a } }
 
 #include <concepts>
+#include <testsuite_hooks.h>
+#include <testsuite_iterators.h>
+
+static_assert(__gnu_test::is_customization_point_object(std::ranges::swap));
 
 namespace nu
 {
@@ -30,7 +34,7 @@ namespace nu
   constexpr void swap(U& l, U& r) { l.i = r.i = 99; }
 }
 
-constexpr bool check_struct_with_adl_swap(int i)
+constexpr bool check_struct_with_adl_swap(int)
 {
   nu::S s1, s2;
   std::ranges::swap(s1, s2);
@@ -39,7 +43,7 @@ constexpr bool check_struct_with_adl_swap(int i)
 
 static_assert(check_struct_with_adl_swap(1));
 
-constexpr bool check_array_with_adl_swap(int i)
+constexpr bool check_array_with_adl_swap(int)
 {
   nu::S s1[2], s2[2];
   std::ranges::swap(s1, s2);

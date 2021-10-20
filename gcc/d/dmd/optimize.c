@@ -1,6 +1,6 @@
 
 /* Compiler implementation of the D programming language
- * Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved
+ * Copyright (C) 1999-2021 by The D Language Foundation, All Rights Reserved
  * written by Walter Bright
  * http://www.digitalmars.com
  * Distributed under the Boost Software License, Version 1.0
@@ -19,8 +19,7 @@
 #include "init.h"
 #include "enum.h"
 #include "ctfe.h"
-
-Expression *semantic(Expression *e, Scope *sc);
+#include "errors.h"
 
 /*************************************
  * If variable has a const initializer,
@@ -35,7 +34,7 @@ Expression *expandVar(int result, VarDeclaration *v)
     if (!v)
         return e;
     if (!v->originalType && v->semanticRun < PASSsemanticdone) // semantic() not yet run
-        v->semantic(NULL);
+        dsymbolSemantic(v, NULL);
 
     if (v->isConst() || v->isImmutable() || v->storage_class & STCmanifest)
     {
@@ -96,7 +95,7 @@ Expression *expandVar(int result, VarDeclaration *v)
                     {
                         // const var initialized with non-const expression
                         ei = ei->implicitCastTo(NULL, v->type);
-                        ei = semantic(ei, NULL);
+                        ei = expressionSemantic(ei, NULL);
                     }
                     else
                         goto L1;
@@ -1214,10 +1213,18 @@ Expression *Expression_optimize(Expression *e, int result, bool keepLvalue)
     v.ret = e;
 
     // Optimize the expression until it can no longer be simplified.
-    while (ex != v.ret)
+    size_t b = 0;
+    while (1)
     {
+        if (b++ == global.recursionLimit)
+        {
+            e->error("infinite loop while optimizing expression");
+            fatal();
+        }
         ex = v.ret;
         ex->accept(&v);
+        if (ex == v.ret)
+            break;
     }
     return ex;
 }

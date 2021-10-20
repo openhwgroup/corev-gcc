@@ -1,5 +1,5 @@
 /* Target Code for TI C6X
-   Copyright (C) 2010-2020 Free Software Foundation, Inc.
+   Copyright (C) 2010-2021 Free Software Foundation, Inc.
    Contributed by Andrew Jenner <andrew@codesourcery.com>
    Contributed by Bernd Schmidt <bernds@codesourcery.com>
 
@@ -59,6 +59,8 @@
 #include "regrename.h"
 #include "dumpfile.h"
 #include "builtins.h"
+#include "flags.h"
+#include "opts.h"
 
 /* This file should be included last.  */
 #include "target-def.h"
@@ -220,7 +222,7 @@ c6x_option_override (void)
 {
   unsigned i;
 
-  if (global_options_set.x_c6x_arch_option)
+  if (OPTION_SET_P (c6x_arch_option))
     {
       c6x_arch = all_isas[c6x_arch_option].type;
       c6x_insn_mask &= ~C6X_INSNS_ALL_CPU_BITS;
@@ -439,8 +441,7 @@ c6x_output_file_unwind (FILE * f)
     {
       if (flag_unwind_tables || flag_exceptions)
 	{
-	  if (write_symbols == DWARF2_DEBUG
-	      || write_symbols == VMS_AND_DWARF2_DEBUG)
+	  if (dwarf_debuginfo_p ())
 	    asm_fprintf (f, "\t.cfi_sections .debug_frame, .c6xabi.exidx\n");
 	  else
 	    asm_fprintf (f, "\t.cfi_sections .c6xabi.exidx\n");
@@ -725,9 +726,10 @@ c6x_initialize_trampoline (rtx tramp, tree fndecl, rtx cxt)
     }
 #ifdef CLEAR_INSN_CACHE
   tramp = XEXP (tramp, 0);
-  emit_library_call (gen_rtx_SYMBOL_REF (Pmode, "__gnu_clear_cache"),
-		     LCT_NORMAL, VOIDmode, tramp, Pmode,
-		     plus_constant (Pmode, tramp, TRAMPOLINE_SIZE), Pmode);
+  maybe_emit_call_builtin___clear_cache (tramp,
+					 plus_constant (Pmode,
+							tramp,
+							TRAMPOLINE_SIZE));
 #endif
 }
 
@@ -861,14 +863,14 @@ c6x_in_small_data_p (const_tree exp)
       const char *section = DECL_SECTION_NAME (exp);
 
       if (strcmp (section, ".neardata") == 0
-	  || strncmp (section, ".neardata.", 10) == 0
-	  || strncmp (section, ".gnu.linkonce.s.", 16) == 0
+	  || startswith (section, ".neardata.")
+	  || startswith (section, ".gnu.linkonce.s.")
 	  || strcmp (section, ".bss") == 0
-	  || strncmp (section, ".bss.", 5) == 0
-	  || strncmp (section, ".gnu.linkonce.sb.", 17) == 0
+	  || startswith (section, ".bss.")
+	  || startswith (section, ".gnu.linkonce.sb.")
 	  || strcmp (section, ".rodata") == 0
-	  || strncmp (section, ".rodata.", 8) == 0
-	  || strncmp (section, ".gnu.linkonce.s2.", 17) == 0)
+	  || startswith (section, ".rodata.")
+	  || startswith (section, ".gnu.linkonce.s2."))
 	return true;
     }
   else
@@ -1062,7 +1064,7 @@ c6x_section_type_flags (tree decl, const char *name, int reloc)
   unsigned int flags = 0;
 
   if (strcmp (name, ".far") == 0
-      || strncmp (name, ".far.", 5) == 0)
+      || startswith (name, ".far."))
     flags |= SECTION_BSS;
 
   flags |= default_section_type_flags (decl, name, reloc);
@@ -3698,7 +3700,7 @@ insn_set_clock (rtx insn, int cycle)
   unsigned uid = INSN_UID (insn);
 
   if (uid >= INSN_INFO_LENGTH)
-    insn_info.safe_grow (uid * 5 / 4 + 10);
+    insn_info.safe_grow (uid * 5 / 4 + 10, true);
 
   INSN_INFO_ENTRY (uid).clock = cycle;
   INSN_INFO_ENTRY (uid).new_cond = NULL;
@@ -5600,7 +5602,8 @@ hwloop_optimize (hwloop_info loop)
       int j;
       rtx_insn *this_iter;
 
-      this_iter = duplicate_insn_chain (head_insn, tail_insn);
+      copy_bb_data id;
+      this_iter = duplicate_insn_chain (head_insn, tail_insn, NULL, &id);
       j = 0;
       while (this_iter)
 	{

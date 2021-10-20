@@ -5,7 +5,7 @@
 package os
 
 import (
-	"errors"
+	"internal/itoa"
 	"runtime"
 	"syscall"
 	"time"
@@ -34,14 +34,14 @@ func startProcess(name string, argv []string, attr *ProcAttr) (p *Process, err e
 
 	pid, h, e := syscall.StartProcess(name, argv, sysattr)
 	if e != nil {
-		return nil, &PathError{"fork/exec", name, e}
+		return nil, &PathError{Op: "fork/exec", Path: name, Err: e}
 	}
 
 	return newProcess(pid, h), nil
 }
 
 func (p *Process) writeProcFile(file string, data string) error {
-	f, e := OpenFile("/proc/"+itoa(p.Pid)+"/"+file, O_WRONLY, 0)
+	f, e := OpenFile("/proc/"+itoa.Itoa(p.Pid)+"/"+file, O_WRONLY, 0)
 	if e != nil {
 		return e
 	}
@@ -52,7 +52,7 @@ func (p *Process) writeProcFile(file string, data string) error {
 
 func (p *Process) signal(sig Signal) error {
 	if p.done() {
-		return errors.New("os: process already finished")
+		return ErrProcessDone
 	}
 	if e := p.writeProcFile("note", sig.String()); e != nil {
 		return NewSyscallError("signal", e)

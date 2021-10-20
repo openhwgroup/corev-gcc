@@ -1,6 +1,6 @@
 // class template regex -*- C++ -*-
 
-// Copyright (C) 2013-2020 Free Software Foundation, Inc.
+// Copyright (C) 2013-2021 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -63,17 +63,9 @@ namespace __detail
 {
   template<typename _TraitsT>
     _Compiler<_TraitsT>::
-    _Compiler(_IterT __b, _IterT __e,
+    _Compiler(const _CharT* __b, const _CharT* __e,
 	      const typename _TraitsT::locale_type& __loc, _FlagT __flags)
-    : _M_flags((__flags
-		& (regex_constants::ECMAScript
-		   | regex_constants::basic
-		   | regex_constants::extended
-		   | regex_constants::grep
-		   | regex_constants::egrep
-		   | regex_constants::awk))
-	       ? __flags
-	       : __flags | regex_constants::ECMAScript),
+    : _M_flags(_S_validate(__flags)),
       _M_scanner(__b, __e, _M_flags, __loc),
       _M_nfa(make_shared<_RegexT>(__loc, _M_flags)),
       _M_traits(_M_nfa->_M_traits),
@@ -140,7 +132,8 @@ namespace __detail
 	return true;
       if (this->_M_atom())
 	{
-	  while (this->_M_quantifier());
+	  while (this->_M_quantifier())
+	    ;
 	  return true;
 	}
       return false;
@@ -233,16 +226,16 @@ namespace __detail
 	  _StateSeqT __e(*_M_nfa, _M_nfa->_M_insert_dummy());
 	  long __min_rep = _M_cur_int_value(10);
 	  bool __infi = false;
-	  long __n;
+	  long __n = 0;
 
 	  // {3
 	  if (_M_match_token(_ScannerT::_S_token_comma))
-	    if (_M_match_token(_ScannerT::_S_token_dup_count)) // {3,7}
-	      __n = _M_cur_int_value(10) - __min_rep;
-	    else
-	      __infi = true;
-	  else
-	    __n = 0;
+	    {
+	      if (_M_match_token(_ScannerT::_S_token_dup_count)) // {3,7}
+		__n = _M_cur_int_value(10) - __min_rep;
+	      else
+		__infi = true;
+	    }
 	  if (!_M_match_token(_ScannerT::_S_token_interval_end))
 	    __throw_regex_error(regex_constants::error_brace,
 				"Unexpected end of brace expression.");
@@ -440,7 +433,8 @@ namespace __detail
 	      __last_char.second = '-';
 	    }
 	}
-      while (_M_expression_term(__last_char, __matcher));
+      while (_M_expression_term(__last_char, __matcher))
+	;
       if (__last_char.first)
 	__matcher._M_add_char(__last_char.second);
       __matcher._M_ready();

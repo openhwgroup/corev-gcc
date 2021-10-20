@@ -62,17 +62,17 @@ class TestGccChangelog(unittest.TestCase):
             assert t.endswith('.patch')
             os.remove(t)
 
-    def get_git_email(self, filename, strict=False):
+    def get_git_email(self, filename):
         with tempfile.NamedTemporaryFile(mode='w+', suffix='.patch',
                                          delete=False) as f:
             f.write('\n'.join(self.patches[filename]))
             self.temps.append(f.name)
-        return GitEmail(f.name, strict)
+        return GitEmail(f.name)
 
-    def from_patch_glob(self, name, strict=False):
+    def from_patch_glob(self, name):
         files = [f for f in self.patches.keys() if f.startswith(name)]
         assert len(files) == 1
-        return self.get_git_email(files[0], strict)
+        return self.get_git_email(files[0])
 
     def test_simple_patch_format(self):
         email = self.get_git_email('0577-aarch64-Add-an-and.patch')
@@ -113,7 +113,9 @@ class TestGccChangelog(unittest.TestCase):
         email = self.from_patch_glob('0096')
         assert email.errors
         err = email.errors[0]
-        assert err.message == 'unchanged file mentioned in a ChangeLog'
+        assert err.message == 'unchanged file mentioned in a ChangeLog (did ' \
+            'you mean "gcc/testsuite/gcc.target/aarch64/' \
+            'advsimd-intrinsics/vdot-3-1.c"?)'
         assert err.line == 'gcc/testsuite/gcc.target/aarch64/' \
                            'advsimd-intrinsics/vdot-compile-3-1.c'
 
@@ -245,7 +247,7 @@ class TestGccChangelog(unittest.TestCase):
         assert email.changelog_entries[1].prs == []
 
     def test_multiple_prs_not_added(self):
-        email = self.from_patch_glob('0001-Add-patch_are')
+        email = self.from_patch_glob('0002-Add-patch_are')
         assert not email.errors
         assert email.changelog_entries[0].prs == ['PR target/93492']
         assert email.changelog_entries[1].prs == ['PR target/12345']
@@ -253,18 +255,17 @@ class TestGccChangelog(unittest.TestCase):
         assert email.changelog_entries[2].folder == 'gcc/testsuite'
 
     def test_strict_mode(self):
-        email = self.from_patch_glob('0001-Add-patch_are',
-                                     True)
+        email = self.from_patch_glob('0001-Add-patch_are')
         msg = 'ChangeLog, DATESTAMP, BASE-VER and DEV-PHASE updates should ' \
               'be done separately from normal commits'
-        assert email.errors[0].message == msg
+        assert email.errors[0].message.startswith(msg)
 
     def test_strict_mode_normal_patch(self):
-        email = self.get_git_email('0001-Just-test-it.patch', True)
+        email = self.get_git_email('0001-Just-test-it.patch')
         assert not email.errors
 
     def test_strict_mode_datestamp_only(self):
-        email = self.get_git_email('0002-Bump-date.patch', True)
+        email = self.get_git_email('0002-Bump-date.patch')
         assert not email.errors
 
     def test_wrong_changelog_entry(self):
@@ -333,7 +334,7 @@ class TestGccChangelog(unittest.TestCase):
         assert not email.errors
         email = self.from_patch_glob('0002-libstdc-Fake-test-change-1.patch')
         assert len(email.errors) == 1
-        msg = 'pattern doesn''t match any changed files'
+        msg = "pattern doesn't match any changed files"
         assert email.errors[0].message == msg
         assert email.errors[0].line == 'libstdc++-v3/doc/html/'
         email = self.from_patch_glob('0003-libstdc-Fake-test-change-2.patch')
@@ -355,6 +356,8 @@ class TestGccChangelog(unittest.TestCase):
     def test_backport(self):
         email = self.from_patch_glob('0001-asan-fix-RTX-emission.patch')
         assert not email.errors
+        expected_hash = '8cff672cb9a132d3d3158c2edfc9a64b55292b80'
+        assert email.cherry_pick_commit == expected_hash
         assert len(email.changelog_entries) == 1
         entry = list(email.to_changelog_entries())[0][1]
         assert entry.startswith('2020-06-11  Martin Liska  <mliska@suse.cz>')
@@ -362,6 +365,84 @@ class TestGccChangelog(unittest.TestCase):
         assert '\t2020-06-11  Martin Liska  <mliska@suse.cz>' in entry
         assert '\t\t    Jakub Jelinek  <jakub@redhat.com>' in entry
 
+    def test_backport_double_cherry_pick(self):
+        email = self.from_patch_glob('double-cherry-pick.patch')
+        assert email.errors[0].message.startswith('multiple cherry pick lines')
+
     def test_square_and_lt_gt(self):
         email = self.from_patch_glob('0001-Check-for-more-missing')
         assert not email.errors
+
+    def test_empty_parenthesis(self):
+        email = self.from_patch_glob('0001-tree-optimization-97633-fix')
+        assert len(email.errors) == 1
+        assert email.errors[0].message == 'empty group "()" found'
+
+    def test_emptry_entry_desc(self):
+        email = self.from_patch_glob('0001-c-Set-CALL_FROM_NEW_OR')
+        assert len(email.errors) == 1
+        assert email.errors[0].message == 'missing description of a change'
+
+    def test_emptry_entry_desc_2(self):
+        email = self.from_patch_glob('0001-lto-fix-LTO-debug')
+        assert not email.errors
+        assert len(email.changelog_entries) == 1
+
+    def test_wildcard_in_subdir(self):
+        email = self.from_patch_glob('0001-Wildcard-subdirs.patch')
+        assert len(email.changelog_entries) == 1
+        err = email.errors[0]
+        assert err.message == "pattern doesn't match any changed files"
+        assert err.line == 'libstdc++-v3/testsuite/28_regex_not-existing/'
+
+    def test_unicode_chars_in_filename(self):
+        email = self.from_patch_glob('0001-Add-horse.patch')
+        assert not email.errors
+
+    def test_bad_unicode_chars_in_filename(self):
+        email = self.from_patch_glob('0001-Add-horse2.patch')
+        assert not email.errors
+        assert email.changelog_entries[0].files == ['koníček.txt']
+
+    def test_modification_of_old_changelog(self):
+        email = self.from_patch_glob('0001-fix-old-ChangeLog.patch')
+        assert not email.errors
+
+    def test_multiline_parentheses(self):
+        email = self.from_patch_glob('0001-Add-macro.patch')
+        assert not email.errors
+
+    def test_multiline_bad_parentheses(self):
+        email = self.from_patch_glob('0002-Wrong-macro-changelog.patch')
+        assert email.errors[0].message == 'bad parentheses wrapping'
+        assert email.errors[0].line == '	* config/i386/i386.md (*fix_trunc<mode>_i387_1,'
+
+    def test_changelog_removal(self):
+        email = self.from_patch_glob('0001-ChangeLog-removal.patch')
+        assert not email.errors
+
+    def test_long_filenames(self):
+        email = self.from_patch_glob('0001-long-filenames')
+        assert not email.errors
+
+    def test_multi_same_file(self):
+        email = self.from_patch_glob('0001-OpenMP-Fix-SIMT')
+        assert email.errors[0].message == 'same file specified multiple times'
+
+    def test_pr_only_in_subject(self):
+        email = self.from_patch_glob('0001-rs6000-Support-doubleword')
+        assert (email.errors[0].message ==
+                'PR 100085 in subject but not in changelog')
+
+    def test_wrong_pr_comp_in_subject(self):
+        email = self.from_patch_glob('pr-wrong-comp.patch')
+        assert email.errors[0].message == 'invalid PR component in subject'
+
+    def test_copyright_years(self):
+        email = self.from_patch_glob('copyright-years.patch')
+        assert not email.errors
+
+    def test_non_ascii_email(self):
+        email = self.from_patch_glob('non-ascii-email.patch')
+        assert (email.errors[0].message ==
+                'non-ASCII characters in git commit email address (jbglaw@ług-owl.de)')

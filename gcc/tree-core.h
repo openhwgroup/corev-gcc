@@ -1,5 +1,5 @@
 /* Core data structures for the 'tree' type.
-   Copyright (C) 1989-2020 Free Software Foundation, Inc.
+   Copyright (C) 1989-2021 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -109,6 +109,16 @@ struct die_struct;
 
 /* Nonzero if the argument is not used by the function.  */
 #define EAF_UNUSED		(1 << 3)
+
+/* Nonzero if the argument itself does not escape but memory
+   referenced by it can escape.  */
+#define EAF_NODIRECTESCAPE	(1 << 4)
+
+/* Nonzero if the argument does not escape to return value.  */
+#define EAF_NOT_RETURNED	(1 << 5)
+
+/* Nonzero if the argument is not read.  */
+#define EAF_NOREAD		(1 << 6)
 
 /* Call return flags.  */
 /* Mask for the argument number that is returned.  Lower two bits of
@@ -273,8 +283,14 @@ enum omp_clause_code {
   /* OpenMP clause: linear (variable-list[:linear-step]).  */
   OMP_CLAUSE_LINEAR,
 
+  /* OpenMP clause: affinity([depend-modifier :] variable-list).  */
+  OMP_CLAUSE_AFFINITY,
+
   /* OpenMP clause: aligned (variable-list[:alignment]).  */
   OMP_CLAUSE_ALIGNED,
+
+  /* OpenMP clause: allocate ([allocator:]variable-list).  */
+  OMP_CLAUSE_ALLOCATE,
 
   /* OpenMP clause: depend ({in,out,inout}:variable-list).  */
   OMP_CLAUSE_DEPEND,
@@ -292,19 +308,8 @@ enum omp_clause_code {
   /* OpenMP clause: link (variable-list).  */
   OMP_CLAUSE_LINK,
 
-  /* OpenMP clause: from (variable-list).  */
-  OMP_CLAUSE_FROM,
-
-  /* OpenMP clause: to (variable-list).  */
-  OMP_CLAUSE_TO,
-
-  /* OpenACC clauses: {copy, copyin, copyout, create, delete, deviceptr,
-     device, host (self), present, present_or_copy (pcopy), present_or_copyin
-     (pcopyin), present_or_copyout (pcopyout), present_or_create (pcreate)}
-     (variable-list).
-
-     OpenMP clause: map ({alloc:,to:,from:,tofrom:,}variable-list).  */
-  OMP_CLAUSE_MAP,
+  /* OpenMP clause: detach (event-handle).  */
+  OMP_CLAUSE_DETACH,
 
   /* OpenACC clause: use_device (variable-list).
      OpenMP clause: use_device_ptr (ptr-list).  */
@@ -321,6 +326,20 @@ enum omp_clause_code {
 
   /* OpenMP clause: exclusive (variable-list).  */
   OMP_CLAUSE_EXCLUSIVE,
+
+  /* OpenMP clause: from (variable-list).  */
+  OMP_CLAUSE_FROM,
+
+  /* OpenMP clause: to (variable-list).  */
+  OMP_CLAUSE_TO,
+
+  /* OpenACC clauses: {copy, copyin, copyout, create, delete, deviceptr,
+     device, host (self), present, present_or_copy (pcopy), present_or_copyin
+     (pcopyin), present_or_copyout (pcopyout), present_or_create (pcreate)}
+     (variable-list).
+
+     OpenMP clause: map ({alloc:,to:,from:,tofrom:,}variable-list).  */
+  OMP_CLAUSE_MAP,
 
   /* Internal structure to hold OpenACC cache directive's variable-list.
      #pragma acc cache (variable-list).  */
@@ -460,6 +479,9 @@ enum omp_clause_code {
   /* OpenMP clause: bind (binding).  */
   OMP_CLAUSE_BIND,
 
+  /* OpenMP clause: filter (integer-expression).  */
+  OMP_CLAUSE_FILTER,
+
   /* Internally used only clause, holding SIMD uid.  */
   OMP_CLAUSE__SIMDUID_,
 
@@ -492,7 +514,10 @@ enum omp_clause_code {
   OMP_CLAUSE_IF_PRESENT,
 
   /* OpenACC clause: finalize.  */
-  OMP_CLAUSE_FINALIZE
+  OMP_CLAUSE_FINALIZE,
+
+  /* OpenACC clause: nohost.  */
+  OMP_CLAUSE_NOHOST,
 };
 
 #undef DEFTREESTRUCT
@@ -558,8 +583,17 @@ enum omp_memory_order {
   OMP_MEMORY_ORDER_ACQUIRE,
   OMP_MEMORY_ORDER_RELEASE,
   OMP_MEMORY_ORDER_ACQ_REL,
-  OMP_MEMORY_ORDER_SEQ_CST
+  OMP_MEMORY_ORDER_SEQ_CST,
+  OMP_MEMORY_ORDER_MASK = 7,
+  OMP_FAIL_MEMORY_ORDER_UNSPECIFIED = OMP_MEMORY_ORDER_UNSPECIFIED * 8,
+  OMP_FAIL_MEMORY_ORDER_RELAXED = OMP_MEMORY_ORDER_RELAXED * 8,
+  OMP_FAIL_MEMORY_ORDER_ACQUIRE = OMP_MEMORY_ORDER_ACQUIRE * 8,
+  OMP_FAIL_MEMORY_ORDER_RELEASE = OMP_MEMORY_ORDER_RELEASE * 8,
+  OMP_FAIL_MEMORY_ORDER_ACQ_REL = OMP_MEMORY_ORDER_ACQ_REL * 8,
+  OMP_FAIL_MEMORY_ORDER_SEQ_CST = OMP_MEMORY_ORDER_SEQ_CST * 8,
+  OMP_FAIL_MEMORY_ORDER_MASK = OMP_MEMORY_ORDER_MASK * 8
 };
+#define OMP_FAIL_MEMORY_ORDER_SHIFT 3
 
 /* There is a TYPE_QUAL value for each type qualifier.  They can be
    combined by bitwise-or to form the complete set of qualifiers for a
@@ -766,6 +800,10 @@ enum tree_index {
   TI_SAT_UDA_TYPE,
   TI_SAT_UTA_TYPE,
 
+  TI_MODULE_HWM,
+  /* Nodes below here change during compilation, and should therefore
+     not be in the C++ module's global tree table.  */
+
   TI_OPTIMIZATION_DEFAULT,
   TI_OPTIMIZATION_CURRENT,
   TI_TARGET_OPTION_DEFAULT,
@@ -856,7 +894,10 @@ enum attribute_flags {
      are not in fact compatible with the function type.  */
   ATTR_FLAG_BUILT_IN = 16,
   /* A given attribute has been parsed as a C++-11 attribute.  */
-  ATTR_FLAG_CXX11 = 32
+  ATTR_FLAG_CXX11 = 32,
+  /* The attribute handler is being invoked with an internal argument
+     that may not otherwise be valid when specified in source code.  */
+  ATTR_FLAG_INTERNAL = 64
 };
 
 /* Types used to represent sizes.  */
@@ -868,6 +909,7 @@ enum size_type_kind {
   stk_type_kind_last
 };
 
+/* Flags controlling operand_equal_p() behavior.  */
 enum operand_equal_flag {
   OEP_ONLY_CONST = 1,
   OEP_PURE_SAME = 2,
@@ -879,7 +921,14 @@ enum operand_equal_flag {
   OEP_HASH_CHECK = 32,
   /* Makes operand_equal_p handle more expressions:  */
   OEP_LEXICOGRAPHIC = 64,
-  OEP_BITWISE = 128
+  OEP_BITWISE = 128,
+  /* For OEP_ADDRESS_OF of COMPONENT_REFs, only consider same fields as
+     equivalent rather than also different fields with the same offset.  */
+  OEP_ADDRESS_OF_SAME_FIELD = 256,
+  /* In conjunction with OEP_LEXICOGRAPHIC considers names of declarations
+     of the same kind.  Used to compare VLA bounds involving parameters
+     across redeclarations of the same function.  */
+  OEP_DECL_NAME = 512
 };
 
 /* Enum and arrays used for tree allocation stats.
@@ -998,7 +1047,8 @@ struct GTY(()) tree_base {
       unsigned user_align : 1;
       unsigned nameless_flag : 1;
       unsigned atomic_flag : 1;
-      unsigned spare0 : 3;
+      unsigned unavailable_flag : 1;
+      unsigned spare0 : 2;
 
       unsigned spare1 : 8;
 
@@ -1220,7 +1270,8 @@ struct GTY(()) tree_base {
            all decls
 
        CALL_FROM_THUNK_P and
-       CALL_ALLOCA_FOR_VAR_P in
+       CALL_ALLOCA_FOR_VAR_P and
+       CALL_FROM_NEW_OR_DELETE_P in
            CALL_EXPR
 
        OMP_CLAUSE_LINEAR_VARIABLE_STRIDE in
@@ -1319,6 +1370,12 @@ struct GTY(()) tree_base {
        SSA_NAME_POINTS_TO_READONLY_MEMORY in
 	   SSA_NAME
 
+   unavailable_flag:
+
+       TREE_UNAVAILABLE in
+	   all decls
+	   all types
+
    visited:
 
        TREE_VISITED in
@@ -1366,6 +1423,7 @@ struct GTY(()) tree_base {
 
        CALL_EXPR_BY_DESCRIPTOR in
            CALL_EXPR
+
 */
 
 struct GTY(()) tree_typed {
@@ -1463,6 +1521,7 @@ enum omp_clause_proc_bind_kind
   /* Numbers should match omp_proc_bind_t enum in omp.h.  */
   OMP_CLAUSE_PROC_BIND_FALSE = 0,
   OMP_CLAUSE_PROC_BIND_TRUE = 1,
+  OMP_CLAUSE_PROC_BIND_PRIMARY = 2,
   OMP_CLAUSE_PROC_BIND_MASTER = 2,
   OMP_CLAUSE_PROC_BIND_CLOSE = 3,
   OMP_CLAUSE_PROC_BIND_SPREAD = 4,

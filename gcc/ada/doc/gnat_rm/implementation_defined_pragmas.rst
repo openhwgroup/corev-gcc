@@ -37,7 +37,21 @@ This pragma must appear at the start of the statement sequence of a
 handled sequence of statements (right after the ``begin``).  It has
 the effect of deferring aborts for the sequence of statements (but not
 for the declarations or handlers, if any, associated with this statement
-sequence).
+sequence). This can also be useful for adding a polling point in Ada code,
+where asynchronous abort of tasks is checked when leaving the statement
+sequence, and is lighter than, for example, using ``delay 0.0;``, since with
+zero-cost exception handling, propagating exceptions (implicitly used to
+implement task abort) cannot be done reliably in an asynchronous way.
+
+An example of usage would be:
+
+.. code-block:: ada
+
+  --  Add a polling point to check for task aborts
+
+  begin
+     pragma Abort_Defer;
+  end;
 
 .. _Pragma-Abstract_State:
 
@@ -420,15 +434,16 @@ Syntax::
 
   ASSERTION_KIND ::= RM_ASSERTION_KIND | ID_ASSERTION_KIND
 
-  RM_ASSERTION_KIND ::= Assert               |
-                        Static_Predicate     |
-                        Dynamic_Predicate    |
-                        Pre                  |
-                        Pre'Class            |
-                        Post                 |
-                        Post'Class           |
-                        Type_Invariant       |
-                        Type_Invariant'Class
+  RM_ASSERTION_KIND ::= Assert                    |
+                        Static_Predicate          |
+                        Dynamic_Predicate         |
+                        Pre                       |
+                        Pre'Class                 |
+                        Post                      |
+                        Post'Class                |
+                        Type_Invariant            |
+                        Type_Invariant'Class      |
+                        Default_Initial_Condition
 
   ID_ASSERTION_KIND ::= Assertions           |
                         Assert_And_Cut       |
@@ -436,6 +451,7 @@ Syntax::
                         Contract_Cases       |
                         Debug                |
                         Ghost                |
+                        Initial_Condition    |
                         Invariant            |
                         Invariant'Class      |
                         Loop_Invariant       |
@@ -444,7 +460,8 @@ Syntax::
                         Precondition         |
                         Predicate            |
                         Refined_Post         |
-                        Statement_Assertions
+                        Statement_Assertions |
+                        Subprogram_Variant
 
   POLICY_IDENTIFIER ::= Check | Disable | Ignore | Suppressible
 
@@ -2045,27 +2062,6 @@ string or a static string expressions that evaluates to the null
 string. In this case, no external name is generated. This form
 still allows the specification of parameter mechanisms.
 
-Pragma Export_Value
-===================
-
-Syntax:
-
-
-::
-
-  pragma Export_Value (
-    [Value     =>] static_integer_EXPRESSION,
-    [Link_Name =>] static_string_EXPRESSION);
-
-
-This pragma serves to export a static integer value for external use.
-The first argument specifies the value to be exported. The Link_Name
-argument specifies the symbolic name to be associated with the integer
-value. This pragma is useful for defining a named static value in Ada
-that can be referenced in assembly language units to be linked with
-the application. This pragma is currently supported only for the
-AAMP target and is ignored for other targets.
-
 Pragma Export_Valued_Procedure
 ==============================
 
@@ -2193,7 +2189,7 @@ extension mode (the use of Off as a parameter cancels the effect
 of the *-gnatX* command switch).
 
 In extension mode, the latest version of the Ada language is
-implemented (currently Ada 202x), and in addition a small number
+implemented (currently Ada 2022), and in addition a number
 of GNAT specific extensions are recognized as follows:
 
 * Constrained attribute for generic objects
@@ -2218,6 +2214,177 @@ of GNAT specific extensions are recognized as follows:
   This new aggregate syntax for arrays and containers is provided under -gnatX
   to experiment and confirm this new language syntax.
 
+* Additional ``when`` constructs
+
+  In addition to the ``exit when CONDITION`` control structure, several
+  additional constructs are allowed following this format. Including
+  ``return when CONDITION``, ``goto when CONDITION``, and
+  ``raise [with EXCEPTION_MESSAGE] when CONDITION.``
+
+  Some examples:
+
+  .. code-block:: ada
+
+      return Result when Variable > 10;
+
+      raise Program_Error with "Element is null" when Element = null;
+
+      goto End_Of_Subprogram when Variable = -1;
+
+* Casing on composite values (aka pattern matching)
+
+  The selector for a case statement may be of a composite type, subject to
+  some restrictions (described below). Aggregate syntax is used for choices
+  of such a case statement; however, in cases where a "normal" aggregate would
+  require a discrete value, a discrete subtype may be used instead; box
+  notation can also be used to match all values.
+
+  Consider this example:
+
+  .. code-block:: ada
+
+      type Rec is record
+         F1, F2 : Integer;
+      end record;
+
+      procedure Caser_1 (X : Rec) is
+      begin
+         case X is
+            when (F1 => Positive, F2 => Positive) =>
+               Do_This;
+            when (F1 => Natural, F2 => <>) | (F1 => <>, F2 => Natural) =>
+               Do_That;
+            when others =>
+                Do_The_Other_Thing;
+         end case;
+      end Caser_1;
+
+  If Caser_1 is called and both components of X are positive, then
+  Do_This will be called; otherwise, if either component is nonnegative
+  then Do_That will be called; otherwise, Do_The_Other_Thing will be called.
+
+  If the set of values that match the choice(s) of an earlier alternative
+  overlaps the corresponding set of a later alternative, then the first
+  set shall be a proper subset of the second (and the later alternative
+  will not be executed if the earlier alternative "matches"). All possible
+  values of the composite type shall be covered. The composite type of the
+  selector shall be a nonlimited untagged (but possibly discriminated)
+  record type, all of whose subcomponent subtypes are either static discrete
+  subtypes or record types that meet the same restrictions.
+
+  Support for casing on arrays (and on records that contain arrays) is
+  currently subject to some restrictions. Non-positional
+  array aggregates are not supported as (or within) case choices. Likewise
+  for array type and subtype names. The current implementation exceeds
+  compile-time capacity limits in some annoyingly common scenarios; the
+  message generated in such cases is usually "Capacity exceeded in compiling
+  case statement with composite selector type".
+
+  In addition, pattern bindings are supported. This is a mechanism
+  for binding a name to a component of a matching value for use within
+  an alternative of a case statement. For a component association
+  that occurs within a case choice, the expression may be followed by
+  "is <identifier>". In the special case of a "box" component association,
+  the identifier may instead be provided within the box. Either of these
+  indicates that the given identifer denotes (a constant view of) the matching
+  subcomponent of the case selector. Binding is not yet supported for arrays
+  or subcomponents thereof.
+
+  Consider this example (which uses type Rec from the previous example):
+
+  .. code-block:: ada
+
+      procedure Caser_2 (X : Rec) is
+      begin
+         case X is
+            when (F1 => Positive is Abc, F2 => Positive) =>
+               Do_This (Abc)
+            when (F1 => Natural is N1, F2 => <N2>) |
+                 (F1 => <N2>, F2 => Natural is N1) =>
+               Do_That (Param_1 => N1, Param_2 => N2);
+            when others =>
+               Do_The_Other_Thing;
+         end case;
+      end Caser_2;
+
+  This example is the same as the previous one with respect to
+  determining whether Do_This, Do_That, or Do_The_Other_Thing will
+  be called. But for this version, Do_This takes a parameter and Do_That
+  takes two parameters. If Do_This is called, the actual parameter in the
+  call will be X.F1.
+
+  If Do_That is called, the situation is more complex because there are two
+  choices for that alternative. If Do_That is called because the first choice
+  matched (i.e., because X.F1 is nonnegative and either X.F1 or X.F2 is zero
+  or negative), then the actual parameters of the call will be (in order)
+  X.F1 and X.F2. If Do_That is called because the second choice matched (and
+  the first one did not), then the actual parameters will be reversed.
+
+  Within the choice list for single alternative, each choice must
+  define the same set of bindings and the component subtypes for
+  for a given identifer must all statically match. Currently, the case
+  of a binding for a nondiscrete component is not implemented.
+
+* Fixed lower bounds for array types and subtypes
+
+  Unconstrained array types and subtypes can be specified with a lower bound
+  that is fixed to a certain value, by writing an index range that uses the
+  syntax "<lower-bound-expression> .. <>". This guarantees that all objects
+  of the type or subtype will have the specified lower bound.
+
+  For example, a matrix type with fixed lower bounds of zero for each
+  dimension can be declared by the following:
+
+  .. code-block:: ada
+
+      type Matrix is
+        array (Natural range 0 .. <>, Natural range 0 .. <>) of Integer;
+
+  Objects of type Matrix declared with an index constraint must have index
+  ranges starting at zero:
+
+  .. code-block:: ada
+
+      M1 : Matrix (0 .. 9, 0 .. 19);
+      M2 : Matrix (2 .. 11, 3 .. 22);  -- Warning about bounds; will raise CE
+
+  Similarly, a subtype of String can be declared that specifies the lower
+  bound of objects of that subtype to be 1:
+
+   .. code-block:: ada
+
+      subtype String_1 is String (1 .. <>);
+
+  If a string slice is passed to a formal of subtype String_1 in a call to
+  a subprogram S, the slice's bounds will "slide" so that the lower bound
+  is 1. Within S, the lower bound of the formal is known to be 1, so, unlike
+  a normal unconstrained String formal, there is no need to worry about
+  accounting for other possible lower-bound values. Sliding of bounds also
+  occurs in other contexts, such as for object declarations with an
+  unconstrained subtype with fixed lower bound, as well as in subtype
+  conversions.
+
+  Use of this feature increases safety by simplifying code, and can also
+  improve the efficiency of indexing operations, since the compiler statically
+  knows the lower bound of unconstrained array formals when the formal's
+  subtype has index ranges with static fixed lower bounds.
+
+* Prefixed-view notation for calls to primitive subprograms of untagged types
+
+  Since Ada 2005, calls to primitive subprograms of a tagged type that
+  have a "prefixed view" (see RM 4.1.3(9.2)) have been allowed to be
+  written using the form of a selected_component, with the first actual
+  parameter given as the prefix and the name of the subprogram as a
+  selector. This prefixed-view notation for calls is extended so as to
+  also allow such syntax for calls to primitive subprograms of untagged
+  types. The primitives of an untagged type T that have a prefixed view
+  are those where the first formal parameter of the subprogram either
+  is of type T or is an anonymous access parameter whose designated type
+  is T. For a type that has a component that happens to have the same
+  simple name as one of the type's primitive subprograms, where the
+  component is visible at the point of a selected_component using that
+  name, preference is given to the component in a selected_component
+  (as is currently the case for tagged types with such component names).
 
 .. _Pragma-Extensions_Visible:
 
@@ -3097,13 +3264,7 @@ Syntax:
 
 
 This program unit pragma is supported for parameterless protected procedures
-as described in Annex C of the Ada Reference Manual. On the AAMP target
-the pragma can also be specified for nonprotected parameterless procedures
-that are declared at the library level (which includes procedures
-declared at the top level of a library package). In the case of AAMP,
-when this pragma is applied to a nonprotected procedure, the instruction
-``IERET`` is generated for returns from the procedure, enabling
-maskable interrupts, in place of the normal return instruction.
+as described in Annex C of the Ada Reference Manual.
 
 Pragma Interrupt_State
 ======================
@@ -4525,48 +4686,6 @@ type is potentially persistent.
 If this pragma is used on a target where this feature is not supported,
 then the pragma will be ignored. See also ``pragma Linker_Section``.
 
-Pragma Polling
-==============
-
-Syntax:
-
-
-.. code-block:: ada
-
-  pragma Polling (ON | OFF);
-
-
-This pragma controls the generation of polling code.  This is normally off.
-If ``pragma Polling (ON)`` is used then periodic calls are generated to
-the routine ``Ada.Exceptions.Poll``.  This routine is a separate unit in the
-runtime library, and can be found in file :file:`a-excpol.adb`.
-
-Pragma ``Polling`` can appear as a configuration pragma (for example it
-can be placed in the :file:`gnat.adc` file) to enable polling globally, or it
-can be used in the statement or declaration sequence to control polling
-more locally.
-
-A call to the polling routine is generated at the start of every loop and
-at the start of every subprogram call.  This guarantees that the ``Poll``
-routine is called frequently, and places an upper bound (determined by
-the complexity of the code) on the period between two ``Poll`` calls.
-
-The primary purpose of the polling interface is to enable asynchronous
-aborts on targets that cannot otherwise support it (for example Windows
-NT), but it may be used for any other purpose requiring periodic polling.
-The standard version is null, and can be replaced by a user program.  This
-will require re-compilation of the ``Ada.Exceptions`` package that can
-be found in files :file:`a-except.ads` and :file:`a-except.adb`.
-
-A standard alternative unit (in file :file:`4wexcpol.adb` in the standard GNAT
-distribution) is used to enable the asynchronous abort capability on
-targets that do not normally support the capability.  The version of
-``Poll`` in this file makes a call to the appropriate runtime routine
-to test for an abort condition.
-
-Note that polling can also be enabled by use of the *-gnatP* switch.
-See the section on switches for gcc in the :title:`GNAT User's Guide`.
-
 Pragma Post
 ===========
 .. index:: Post
@@ -4796,43 +4915,6 @@ using an Ada compiler that does not recognize the pragmas or
 aspects, but is prepared to ignore the pragmas. The assertion
 policy that controls this pragma is ``Post'Class``, not
 ``Post_Class``.
-
-Pragma Rename_Pragma
-============================
-.. index:: Pragmas, synonyms
-
-Syntax:
-
-
-::
-
-  pragma Rename_Pragma (
-           [New_Name =>] IDENTIFIER,
-           [Renamed  =>] pragma_IDENTIFIER);
-
-This pragma provides a mechanism for supplying new names for existing
-pragmas. The ``New_Name`` identifier can subsequently be used as a synonym for
-the Renamed pragma. For example, suppose you have code that was originally
-developed on a compiler that supports Inline_Only as an implementation defined
-pragma. And suppose the semantics of pragma Inline_Only are identical to (or at
-least very similar to) the GNAT implementation defined pragma
-Inline_Always. You could globally replace Inline_Only with Inline_Always.
-
-However, to avoid that source modification, you could instead add a
-configuration pragma:
-
-.. code-block:: ada
-
-  pragma Rename_Pragma (
-           New_Name => Inline_Only,
-           Renamed  => Inline_Always);
-
-
-Then GNAT will treat "pragma Inline_Only ..." as if you had written
-"pragma Inline_Always ...".
-
-Pragma Inline_Only will not necessarily mean the same thing as the other Ada
-compiler; it's up to you to make sure the semantics are close enough.
 
 Pragma Pre
 ==========
@@ -5107,7 +5189,7 @@ Syntax:
 
 .. code-block:: ada
 
-  pragma Profile (Ravenscar | Restricted | Rational |
+  pragma Profile (Ravenscar | Restricted | Rational | Jorvik |
                   GNAT_Extended_Ravenscar | GNAT_Ravenscar_EDF );
 
 
@@ -5115,10 +5197,12 @@ This pragma is standard in Ada 2005, but is available in all earlier
 versions of Ada as an implementation-defined pragma. This is a
 configuration pragma that establishes a set of configuration pragmas
 that depend on the argument. ``Ravenscar`` is standard in Ada 2005.
+``Jorvik`` is standard in Ada 202x.
 The other possibilities (``Restricted``, ``Rational``,
 ``GNAT_Extended_Ravenscar``, ``GNAT_Ravenscar_EDF``)
-are implementation-defined. The set of configuration pragmas
-is defined in the following sections.
+are implementation-defined.  ``GNAT_Extended_Ravenscar`` is an alias for ``Jorvik``.
+
+The set of configuration pragmas is defined in the following sections.
 
 
 * Pragma Profile (Ravenscar)
@@ -5188,7 +5272,7 @@ is defined in the following sections.
   * ``Simple_Barriers``
 
   The Ravenscar profile also includes the following restrictions that specify
-  that there are no semantic dependences on the corresponding predefined
+  that there are no semantic dependencies on the corresponding predefined
   packages:
 
   * ``No_Dependence => Ada.Asynchronous_Task_Control``
@@ -5229,12 +5313,10 @@ is defined in the following sections.
   automatically causes the use of a simplified,
   more efficient version of the tasking run-time library.
 
-* Pragma Profile (GNAT_Extended_Ravenscar)
+* Pragma Profile (Jorvik)
 
-  This profile corresponds to a GNAT specific extension of the
-  Ravenscar profile. The profile may change in the future although
-  only in a compatible way: some restrictions may be removed or
-  relaxed. It is defined as a variation of the Ravenscar profile.
+  ``Jorvik`` is the new profile added to the Ada 202x draft standard,
+  previously implemented under the name ``GNAT_Extended_Ravenscar``.
 
   The ``No_Implicit_Heap_Allocations`` restriction has been replaced
   by ``No_Implicit_Task_Allocations`` and
@@ -5245,6 +5327,13 @@ is defined in the following sections.
 
   The ``Max_Protected_Entries``, ``Max_Entry_Queue_Length``, and
   ``No_Relative_Delay`` restrictions have been removed.
+
+  Details on the rationale for ``Jorvik`` and implications for use may be
+  found in :title:`A New Ravenscar-Based Profile` by P. Rogers, J. Ruiz,
+  T. Gingold and P. Bernardi, in :title:`Reliable Software Technologies --
+  Ada Europe 2017`, Springer-Verlag Lecture Notes in Computer Science,
+  Number 10300.
+
 
 * Pragma Profile (GNAT_Ravenscar_EDF)
 
@@ -5610,6 +5699,43 @@ same generic declaration.
 In the generic unit, the formal type is subject to all restrictions
 pertaining to remote access to class-wide types. At instantiation, the
 actual type must be a remote access to class-wide type.
+
+Pragma Rename_Pragma
+============================
+.. index:: Pragmas, synonyms
+
+Syntax:
+
+
+::
+
+  pragma Rename_Pragma (
+           [New_Name =>] IDENTIFIER,
+           [Renamed  =>] pragma_IDENTIFIER);
+
+This pragma provides a mechanism for supplying new names for existing
+pragmas. The ``New_Name`` identifier can subsequently be used as a synonym for
+the Renamed pragma. For example, suppose you have code that was originally
+developed on a compiler that supports Inline_Only as an implementation defined
+pragma. And suppose the semantics of pragma Inline_Only are identical to (or at
+least very similar to) the GNAT implementation defined pragma
+Inline_Always. You could globally replace Inline_Only with Inline_Always.
+
+However, to avoid that source modification, you could instead add a
+configuration pragma:
+
+.. code-block:: ada
+
+  pragma Rename_Pragma (
+           New_Name => Inline_Only,
+           Renamed  => Inline_Always);
+
+
+Then GNAT will treat "pragma Inline_Only ..." as if you had written
+"pragma Inline_Always ...".
+
+Pragma Inline_Only will not necessarily mean the same thing as the other Ada
+compiler; it's up to you to make sure the semantics are close enough.
 
 Pragma Restricted_Run_Time
 ==========================
@@ -6670,8 +6796,8 @@ expression. The following is an example of use within a package spec:
      function Sqrt (Arg : Float) return Float;
      pragma Test_Case (Name     => "Test 1",
                        Mode     => Nominal,
-                       Requires => Arg < 10000,
-                       Ensures  => Sqrt'Result < 10);
+                       Requires => Arg < 10000.0,
+                       Ensures  => Sqrt'Result < 10.0);
      ...
   end Math_Functions;
 
@@ -6931,32 +7057,6 @@ access types designating this type were subject to pragma No_Strict_Aliasing.
 For a detailed description of the strict aliasing optimization, and the
 situations in which it must be suppressed, see the section on
 ``Optimization and Strict Aliasing`` in the :title:`GNAT User's Guide`.
-
-.. _Pragma-Universal_Data:
-
-Pragma Universal_Data
-=====================
-
-Syntax:
-
-
-::
-
-  pragma Universal_Data [(library_unit_Name)];
-
-
-This pragma is supported only for the AAMP target and is ignored for
-other targets. The pragma specifies that all library-level objects
-(Counter 0 data) associated with the library unit are to be accessed
-and updated using universal addressing (24-bit addresses for AAMP5)
-rather than the default of 16-bit Data Environment (DENV) addressing.
-Use of this pragma will generally result in less efficient code for
-references to global data associated with the library unit, but
-allows such data to be located anywhere in memory. This pragma is
-a library unit pragma, but can also be used as a configuration pragma
-(including use in the :file:`gnat.adc` file). The functionality
-of this pragma is also available by applying the -univ switch on the
-compilations of units where universal addressing of the data is desired.
 
 .. _Pragma-Unmodified:
 
@@ -7312,12 +7412,6 @@ not create a synchronization point. Second, in the case of ``pragma Atomic``,
 there is no guarantee that all the bits will be accessed if the reference
 is not to the whole object; the compiler is allowed (and generally will)
 access only part of the object in this case.
-
-It is not permissible to specify ``Atomic`` and ``Volatile_Full_Access`` for
-the same type or object.
-
-It is not permissible to specify ``Volatile_Full_Access`` for a composite
-(record or array) type or object that has an ``Aliased`` subcomponent.
 
 .. _Pragma-Volatile_Function:
 

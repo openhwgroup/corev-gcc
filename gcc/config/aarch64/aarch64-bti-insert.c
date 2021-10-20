@@ -1,5 +1,5 @@
 /* Branch Target Identification for AArch64 architecture.
-   Copyright (C) 2019-2020 Free Software Foundation, Inc.
+   Copyright (C) 2019-2021 Free Software Foundation, Inc.
    Contributed by Arm Ltd.
 
    This file is part of GCC.
@@ -95,7 +95,7 @@ static bool
 aarch64_pac_insn_p (rtx x)
 {
   if (!INSN_P (x))
-    return x;
+    return false;
 
   subrtx_var_iterator::array_type array;
   FOR_EACH_SUBRTX_VAR (iter, array, PATTERN (x), ALL)
@@ -118,6 +118,17 @@ aarch64_pac_insn_p (rtx x)
 	}
     }
   return false;
+}
+
+/* Check if INSN is a BTI J insn.  */
+static bool
+aarch64_bti_j_insn_p (rtx_insn *insn)
+{
+  if (!insn || !INSN_P (insn))
+    return false;
+
+  rtx pat = PATTERN (insn);
+  return GET_CODE (pat) == UNSPEC_VOLATILE && XINT (pat, 1) == UNSPECV_BTI_J;
 }
 
 /* Insert the BTI instruction.  */
@@ -165,6 +176,10 @@ rest_of_insert_bti (void)
 		  for (j = GET_NUM_ELEM (vec) - 1; j >= 0; --j)
 		    {
 		      label = as_a <rtx_insn *> (XEXP (RTVEC_ELT (vec, j), 0));
+		      rtx_insn *next = next_nonnote_nondebug_insn (label);
+		      if (aarch64_bti_j_insn_p (next))
+			continue;
+
 		      bti_insn = gen_bti_j ();
 		      emit_insn_after (bti_insn, label);
 		    }

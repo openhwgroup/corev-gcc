@@ -1,6 +1,6 @@
 /* Gimple IR definitions.
 
-   Copyright (C) 2007-2020 Free Software Foundation, Inc.
+   Copyright (C) 2007-2021 Free Software Foundation, Inc.
    Contributed by Aldy Hernandez <aldyh@redhat.com>
 
 This file is part of GCC.
@@ -149,6 +149,7 @@ enum gf_mask {
     GF_CALL_MUST_TAIL_CALL	= 1 << 9,
     GF_CALL_BY_DESCRIPTOR	= 1 << 10,
     GF_CALL_NOCF_CHECK		= 1 << 11,
+    GF_CALL_FROM_NEW_OR_DELETE	= 1 << 12,
     GF_OMP_PARALLEL_COMBINED	= 1 << 0,
     GF_OMP_TASK_TASKLOOP	= 1 << 0,
     GF_OMP_TASK_TASKWAIT	= 1 << 1,
@@ -160,7 +161,7 @@ enum gf_mask {
     GF_OMP_FOR_KIND_SIMD	= 5,
     GF_OMP_FOR_COMBINED		= 1 << 3,
     GF_OMP_FOR_COMBINED_INTO	= 1 << 4,
-    GF_OMP_TARGET_KIND_MASK	= (1 << 4) - 1,
+    GF_OMP_TARGET_KIND_MASK	= (1 << 5) - 1,
     GF_OMP_TARGET_KIND_REGION	= 0,
     GF_OMP_TARGET_KIND_DATA	= 1,
     GF_OMP_TARGET_KIND_UPDATE	= 2,
@@ -171,9 +172,19 @@ enum gf_mask {
     GF_OMP_TARGET_KIND_OACC_SERIAL = 7,
     GF_OMP_TARGET_KIND_OACC_DATA = 8,
     GF_OMP_TARGET_KIND_OACC_UPDATE = 9,
-    GF_OMP_TARGET_KIND_OACC_ENTER_EXIT_DATA = 10,
-    GF_OMP_TARGET_KIND_OACC_DECLARE = 11,
-    GF_OMP_TARGET_KIND_OACC_HOST_DATA = 12,
+    GF_OMP_TARGET_KIND_OACC_ENTER_DATA = 10,
+    GF_OMP_TARGET_KIND_OACC_EXIT_DATA = 11,
+    GF_OMP_TARGET_KIND_OACC_DECLARE = 12,
+    GF_OMP_TARGET_KIND_OACC_HOST_DATA = 13,
+    /* A 'GF_OMP_TARGET_KIND_OACC_PARALLEL' representing an OpenACC 'kernels'
+       decomposed part, parallelized.  */
+    GF_OMP_TARGET_KIND_OACC_PARALLEL_KERNELS_PARALLELIZED = 14,
+    /* A 'GF_OMP_TARGET_KIND_OACC_PARALLEL' representing an OpenACC 'kernels'
+       decomposed part, "gang-single".  */
+    GF_OMP_TARGET_KIND_OACC_PARALLEL_KERNELS_GANG_SINGLE = 15,
+    /* A 'GF_OMP_TARGET_KIND_OACC_DATA' representing an OpenACC 'kernels'
+       decomposed parts' 'data' construct.  */
+    GF_OMP_TARGET_KIND_OACC_DATA_KERNELS = 16,
     GF_OMP_TEAMS_HOST		= 1 << 0,
 
     /* True on an GIMPLE_OMP_RETURN statement if the return does not require
@@ -183,8 +194,9 @@ enum gf_mask {
     GF_OMP_RETURN_NOWAIT	= 1 << 0,
 
     GF_OMP_SECTION_LAST		= 1 << 0,
-    GF_OMP_ATOMIC_MEMORY_ORDER  = (1 << 3) - 1,
-    GF_OMP_ATOMIC_NEED_VALUE	= 1 << 3,
+    GF_OMP_ATOMIC_MEMORY_ORDER  = (1 << 6) - 1,
+    GF_OMP_ATOMIC_NEED_VALUE	= 1 << 6,
+    GF_OMP_ATOMIC_WEAK		= 1 << 7,
     GF_PREDICT_TAKEN		= 1 << 15
 };
 
@@ -731,7 +743,7 @@ struct GTY((tag("GSS_OMP_CONTINUE")))
 };
 
 /* GIMPLE_OMP_SINGLE, GIMPLE_OMP_ORDERED, GIMPLE_OMP_TASKGROUP,
-   GIMPLE_OMP_SCAN.  */
+   GIMPLE_OMP_SCAN, GIMPLE_OMP_MASKED, GIMPLE_OMP_SCOPE.  */
 
 struct GTY((tag("GSS_OMP_SINGLE_LAYOUT")))
   gimple_statement_omp_single_layout : public gimple_statement_omp
@@ -1505,11 +1517,11 @@ void gimple_init (gimple *g, enum gimple_code code, unsigned num_ops);
 gimple *gimple_alloc (enum gimple_code, unsigned CXX_MEM_STAT_INFO);
 greturn *gimple_build_return (tree);
 void gimple_call_reset_alias_info (gcall *);
-gcall *gimple_build_call_vec (tree, vec<tree> );
+gcall *gimple_build_call_vec (tree, const vec<tree> &);
 gcall *gimple_build_call (tree, unsigned, ...);
 gcall *gimple_build_call_valist (tree, unsigned, va_list);
 gcall *gimple_build_call_internal (enum internal_fn, unsigned, ...);
-gcall *gimple_build_call_internal_vec (enum internal_fn, vec<tree> );
+gcall *gimple_build_call_internal_vec (enum internal_fn, const vec<tree> &);
 gcall *gimple_build_call_from_tree (tree, tree);
 gassign *gimple_build_assign (tree, tree CXX_MEM_STAT_INFO);
 gassign *gimple_build_assign (tree, enum tree_code,
@@ -1536,7 +1548,7 @@ gtry *gimple_build_try (gimple_seq, gimple_seq,
 gimple *gimple_build_wce (gimple_seq);
 gresx *gimple_build_resx (int);
 gswitch *gimple_build_switch_nlabels (unsigned, tree, tree);
-gswitch *gimple_build_switch (tree, tree, vec<tree> );
+gswitch *gimple_build_switch (tree, tree, const vec<tree> &);
 geh_dispatch *gimple_build_eh_dispatch (int);
 gdebug *gimple_build_debug_bind (tree, tree, gimple * CXX_MEM_STAT_INFO);
 gdebug *gimple_build_debug_source_bind (tree, tree, gimple * CXX_MEM_STAT_INFO);
@@ -1548,7 +1560,9 @@ gomp_parallel *gimple_build_omp_parallel (gimple_seq, tree, tree, tree);
 gomp_task *gimple_build_omp_task (gimple_seq, tree, tree, tree, tree,
 				       tree, tree);
 gimple *gimple_build_omp_section (gimple_seq);
+gimple *gimple_build_omp_scope (gimple_seq, tree);
 gimple *gimple_build_omp_master (gimple_seq);
+gimple *gimple_build_omp_masked (gimple_seq, tree);
 gimple *gimple_build_omp_taskgroup (gimple_seq, tree);
 gomp_continue *gimple_build_omp_continue (tree, tree);
 gomp_ordered *gimple_build_omp_ordered (gimple_seq, tree);
@@ -1590,8 +1604,8 @@ void gimple_set_lhs (gimple *, tree);
 gimple *gimple_copy (gimple *);
 void gimple_move_vops (gimple *, gimple *);
 bool gimple_has_side_effects (const gimple *);
-bool gimple_could_trap_p_1 (gimple *, bool, bool);
-bool gimple_could_trap_p (gimple *);
+bool gimple_could_trap_p_1 (const gimple *, bool, bool);
+bool gimple_could_trap_p (const gimple *);
 bool gimple_assign_rhs_could_trap_p (gimple *);
 extern void dump_gimple_statistics (void);
 unsigned get_gimple_rhs_num_ops (enum tree_code);
@@ -1604,7 +1618,7 @@ extern alias_set_type gimple_get_alias_set (tree);
 extern bool gimple_ior_addresses_taken (bitmap, gimple *);
 extern bool gimple_builtin_call_types_compatible_p (const gimple *, tree);
 extern combined_fn gimple_call_combined_fn (const gimple *);
-extern bool gimple_call_replaceable_operator_delete_p (const gcall *);
+extern bool gimple_call_operator_delete_p (const gcall *);
 extern bool gimple_call_builtin_p (const gimple *);
 extern bool gimple_call_builtin_p (const gimple *, enum built_in_class);
 extern bool gimple_call_builtin_p (const gimple *, enum built_in_function);
@@ -1615,8 +1629,8 @@ extern bool nonbarrier_call_p (gimple *);
 extern bool infer_nonnull_range (gimple *, tree);
 extern bool infer_nonnull_range_by_dereference (gimple *, tree);
 extern bool infer_nonnull_range_by_attribute (gimple *, tree);
-extern void sort_case_labels (vec<tree>);
-extern void preprocess_case_label_vec_for_gimple (vec<tree>, tree, tree *);
+extern void sort_case_labels (vec<tree> &);
+extern void preprocess_case_label_vec_for_gimple (vec<tree> &, tree, tree *);
 extern void gimple_seq_set_location (gimple_seq, location_t);
 extern void gimple_seq_discard (gimple_seq);
 extern void maybe_remove_unused_call_args (struct function *, gimple *);
@@ -1624,6 +1638,24 @@ extern bool gimple_inexpensive_call_p (gcall *);
 extern bool stmt_can_terminate_bb_p (gimple *);
 extern location_t gimple_or_expr_nonartificial_location (gimple *, tree);
 
+/* Return the disposition for a warning (or all warnings by default)
+   for a statement.  */
+extern bool warning_suppressed_p (const gimple *, opt_code = all_warnings)
+  ATTRIBUTE_NONNULL (1);
+/* Set the disposition for a warning (or all warnings by default)
+   at a location to enabled by default.  */
+extern void suppress_warning (gimple *, opt_code = all_warnings,
+			      bool = true) ATTRIBUTE_NONNULL (1);
+
+/* Copy the warning disposition mapping from one statement to another.  */
+extern void copy_warning (gimple *, const gimple *)
+  ATTRIBUTE_NONNULL (1) ATTRIBUTE_NONNULL (2);
+/* Copy the warning disposition mapping from an expression to a statement.  */
+extern void copy_warning (gimple *, const_tree)
+  ATTRIBUTE_NONNULL (1) ATTRIBUTE_NONNULL (2);
+/* Copy the warning disposition mapping from a statement to an expression.  */
+extern void copy_warning (tree, const gimple *)
+  ATTRIBUTE_NONNULL (1) ATTRIBUTE_NONNULL (2);
 
 /* Formal (expression) temporary table handling: multiple occurrences of
    the same scalar expression are evaluated into the same temporary.  */
@@ -1807,11 +1839,13 @@ gimple_has_substatements (gimple *g)
     case GIMPLE_TRY:
     case GIMPLE_OMP_FOR:
     case GIMPLE_OMP_MASTER:
+    case GIMPLE_OMP_MASKED:
     case GIMPLE_OMP_TASKGROUP:
     case GIMPLE_OMP_ORDERED:
     case GIMPLE_OMP_SECTION:
     case GIMPLE_OMP_PARALLEL:
     case GIMPLE_OMP_TASK:
+    case GIMPLE_OMP_SCOPE:
     case GIMPLE_OMP_SECTIONS:
     case GIMPLE_OMP_SINGLE:
     case GIMPLE_OMP_TARGET:
@@ -1844,15 +1878,16 @@ gimple_block (const gimple *g)
   return LOCATION_BLOCK (g->location);
 }
 
+/* Forward declare.  */
+static inline void gimple_set_location (gimple *, location_t);
 
 /* Set BLOCK to be the lexical scope block holding statement G.  */
 
 static inline void
 gimple_set_block (gimple *g, tree block)
 {
-  g->location = set_block (g->location, block);
+  gimple_set_location (g, set_block (g->location, block));
 }
-
 
 /* Return location information for statement G.  */
 
@@ -1876,7 +1911,17 @@ gimple_location_safe (const gimple *g)
 static inline void
 gimple_set_location (gimple *g, location_t location)
 {
+  /* Copy the no-warning data to the statement location.  */
+  copy_warning (location, g->location);
   g->location = location;
+}
+
+/* Return address of the location information for statement G.  */
+
+static inline location_t *
+gimple_location_ptr (gimple *g)
+{
+  return &g->location;
 }
 
 
@@ -2220,26 +2265,6 @@ gimple_set_modified (gimple *s, bool modifiedp)
 }
 
 
-/* Return the tree code for the expression computed by STMT.  This is
-   only valid for GIMPLE_COND, GIMPLE_CALL and GIMPLE_ASSIGN.  For
-   GIMPLE_CALL, return CALL_EXPR as the expression code for
-   consistency.  This is useful when the caller needs to deal with the
-   three kinds of computation that GIMPLE supports.  */
-
-static inline enum tree_code
-gimple_expr_code (const gimple *stmt)
-{
-  enum gimple_code code = gimple_code (stmt);
-  if (code == GIMPLE_ASSIGN || code == GIMPLE_COND)
-    return (enum tree_code) stmt->subcode;
-  else
-    {
-      gcc_gimple_checking_assert (code == GIMPLE_CALL);
-      return CALL_EXPR;
-    }
-}
-
-
 /* Return true if statement STMT contains volatile operands.  */
 
 static inline bool
@@ -2419,6 +2444,29 @@ gimple_omp_atomic_set_need_value (gimple *g)
   if (gimple_code (g) != GIMPLE_OMP_ATOMIC_LOAD)
     GIMPLE_CHECK (g, GIMPLE_OMP_ATOMIC_STORE);
   g->subcode |= GF_OMP_ATOMIC_NEED_VALUE;
+}
+
+
+/* Return true if OMP atomic load/store statement G has the
+   GF_OMP_ATOMIC_WEAK flag set.  */
+
+static inline bool
+gimple_omp_atomic_weak_p (const gimple *g)
+{
+  if (gimple_code (g) != GIMPLE_OMP_ATOMIC_LOAD)
+    GIMPLE_CHECK (g, GIMPLE_OMP_ATOMIC_STORE);
+  return (gimple_omp_subcode (g) & GF_OMP_ATOMIC_WEAK) != 0;
+}
+
+
+/* Set the GF_OMP_ATOMIC_WEAK flag on G.  */
+
+static inline void
+gimple_omp_atomic_set_weak (gimple *g)
+{
+  if (gimple_code (g) != GIMPLE_OMP_ATOMIC_LOAD)
+    GIMPLE_CHECK (g, GIMPLE_OMP_ATOMIC_STORE);
+  g->subcode |= GF_OMP_ATOMIC_WEAK;
 }
 
 
@@ -3379,6 +3427,29 @@ gimple_call_from_thunk_p (gcall *s)
 }
 
 
+/* If FROM_NEW_OR_DELETE_P is true, mark GIMPLE_CALL S as being a call
+   to operator new or delete created from a new or delete expression.  */
+
+static inline void
+gimple_call_set_from_new_or_delete (gcall *s, bool from_new_or_delete_p)
+{
+  if (from_new_or_delete_p)
+    s->subcode |= GF_CALL_FROM_NEW_OR_DELETE;
+  else
+    s->subcode &= ~GF_CALL_FROM_NEW_OR_DELETE;
+}
+
+
+/* Return true if GIMPLE_CALL S is a call to operator new or delete from
+   from a new or delete expression.  */
+
+static inline bool
+gimple_call_from_new_or_delete (const gcall *s)
+{
+  return (s->subcode & GF_CALL_FROM_NEW_OR_DELETE) != 0;
+}
+
+
 /* If PASS_ARG_PACK_P is true, GIMPLE_CALL S is a stdarg call that needs the
    argument pack in its argument list.  */
 
@@ -3761,6 +3832,28 @@ gimple_cond_set_condition (gcond *stmt, enum tree_code code, tree lhs,
   gimple_cond_set_rhs (stmt, rhs);
 }
 
+
+/* Return the tree code for the expression computed by STMT.  This is
+   only valid for GIMPLE_COND, GIMPLE_CALL and GIMPLE_ASSIGN.  For
+   GIMPLE_CALL, return CALL_EXPR as the expression code for
+   consistency.  This is useful when the caller needs to deal with the
+   three kinds of computation that GIMPLE supports.  */
+
+static inline enum tree_code
+gimple_expr_code (const gimple *stmt)
+{
+  if (const gassign *ass = dyn_cast<const gassign *> (stmt))
+    return gimple_assign_rhs_code (ass);
+  if (const gcond *cond = dyn_cast<const gcond *> (stmt))
+    return gimple_cond_code (cond);
+  else
+    {
+      gcc_gimple_checking_assert (gimple_code (stmt) == GIMPLE_CALL);
+      return CALL_EXPR;
+    }
+}
+
+
 /* Return the LABEL_DECL node used by GIMPLE_LABEL statement GS.  */
 
 static inline tree
@@ -3993,7 +4086,7 @@ static inline tree
 gimple_asm_label_op (const gasm *asm_stmt, unsigned index)
 {
   gcc_gimple_checking_assert (index < asm_stmt->nl);
-  return asm_stmt->op[index + asm_stmt->ni + asm_stmt->nc];
+  return asm_stmt->op[index + asm_stmt->no + asm_stmt->ni + asm_stmt->nc];
 }
 
 /* Set LABEL_OP to be label operand INDEX in GIMPLE_ASM ASM_STMT.  */
@@ -4003,7 +4096,7 @@ gimple_asm_set_label_op (gasm *asm_stmt, unsigned index, tree label_op)
 {
   gcc_gimple_checking_assert (index < asm_stmt->nl
 			      && TREE_CODE (label_op) == TREE_LIST);
-  asm_stmt->op[index + asm_stmt->ni + asm_stmt->nc] = label_op;
+  asm_stmt->op[index + asm_stmt->no + asm_stmt->ni + asm_stmt->nc] = label_op;
 }
 
 /* Return the string representing the assembly instruction in
@@ -4581,6 +4674,14 @@ gimple_phi_arg_set_location (gphi *phi, size_t i, location_t loc)
   gimple_phi_arg (phi, i)->locus = loc;
 }
 
+/* Return address of source location of gimple argument I of phi node PHI.  */
+
+static inline location_t *
+gimple_phi_arg_location_ptr (gphi *phi, size_t i)
+{
+  return &gimple_phi_arg (phi, i)->locus;
+}
+
 /* Return TRUE if argument I of phi node PHI has a location record.  */
 
 static inline bool
@@ -5127,6 +5228,74 @@ static inline void
 gimple_omp_taskgroup_set_clauses (gimple *gs, tree clauses)
 {
   GIMPLE_CHECK (gs, GIMPLE_OMP_TASKGROUP);
+  static_cast <gimple_statement_omp_single_layout *> (gs)->clauses
+    = clauses;
+}
+
+
+/* Return the clauses associated with OMP_MASKED statement GS.  */
+
+static inline tree
+gimple_omp_masked_clauses (const gimple *gs)
+{
+  GIMPLE_CHECK (gs, GIMPLE_OMP_MASKED);
+  return
+    static_cast <const gimple_statement_omp_single_layout *> (gs)->clauses;
+}
+
+
+/* Return a pointer to the clauses associated with OMP masked statement
+   GS.  */
+
+static inline tree *
+gimple_omp_masked_clauses_ptr (gimple *gs)
+{
+  GIMPLE_CHECK (gs, GIMPLE_OMP_MASKED);
+  return &static_cast <gimple_statement_omp_single_layout *> (gs)->clauses;
+}
+
+
+/* Set CLAUSES to be the clauses associated with OMP masked statement
+   GS.  */
+
+static inline void
+gimple_omp_masked_set_clauses (gimple *gs, tree clauses)
+{
+  GIMPLE_CHECK (gs, GIMPLE_OMP_MASKED);
+  static_cast <gimple_statement_omp_single_layout *> (gs)->clauses
+    = clauses;
+}
+
+
+/* Return the clauses associated with OMP_SCOPE statement GS.  */
+
+static inline tree
+gimple_omp_scope_clauses (const gimple *gs)
+{
+  GIMPLE_CHECK (gs, GIMPLE_OMP_SCOPE);
+  return
+    static_cast <const gimple_statement_omp_single_layout *> (gs)->clauses;
+}
+
+
+/* Return a pointer to the clauses associated with OMP scope statement
+   GS.  */
+
+static inline tree *
+gimple_omp_scope_clauses_ptr (gimple *gs)
+{
+  GIMPLE_CHECK (gs, GIMPLE_OMP_SCOPE);
+  return &static_cast <gimple_statement_omp_single_layout *> (gs)->clauses;
+}
+
+
+/* Set CLAUSES to be the clauses associated with OMP scope statement
+   GS.  */
+
+static inline void
+gimple_omp_scope_set_clauses (gimple *gs, tree clauses)
+{
+  GIMPLE_CHECK (gs, GIMPLE_OMP_SCOPE);
   static_cast <gimple_statement_omp_single_layout *> (gs)->clauses
     = clauses;
 }
@@ -6418,8 +6587,10 @@ gimple_return_set_retval (greturn *gs, tree retval)
     case GIMPLE_OMP_SINGLE:			\
     case GIMPLE_OMP_TARGET:			\
     case GIMPLE_OMP_TEAMS:			\
+    case GIMPLE_OMP_SCOPE:			\
     case GIMPLE_OMP_SECTION:			\
     case GIMPLE_OMP_MASTER:			\
+    case GIMPLE_OMP_MASKED:			\
     case GIMPLE_OMP_TASKGROUP:			\
     case GIMPLE_OMP_ORDERED:			\
     case GIMPLE_OMP_CRITICAL:			\
@@ -6450,6 +6621,14 @@ is_gimple_omp_oacc (const gimple *stmt)
   gcc_assert (is_gimple_omp (stmt));
   switch (gimple_code (stmt))
     {
+    case GIMPLE_OMP_ATOMIC_LOAD:
+    case GIMPLE_OMP_ATOMIC_STORE:
+    case GIMPLE_OMP_CONTINUE:
+    case GIMPLE_OMP_RETURN:
+      /* Codes shared between OpenACC and OpenMP cannot be used to disambiguate
+	 the two.  */
+      gcc_unreachable ();
+
     case GIMPLE_OMP_FOR:
       switch (gimple_omp_for_kind (stmt))
 	{
@@ -6466,9 +6645,13 @@ is_gimple_omp_oacc (const gimple *stmt)
 	case GF_OMP_TARGET_KIND_OACC_SERIAL:
 	case GF_OMP_TARGET_KIND_OACC_DATA:
 	case GF_OMP_TARGET_KIND_OACC_UPDATE:
-	case GF_OMP_TARGET_KIND_OACC_ENTER_EXIT_DATA:
+	case GF_OMP_TARGET_KIND_OACC_ENTER_DATA:
+	case GF_OMP_TARGET_KIND_OACC_EXIT_DATA:
 	case GF_OMP_TARGET_KIND_OACC_DECLARE:
 	case GF_OMP_TARGET_KIND_OACC_HOST_DATA:
+	case GF_OMP_TARGET_KIND_OACC_PARALLEL_KERNELS_PARALLELIZED:
+	case GF_OMP_TARGET_KIND_OACC_PARALLEL_KERNELS_GANG_SINGLE:
+	case GF_OMP_TARGET_KIND_OACC_DATA_KERNELS:
 	  return true;
 	default:
 	  return false;
@@ -6494,6 +6677,8 @@ is_gimple_omp_offloaded (const gimple *stmt)
 	case GF_OMP_TARGET_KIND_OACC_PARALLEL:
 	case GF_OMP_TARGET_KIND_OACC_KERNELS:
 	case GF_OMP_TARGET_KIND_OACC_SERIAL:
+	case GF_OMP_TARGET_KIND_OACC_PARALLEL_KERNELS_PARALLELIZED:
+	case GF_OMP_TARGET_KIND_OACC_PARALLEL_KERNELS_GANG_SINGLE:
 	  return true;
 	default:
 	  return false;
@@ -6521,46 +6706,6 @@ is_gimple_resx (const gimple *gs)
   return gimple_code (gs) == GIMPLE_RESX;
 }
 
-/* Return the type of the main expression computed by STMT.  Return
-   void_type_node if the statement computes nothing.  */
-
-static inline tree
-gimple_expr_type (const gimple *stmt)
-{
-  enum gimple_code code = gimple_code (stmt);
-  /* In general we want to pass out a type that can be substituted
-     for both the RHS and the LHS types if there is a possibly
-     useless conversion involved.  That means returning the
-     original RHS type as far as we can reconstruct it.  */
-  if (code == GIMPLE_CALL)
-    {
-      const gcall *call_stmt = as_a <const gcall *> (stmt);
-      if (gimple_call_internal_p (call_stmt))
-	switch (gimple_call_internal_fn (call_stmt))
-	  {
-	  case IFN_MASK_STORE:
-	  case IFN_SCATTER_STORE:
-	    return TREE_TYPE (gimple_call_arg (call_stmt, 3));
-	  case IFN_MASK_SCATTER_STORE:
-	    return TREE_TYPE (gimple_call_arg (call_stmt, 4));
-	  default:
-	    break;
-	  }
-      return gimple_call_return_type (call_stmt);
-    }
-  else if (code == GIMPLE_ASSIGN)
-    {
-      if (gimple_assign_rhs_code (stmt) == POINTER_PLUS_EXPR)
-        return TREE_TYPE (gimple_assign_rhs1 (stmt));
-      else
-        /* As fallback use the type of the LHS.  */
-        return TREE_TYPE (gimple_get_lhs (stmt));
-    }
-  else if (code == GIMPLE_COND)
-    return boolean_type_node;
-  else
-    return void_type_node;
-}
 
 /* Enum and arrays used for allocation stats.  Keep in sync with
    gimple.c:gimple_alloc_kind_names.  */

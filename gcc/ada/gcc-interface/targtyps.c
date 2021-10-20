@@ -6,7 +6,7 @@
  *                                                                          *
  *                                  Body                                    *
  *                                                                          *
- *          Copyright (C) 1992-2020, Free Software Foundation, Inc.         *
+ *          Copyright (C) 1992-2021, Free Software Foundation, Inc.         *
  *                                                                          *
  * GNAT is free software;  you can  redistribute it  and/or modify it under *
  * terms of the  GNU General Public License as published  by the Free Soft- *
@@ -29,10 +29,12 @@
 #include "system.h"
 #include "coretypes.h"
 #include "tm.h"
+#include "target.h"
 #include "tree.h"
 
 #include "ada.h"
 #include "types.h"
+#include "sinfo.h"
 #include "ada-tree.h"
 #include "gigi.h"
 
@@ -92,6 +94,15 @@ Pos
 get_target_long_long_size (void)
 {
   return LONG_LONG_TYPE_SIZE;
+}
+
+Pos
+get_target_long_long_long_size (void)
+{
+  if (targetm.scalar_mode_supported_p (TImode))
+    return GET_MODE_BITSIZE (TImode);
+  else
+    return LONG_LONG_TYPE_SIZE;
 }
 
 Pos

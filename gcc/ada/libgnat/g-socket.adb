@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---                     Copyright (C) 2001-2020, AdaCore                     --
+--                     Copyright (C) 2001-2021, AdaCore                     --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -41,6 +41,8 @@ with GNAT.Sockets.Thin_Common; use GNAT.Sockets.Thin_Common;
 with GNAT.Sockets.Linker_Options;
 pragma Warnings (Off, GNAT.Sockets.Linker_Options);
 --  Need to include pragma Linker_Options which is platform dependent
+
+with GNAT.Sockets.Poll;
 
 with System;               use System;
 with System.Communication; use System.Communication;
@@ -94,6 +96,9 @@ package body GNAT.Sockets is
 
    Options : constant array (Specific_Option_Name) of C.int :=
                (Keep_Alive          => SOSC.SO_KEEPALIVE,
+                Keep_Alive_Count    => SOSC.TCP_KEEPCNT,
+                Keep_Alive_Idle     => SOSC.TCP_KEEPIDLE,
+                Keep_Alive_Interval => SOSC.TCP_KEEPINTVL,
                 Reuse_Address       => SOSC.SO_REUSEADDR,
                 Broadcast           => SOSC.SO_BROADCAST,
                 Send_Buffer         => SOSC.SO_SNDBUF,
@@ -186,10 +191,6 @@ package body GNAT.Sockets is
        else Value);
    --  Removes dot at the end of error message
 
-   procedure Raise_Socket_Error (Error : Integer);
-   --  Raise Socket_Error with an exception message describing the error code
-   --  from errno.
-
    procedure Raise_Host_Error (H_Error : Integer; Name : String);
    --  Raise Host_Error exception with message describing error code (note
    --  hstrerror seems to be obsolete) from h_errno. Name is the name
@@ -256,15 +257,13 @@ package body GNAT.Sockets is
 
    procedure Wait_On_Socket
      (Socket   : Socket_Type;
-      For_Read : Boolean;
+      Event    : Poll.Wait_Event_Set;
       Timeout  : Selector_Duration;
       Selector : access Selector_Type := null;
       Status   : out Selector_Status);
    --  Common code for variants of socket operations supporting a timeout:
-   --  block in Check_Selector on Socket for at most the indicated timeout.
-   --  If For_Read is True, Socket is added to the read set for this call, else
-   --  it is added to the write set. If no selector is provided, a local one is
-   --  created for this call and destroyed prior to returning.
+   --  block in Poll.Wait on Socket for at most the indicated timeout.
+   --  Event parameter defines what the Poll.Wait is waiting for.
 
    type Sockets_Library_Controller is new Ada.Finalization.Limited_Controlled
      with null record;
@@ -375,11 +374,11 @@ package body GNAT.Sockets is
       --  Wait for socket to become available for reading
 
       Wait_On_Socket
-        (Socket    => Server,
-         For_Read  => True,
-         Timeout   => Timeout,
-         Selector  => Selector,
-         Status    => Status);
+        (Socket   => Server,
+         Event    => Poll.Input_Event,
+         Timeout  => Timeout,
+         Selector => Selector,
+         Status   => Status);
 
       --  Accept connection if available
 
@@ -733,7 +732,7 @@ package body GNAT.Sockets is
       else
          Wait_On_Socket
            (Socket   => Socket,
-            For_Read => False,
+            Event    => Poll.Output_Event,
             Timeout  => Timeout,
             Selector => Selector,
             Status   => Status);
@@ -1446,6 +1445,9 @@ package body GNAT.Sockets is
             | Error
             | Generic_Option
             | Keep_Alive
+            | Keep_Alive_Count
+            | Keep_Alive_Idle
+            | Keep_Alive_Interval
             | Multicast_If_V4
             | Multicast_If_V6
             | Multicast_Loop_V4
@@ -1515,6 +1517,15 @@ package body GNAT.Sockets is
          =>
             Opt.Enabled := (V4 /= 0);
 
+         when Keep_Alive_Count =>
+            Opt.Count := Natural (V4);
+
+         when Keep_Alive_Idle =>
+            Opt.Idle_Seconds := Natural (V4);
+
+         when Keep_Alive_Interval =>
+            Opt.Interval_Seconds := Natural (V4);
+
          when Busy_Polling =>
             Opt.Microseconds := Natural (V4);
 
@@ -1559,14 +1570,18 @@ package body GNAT.Sockets is
             | Send_Timeout
          =>
             if Is_Windows then
-
-               --  Timeout is in milliseconds, actual value is 500 ms +
-               --  returned value (unless it is 0).
-
                if U4 = 0 then
                   Opt.Timeout := 0.0;
+
                else
-                  Opt.Timeout :=  Duration (U4) / 1000 + 0.500;
+                  if Minus_500ms_Windows_Timeout then
+                     --  Timeout is in milliseconds, actual value is 500 ms +
+                     --  returned value (unless it is 0).
+
+                     U4 := U4 + 500;
+                  end if;
+
+                  Opt.Timeout := Duration (U4) / 1000;
                end if;
 
             else
@@ -2020,57 +2035,32 @@ package body GNAT.Sockets is
 
    procedure Wait_On_Socket
      (Socket   : Socket_Type;
-      For_Read : Boolean;
+      Event    : Poll.Wait_Event_Set;
       Timeout  : Selector_Duration;
       Selector : access Selector_Type := null;
       Status   : out Selector_Status)
    is
-      type Local_Selector_Access is access Selector_Type;
-      for Local_Selector_Access'Storage_Size use Selector_Type'Size;
+      Fd_Set : Poll.Set := Poll.To_Set (Socket, Event, 2);
+      --  Socket itself and second place for signaling socket if necessary
 
-      procedure Unchecked_Free is new Ada.Unchecked_Deallocation
-        (Selector_Type, Local_Selector_Access);
-
-      Local_S : Local_Selector_Access;
-      S       : Selector_Access;
-      --  Selector to use for waiting
-
-      R_Fd_Set : Socket_Set_Type;
-      W_Fd_Set : Socket_Set_Type;
+      Count : Natural;
+      Index : Natural := 0;
 
    begin
-      --  Create selector if not provided by the user
+      --  Add signaling socket if selector defined
 
-      if Selector = null then
-         Local_S := new Selector_Type;
-         S := Local_S.all'Unchecked_Access;
-         Create_Selector (S.all);
+      if Selector /= null then
+         Poll.Append (Fd_Set, Selector.R_Sig_Socket, Poll.Input_Event);
+      end if;
 
+      Poll.Wait (Fd_Set, Timeout, Count);
+
+      if Count = 0 then
+         Status := Expired;
       else
-         S := Selector.all'Access;
+         Poll.Next (Fd_Set, Index);
+         Status := (if Index = 1 then Completed else Aborted);
       end if;
-
-      if For_Read then
-         Set (R_Fd_Set, Socket);
-      else
-         Set (W_Fd_Set, Socket);
-      end if;
-
-      Check_Selector (S.all, R_Fd_Set, W_Fd_Set, Status, Timeout);
-
-      if Selector = null then
-         Close_Selector (S.all);
-         Unchecked_Free (Local_S);
-      end if;
-
-   exception
-      when others =>
-         Status := Completed;
-
-         if Selector = null then
-            Close_Selector (S.all);
-            Unchecked_Free (Local_S);
-         end if;
    end Wait_On_Socket;
 
    -----------------
@@ -2649,6 +2639,21 @@ package body GNAT.Sockets is
             Len := V4'Size / 8;
             Add := V4'Address;
 
+         when Keep_Alive_Count =>
+            V4  := C.int (Option.Count);
+            Len := V4'Size / 8;
+            Add := V4'Address;
+
+         when Keep_Alive_Idle =>
+            V4  := C.int (Option.Idle_Seconds);
+            Len := V4'Size / 8;
+            Add := V4'Address;
+
+         when Keep_Alive_Interval =>
+            V4  := C.int (Option.Interval_Seconds);
+            Len := V4'Size / 8;
+            Add := V4'Address;
+
          when Busy_Polling =>
             V4  := C.int (Option.Microseconds);
             Len := V4'Size / 8;
@@ -2723,7 +2728,7 @@ package body GNAT.Sockets is
                Len := U4'Size / 8;
                Add := U4'Address;
 
-               U4 := C.unsigned (Option.Timeout / 0.001);
+               U4 := C.unsigned (Option.Timeout * 1000);
 
                if Option.Timeout > 0.0 and then U4 = 0 then
                   --  Avoid round to zero. Zero timeout mean unlimited

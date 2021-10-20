@@ -1,5 +1,5 @@
 /* types.cc -- Lower D frontend types to GCC trees.
-   Copyright (C) 2006-2020 Free Software Foundation, Inc.
+   Copyright (C) 2006-2021 Free Software Foundation, Inc.
 
 GCC is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -40,6 +40,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "attribs.h"
 
 #include "d-tree.h"
+#include "d-target.h"
 
 
 /* Return the signed or unsigned version of TYPE, an integral type, the
@@ -186,8 +187,11 @@ make_array_type (Type *type, unsigned HOST_WIDE_INT size)
       return t;
     }
 
-  return build_array_type (build_ctype (type),
-			   build_index_type (size_int (size - 1)));
+  tree t = build_array_type (build_ctype (type),
+			     build_index_type (size_int (size - 1)));
+  /* Propagate TREE_ADDRESSABLE to the static array type.  */
+  TREE_ADDRESSABLE (t) = TREE_ADDRESSABLE (TREE_TYPE (t));
+  return t;
 }
 
 /* Builds a record type whose name is NAME.  NFIELDS is the number of fields,
@@ -351,6 +355,7 @@ layout_aggregate_members (Dsymbols *members, tree context, bool inherited_p)
 	      const char *ident = var->ident ? var->ident->toChars () : NULL;
 	      tree field = create_field_decl (declaration_type (var), ident,
 					      inherited_p, inherited_p);
+	      apply_user_attributes (var, field);
 	      insert_aggregate_field (context, field, var->offset);
 
 	      /* Because the front-end shares field decls across classes, don't
@@ -400,6 +405,7 @@ layout_aggregate_members (Dsymbols *members, tree context, bool inherited_p)
 
 	  /* And make the corresponding data member.  */
 	  tree field = create_field_decl (type, NULL, 0, 0);
+	  apply_user_attributes (ad, field);
 	  insert_aggregate_field (context, field, ad->anonoffset);
 	  continue;
 	}
@@ -463,7 +469,7 @@ layout_aggregate_type (AggregateDeclaration *decl, tree type,
 	      insert_aggregate_field (type, field, 0);
 	    }
 
-	  if (!id && !cd->isCPPclass ())
+	  if (!id && cd->hasMonitor ())
 	    {
 	      tree field = create_field_decl (ptr_type_node, "__monitor", 1,
 					      inherited_p);
@@ -600,6 +606,12 @@ public:
     t->ctype = ptr_type_node;
   }
 
+  /* Bottom type used for functions that never return.  */
+
+  void visit (TypeNoreturn *t)
+  {
+    t->ctype = void_type_node;
+  }
 
   /* Basic Data Types.  */
 
@@ -788,15 +800,20 @@ public:
     /* Handle any special support for calling conventions.  */
     switch (t->linkage)
       {
-      case LINKpascal:
       case LINKwindows:
-	/* [attribute/linkage]
+	{
+	  /* [attribute/linkage]
 
-	   The Windows convention is distinct from the C convention only
-	   on Win32, where it is equivalent to the stdcall convention.  */
-	if (!global.params.is64bit)
-	  t->ctype = insert_type_attribute (t->ctype, "stdcall");
-	break;
+	     The Windows convention is distinct from the C convention only
+	     on Win32, where it is equivalent to the stdcall convention.  */
+	  unsigned link_system, link_windows;
+	  if (targetdm.d_has_stdcall_convention (&link_system, &link_windows))
+	    {
+	      if (link_windows)
+		t->ctype = insert_type_attribute (t->ctype, "stdcall");
+	    }
+	  break;
+	}
 
       case LINKc:
       case LINKcpp:
@@ -850,19 +867,62 @@ public:
     tree basetype = (t->sym->memtype)
       ? build_ctype (t->sym->memtype) : void_type_node;
 
-    if (!INTEGRAL_TYPE_P (basetype) || TREE_CODE (basetype) == BOOLEAN_TYPE)
+    if (t->sym->isSpecial ())
+      {
+	/* Special enums are opaque types that bind to C types.  */
+	const char *ident = t->toChars ();
+	Type *underlying = NULL;
+
+	/* Skip over the prefixing `__c_'.  */
+	gcc_assert (startswith (ident, "__c_"));
+	ident = ident + strlen ("__c_");
+
+	/* To keep things compatible within the code generation we stick to
+	   mapping to equivalent D types.  However it should be OK to use the
+	   GCC provided C types here as the front-end enforces that everything
+	   must be explicitly cast from a D type to any of the opaque types.  */
+	if (strcmp (ident, "long") == 0)
+	  underlying = build_frontend_type (long_integer_type_node);
+	else if (strcmp (ident, "ulong") == 0)
+	  underlying = build_frontend_type (long_unsigned_type_node);
+	else if (strcmp (ident, "wchar_t") == 0)
+	  underlying =
+	    build_frontend_type (make_unsigned_type (WCHAR_TYPE_SIZE));
+	else if (strcmp (ident, "longlong") == 0)
+	  underlying = build_frontend_type (long_long_integer_type_node);
+	else if (strcmp (ident, "ulonglong") == 0)
+	  underlying = build_frontend_type (long_long_unsigned_type_node);
+	else if (strcmp (ident, "long_double") == 0)
+	  underlying = build_frontend_type (long_double_type_node);
+	else if (strcmp (ident, "complex_real") == 0)
+	  underlying = build_frontend_type (complex_long_double_type_node);
+	else if (strcmp (ident, "complex_float") == 0)
+	  underlying = build_frontend_type (complex_float_type_node);
+	else if (strcmp (ident, "complex_double") == 0)
+	  underlying = build_frontend_type (complex_double_type_node);
+
+	/* Conversion failed or there's an unhandled special type.  */
+	gcc_assert (underlying != NULL);
+
+	t->ctype = build_variant_type_copy (build_ctype (underlying));
+	build_type_decl (t->ctype, t->sym);
+      }
+    else if (!INTEGRAL_TYPE_P (basetype) || TREE_CODE (basetype) == BOOLEAN_TYPE)
       {
 	/* Enums in D2 can have a base type that is not necessarily integral.
 	   For these, we simplify this a little by using the base type directly
 	   instead of building an ENUMERAL_TYPE.  */
 	t->ctype = build_variant_type_copy (basetype);
+	build_type_decl (t->ctype, t->sym);
       }
     else
       {
 	t->ctype = make_node (ENUMERAL_TYPE);
-	ENUM_IS_SCOPED (t->ctype) = 1;
 	TYPE_LANG_SPECIFIC (t->ctype) = build_lang_type (t);
 	d_keep (t->ctype);
+
+	ENUM_IS_SCOPED (t->ctype) = 1;
+	TREE_TYPE (t->ctype) = basetype;
 
 	if (flag_short_enums)
 	  TYPE_PACKED (t->ctype) = 1;
@@ -959,7 +1019,10 @@ public:
     if (!t->sym->isPOD ())
       {
 	for (tree tv = t->ctype; tv != NULL_TREE; tv = TYPE_NEXT_VARIANT (tv))
-	  TREE_ADDRESSABLE (tv) = 1;
+	  {
+	    TREE_ADDRESSABLE (tv) = 1;
+	    SET_TYPE_MODE (tv, BLKmode);
+	  }
       }
   }
 
@@ -994,7 +1057,10 @@ public:
 
     /* Classes only live in memory, so always set the TREE_ADDRESSABLE bit.  */
     for (tree tv = basetype; tv != NULL_TREE; tv = TYPE_NEXT_VARIANT (tv))
-      TREE_ADDRESSABLE (tv) = 1;
+      {
+	TREE_ADDRESSABLE (tv) = 1;
+	SET_TYPE_MODE (tv, BLKmode);
+      }
 
     /* Type is final, there are no derivations.  */
     if (t->sym->storage_class & STCfinal)

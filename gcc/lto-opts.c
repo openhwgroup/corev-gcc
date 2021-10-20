@@ -1,6 +1,6 @@
 /* LTO IL options.
 
-   Copyright (C) 2009-2020 Free Software Foundation, Inc.
+   Copyright (C) 2009-2021 Free Software Foundation, Inc.
    Contributed by Simon Baldwin <simonb@google.com>
 
 This file is part of GCC.
@@ -70,17 +70,17 @@ lto_write_options (void)
 
   obstack_init (&temporary_obstack);
 
-  if (!global_options_set.x_flag_openmp
+  if (!OPTION_SET_P (flag_openmp)
       && !global_options.x_flag_openmp)
     append_to_collect_gcc_options (&temporary_obstack, &first_p,
 				   "-fno-openmp");
-  if (!global_options_set.x_flag_openacc
+  if (!OPTION_SET_P (flag_openacc)
       && !global_options.x_flag_openacc)
     append_to_collect_gcc_options (&temporary_obstack, &first_p,
 				   "-fno-openacc");
   /* Append PIC/PIE mode because its default depends on target and it is
      subject of merging in lto-wrapper.  */
-  if (!global_options_set.x_flag_pic && !global_options_set.x_flag_pie)
+  if (!OPTION_SET_P (flag_pic) && !OPTION_SET_P (flag_pie))
     {
        append_to_collect_gcc_options (&temporary_obstack, &first_p,
 				      global_options.x_flag_pic == 2
@@ -94,7 +94,7 @@ lto_write_options (void)
 				      : "-fno-pie");
     }
 
-  if (!global_options_set.x_flag_cf_protection)
+  if (!OPTION_SET_P (flag_cf_protection))
     {
       append_to_collect_gcc_options (
 	&temporary_obstack, &first_p,
@@ -174,7 +174,8 @@ lto_write_options (void)
 	 We do not need those.  The only exception is -foffload option, if we
 	 write it in offload_lto section.  Also drop all diagnostic options.  */
       if ((cl_options[option->opt_index].flags & (CL_DRIVER|CL_WARNING))
-	  && (!lto_stream_offload_p || option->opt_index != OPT_foffload_))
+	  && (!lto_stream_offload_p
+	      || option->opt_index != OPT_foffload_options_))
 	continue;
 
       for (j = 0; j < option->canonical_option_num_elements; ++j)

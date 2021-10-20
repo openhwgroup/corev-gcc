@@ -1,5 +1,5 @@
 /* Subroutines for insn-output.c for Motorola 68000 family.
-   Copyright (C) 1987-2020 Free Software Foundation, Inc.
+   Copyright (C) 1987-2021 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -500,13 +500,13 @@ m68k_option_override (void)
   const struct m68k_target_selection *entry;
   unsigned long target_mask;
 
-  if (global_options_set.x_m68k_arch_option)
+  if (OPTION_SET_P (m68k_arch_option))
     m68k_arch_entry = &all_isas[m68k_arch_option];
 
-  if (global_options_set.x_m68k_cpu_option)
+  if (OPTION_SET_P (m68k_cpu_option))
     m68k_cpu_entry = &all_devices[(int) m68k_cpu_option];
 
-  if (global_options_set.x_m68k_tune_option)
+  if (OPTION_SET_P (m68k_tune_option))
     m68k_tune_entry = &all_microarchs[(int) m68k_tune_option];
 
   /* User can choose:
@@ -1993,8 +1993,6 @@ m68k_output_btst (rtx countop, rtx dataop, rtx_code code, int signpos)
 	     count == 0 followed by bcc/bcs are also possible, but need
 	     m68k-specific CC_Z_IN_NOT_V and CC_Z_IN_NOT_C flags. */
 	}
-
-      cc_status.flags = CC_NOT_NEGATIVE;
     }
   output_asm_insn ("btst %0,%1", ops);
   return code;
@@ -7117,6 +7115,9 @@ m68k_excess_precision (enum excess_precision_type type)
 	  return FLT_EVAL_METHOD_PROMOTE_TO_FLOAT;
 
 	return FLT_EVAL_METHOD_PROMOTE_TO_LONG_DOUBLE;
+      case EXCESS_PRECISION_TYPE_FLOAT16:
+	error ("%<-fexcess-precision=16%> is not supported on this target");
+	break;
       default:
 	gcc_unreachable ();
     }

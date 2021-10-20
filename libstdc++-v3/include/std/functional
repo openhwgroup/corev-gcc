@@ -1,6 +1,6 @@
 // <functional> -*- C++ -*-
 
-// Copyright (C) 2001-2020 Free Software Foundation, Inc.
+// Copyright (C) 2001-2021 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -61,17 +61,28 @@
 # include <unordered_map>
 # include <vector>
 # include <array>
-# include <utility>
 # include <bits/stl_algo.h>
 #endif
 #if __cplusplus > 201703L
-# include <bits/range_cmp.h>
+# include <bits/ranges_cmp.h>
 # include <compare>
 #endif
+#if __cplusplus > 202002L
+# include <bits/move_only_function.h>
+#endif
+
+#endif // C++11
 
 namespace std _GLIBCXX_VISIBILITY(default)
 {
 _GLIBCXX_BEGIN_NAMESPACE_VERSION
+
+  /** @brief The type of placeholder objects defined by libstdc++.
+   *  @ingroup binders
+   */
+  template<int _Num> struct _Placeholder { };
+
+#if __cplusplus >= 201103L
 
 #if __cplusplus >= 201703L
 # define __cpp_lib_invoke 201411L
@@ -88,6 +99,21 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       return std::__invoke(std::forward<_Callable>(__fn),
 			   std::forward<_Args>(__args)...);
     }
+
+#if __cplusplus > 202002L
+# define __cpp_lib_invoke_r 202106L
+
+  /// Invoke a callable object and convert the result to _Res.
+  template<typename _Res, typename _Callable, typename... _Args>
+    requires is_invocable_r_v<_Res, _Callable, _Args...>
+    constexpr _Res
+    invoke_r(_Callable&& __fn, _Args&&... __args)
+    noexcept(is_nothrow_invocable_r_v<_Res, _Callable, _Args...>)
+    {
+      return std::__invoke_r<_Res>(std::forward<_Callable>(__fn),
+				   std::forward<_Args>(__args)...);
+    }
+#endif // C++23
 #endif // C++17
 
   template<typename _MemFunPtr,
@@ -202,11 +228,6 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
   template <typename _Tp> inline constexpr int is_placeholder_v
     = is_placeholder<_Tp>::value;
 #endif // C++17
-
-  /** @brief The type of placeholder objects defined by libstdc++.
-   *  @ingroup binders
-   */
-  template<int _Num> struct _Placeholder { };
 
   /** @namespace std::placeholders
    *  @brief ISO C++ 2011 namespace for std::bind placeholders.
@@ -905,8 +926,8 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
   template<typename _Fn, typename... _Args>
     constexpr _Bind_front_t<_Fn, _Args...>
     bind_front(_Fn&& __fn, _Args&&... __args)
-    noexcept(is_nothrow_constructible_v<int, _Bind_front_t<_Fn, _Args...>,
-					_Fn, _Args...>)
+    noexcept(is_nothrow_constructible_v<_Bind_front_t<_Fn, _Args...>,
+					int, _Fn, _Args...>)
     {
       return _Bind_front_t<_Fn, _Args...>(0, std::forward<_Fn>(__fn),
 					  std::forward<_Args>(__args)...);
@@ -1062,7 +1083,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       template<typename _RAIter, typename _Unused>
 	__boyer_moore_array_base(_RAIter __pat, size_t __patlen,
 				 _Unused&&, _Pred&& __pred)
-	: _M_bad_char{ _GLIBCXX_STD_C::array<_Tp, _Len>{}, std::move(__pred) }
+	: _M_bad_char{ array<_Tp, _Len>{}, std::move(__pred) }
 	{
 	  std::get<0>(_M_bad_char).fill(__patlen);
 	  if (__patlen > 0)
@@ -1090,7 +1111,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       const _Pred&
       _M_pred() const { return std::get<1>(_M_bad_char); }
 
-      tuple<_GLIBCXX_STD_C::array<_Tp, _Len>, _Pred> _M_bad_char;
+      tuple<array<_Tp, _Len>, _Pred> _M_bad_char;
     };
 
   // Use __boyer_moore_array_base when pattern consists of narrow characters
@@ -1099,9 +1120,9 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
            typename _Val = typename iterator_traits<_RAIter>::value_type,
 	   typename _Diff = typename iterator_traits<_RAIter>::difference_type>
     using __boyer_moore_base_t
-      = conditional_t<__is_byte_like<_Val, _Pred>::value,
-		      __boyer_moore_array_base<_Diff, 256, _Pred>,
-		      __boyer_moore_map_base<_Val, _Diff, _Hash, _Pred>>;
+      = __conditional_t<__is_byte_like<_Val, _Pred>::value,
+			__boyer_moore_array_base<_Diff, 256, _Pred>,
+			__boyer_moore_map_base<_Val, _Diff, _Hash, _Pred>>;
 
   template<typename _RAIter, typename _Hash
 	     = hash<typename iterator_traits<_RAIter>::value_type>,
@@ -1271,10 +1292,9 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 
 #endif // C++17
 #endif // C++14
+#endif // C++11
 
 _GLIBCXX_END_NAMESPACE_VERSION
 } // namespace std
-
-#endif // C++11
 
 #endif // _GLIBCXX_FUNCTIONAL

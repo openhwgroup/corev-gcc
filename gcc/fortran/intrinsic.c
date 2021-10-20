@@ -1,6 +1,6 @@
 /* Build up a list of intrinsic subroutines and functions for the
    name-resolution stage.
-   Copyright (C) 2000-2020 Free Software Foundation, Inc.
+   Copyright (C) 2000-2021 Free Software Foundation, Inc.
    Contributed by Andy Vaught & Katherine Holcomb
 
 This file is part of GCC.
@@ -119,6 +119,43 @@ gfc_get_intrinsic_sub_symbol (const char *name)
 
   gfc_commit_symbol (sym);
 
+  return sym;
+}
+
+/* Get a symbol for a resolved function, with its special name.  The
+   actual argument list needs to be set by the caller.  */
+
+gfc_symbol *
+gfc_get_intrinsic_function_symbol (gfc_expr *expr)
+{
+  gfc_symbol *sym;
+
+  gfc_get_symbol (expr->value.function.name, gfc_intrinsic_namespace, &sym);
+  sym->attr.external = 1;
+  sym->attr.function = 1;
+  sym->attr.always_explicit = 1;
+  sym->attr.proc = PROC_INTRINSIC;
+  sym->attr.flavor = FL_PROCEDURE;
+  sym->result = sym;
+  if (expr->rank > 0)
+    {
+      sym->attr.dimension = 1;
+      sym->as = gfc_get_array_spec ();
+      sym->as->type = AS_ASSUMED_SHAPE;
+      sym->as->rank = expr->rank;
+    }
+  return sym;
+}
+
+/* Find a symbol for a resolved intrinsic procedure, return NULL if
+   not found.  */
+
+gfc_symbol *
+gfc_find_intrinsic_symbol (gfc_expr *expr)
+{
+  gfc_symbol *sym;
+  gfc_find_symbol (expr->value.function.name, gfc_intrinsic_namespace,
+		   0, &sym);
   return sym;
 }
 
@@ -3423,7 +3460,7 @@ add_subroutines (void)
   /* Argument names.  These are used as argument keywords and so need to
      match the documentation.  Please keep this list in sorted order.  */
   static const char
-    *a = "a", *c = "count", *cm = "count_max", *com = "command",
+    *a = "a", *c_ = "c", *c = "count", *cm = "count_max", *com = "command",
     *cr = "count_rate", *dt = "date", *errmsg = "errmsg", *f = "from",
     *fp = "frompos", *gt = "get", *h = "harvest", *han = "handler",
     *length = "length", *ln = "len", *md = "mode", *msk = "mask",
@@ -3803,12 +3840,12 @@ add_subroutines (void)
   add_sym_3s ("fgetc", GFC_ISYM_FGETC, CLASS_IMPURE, BT_UNKNOWN, 0, GFC_STD_GNU,
 	      gfc_check_fgetputc_sub, NULL, gfc_resolve_fgetc_sub,
 	      ut, BT_INTEGER, di, REQUIRED, INTENT_IN,
-	      c, BT_CHARACTER, dc, REQUIRED, INTENT_OUT,
+	      c_, BT_CHARACTER, dc, REQUIRED, INTENT_OUT,
 	      st, BT_INTEGER, di, OPTIONAL, INTENT_OUT);
 
   add_sym_2s ("fget", GFC_ISYM_FGET, CLASS_IMPURE, BT_UNKNOWN, 0, GFC_STD_GNU,
 	      gfc_check_fgetput_sub, NULL, gfc_resolve_fget_sub,
-	      c, BT_CHARACTER, dc, REQUIRED, INTENT_OUT,
+	      c_, BT_CHARACTER, dc, REQUIRED, INTENT_OUT,
 	      st, BT_INTEGER, di, OPTIONAL, INTENT_OUT);
 
   add_sym_1s ("flush", GFC_ISYM_FLUSH, CLASS_IMPURE, BT_UNKNOWN, 0, GFC_STD_GNU,
@@ -3818,12 +3855,12 @@ add_subroutines (void)
   add_sym_3s ("fputc", GFC_ISYM_FPUTC, CLASS_IMPURE, BT_UNKNOWN, 0, GFC_STD_GNU,
 	      gfc_check_fgetputc_sub, NULL, gfc_resolve_fputc_sub,
 	      ut, BT_INTEGER, di, REQUIRED, INTENT_IN,
-	      c, BT_CHARACTER, dc, REQUIRED, INTENT_IN,
+	      c_, BT_CHARACTER, dc, REQUIRED, INTENT_IN,
 	      st, BT_INTEGER, di, OPTIONAL, INTENT_OUT);
 
   add_sym_2s ("fput", GFC_ISYM_FPUT, CLASS_IMPURE, BT_UNKNOWN, 0, GFC_STD_GNU,
 	      gfc_check_fgetput_sub, NULL, gfc_resolve_fput_sub,
-	      c, BT_CHARACTER, dc, REQUIRED, INTENT_IN,
+	      c_, BT_CHARACTER, dc, REQUIRED, INTENT_IN,
 	      st, BT_INTEGER, di, OPTIONAL, INTENT_OUT);
 
   add_sym_1s ("free", GFC_ISYM_FREE, CLASS_IMPURE, BT_UNKNOWN, 0, GFC_STD_GNU,
@@ -5034,9 +5071,19 @@ got_specific:
       sym->attr.intrinsic = 1;
       sym->attr.flavor = FL_PROCEDURE;
     }
+  if (sym->attr.flavor == FL_PROCEDURE)
+    {
+      sym->attr.function = 1;
+      sym->attr.proc = PROC_INTRINSIC;
+    }
 
   if (!sym->module)
     gfc_intrinsic_symbol (sym);
+
+  /* Have another stab at simplification since elemental intrinsics with array
+     actual arguments would be missed by the calls above to do_simplify.  */
+  if (isym->elemental)
+    gfc_simplify_expr (expr, 1);
 
   return MATCH_YES;
 }
@@ -5190,12 +5237,13 @@ gfc_convert_type_warn (gfc_expr *expr, gfc_typespec *ts, int eflag, int wflag,
   /* In building an array constructor, gfortran can end up here when no
      conversion is required for an intrinsic type.  We need to let derived
      types drop through.  */
-  if (from_ts.type != BT_DERIVED
+  if (from_ts.type != BT_DERIVED && from_ts.type != BT_CLASS
       && (from_ts.type == ts->type && from_ts.kind == ts->kind))
     return true;
 
-  if (expr->ts.type == BT_DERIVED && ts->type == BT_DERIVED
-      && gfc_compare_types (&expr->ts, ts))
+  if ((expr->ts.type == BT_DERIVED || expr->ts.type == BT_CLASS)
+      && (ts->type == BT_DERIVED || ts->type == BT_CLASS)
+      && gfc_compare_types (ts, &expr->ts))
     return true;
 
   /* If array is true then conversion is in an array constructor where

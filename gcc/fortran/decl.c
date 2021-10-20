@@ -1,5 +1,5 @@
 /* Declaration statement matcher
-   Copyright (C) 2002-2020 Free Software Foundation, Inc.
+   Copyright (C) 2002-2021 Free Software Foundation, Inc.
    Contributed by Andy Vaught
 
 This file is part of GCC.
@@ -896,9 +896,6 @@ match_clist_expr (gfc_expr **result, gfc_typespec *ts, gfc_array_spec *as)
       expr->ts = *ts;
       expr->value.constructor = array_head;
 
-      expr->rank = as->rank;
-      expr->shape = gfc_get_shape (expr->rank);
-
       /* Validate sizes.  We built expr ourselves, so cons_size will be
 	 constant (we fail above for non-constant expressions).
 	 We still need to verify that the sizes match.  */
@@ -911,6 +908,12 @@ match_clist_expr (gfc_expr **result, gfc_typespec *ts, gfc_array_spec *as)
       mpz_clear (cons_size);
       if (cmp)
 	goto cleanup;
+
+      /* Set the rank/shape to match the LHS as auto-reshape is implied. */
+      expr->rank = as->rank;
+      expr->shape = gfc_get_shape (as->rank);
+      for (int i = 0; i < as->rank; ++i)
+	spec_dimen_size (as, i, &expr->shape[i]);
     }
 
   /* Make sure scalar types match. */
@@ -1145,6 +1148,9 @@ char_len_param_value (gfc_expr **expr, bool *deferred)
 
       gfc_free_expr (e);
     }
+
+  if (gfc_seen_div0)
+    m = MATCH_ERROR;
 
   return m;
 
@@ -1548,20 +1554,99 @@ gfc_verify_c_interop_param (gfc_symbol *sym)
 			     sym->ns->proc_name->name);
 	    }
 
+	  /* Per F2018, 18.3.6 (5), pointer + contiguous is not permitted.  */
+	  if (sym->attr.pointer && sym->attr.contiguous)
+	    gfc_error ("Dummy argument %qs at %L may not be a pointer with "
+		       "CONTIGUOUS attribute as procedure %qs is BIND(C)",
+		       sym->name, &sym->declared_at, sym->ns->proc_name->name);
+
+	  /* Per F2018, C1557, pointer/allocatable dummies to a bind(c)
+	     procedure that are default-initialized are not permitted.  */
+	  if ((sym->attr.pointer || sym->attr.allocatable)
+	      && sym->ts.type == BT_DERIVED
+	      && gfc_has_default_initializer (sym->ts.u.derived))
+	    {
+	      gfc_error ("Default-initialized %s dummy argument %qs "
+			 "at %L is not permitted in BIND(C) procedure %qs",
+			 (sym->attr.pointer ? "pointer" : "allocatable"),
+			 sym->name, &sym->declared_at,
+			 sym->ns->proc_name->name);
+	      retval = false;
+	    }
+
           /* Character strings are only C interoperable if they have a
-             length of 1.  */
-          if (sym->ts.type == BT_CHARACTER && !sym->attr.dimension)
+	     length of 1.  However, as an argument they are also iteroperable
+	     when passed as descriptor (which requires len=: or len=*).  */
+	  if (sym->ts.type == BT_CHARACTER)
 	    {
 	      gfc_charlen *cl = sym->ts.u.cl;
-	      if (!cl || !cl->length || cl->length->expr_type != EXPR_CONSTANT
-                  || mpz_cmp_si (cl->length->value.integer, 1) != 0)
+
+	      if (sym->attr.allocatable || sym->attr.pointer)
 		{
-		  gfc_error ("Character argument %qs at %L "
-			     "must be length 1 because "
-			     "procedure %qs is BIND(C)",
-			     sym->name, &sym->declared_at,
-			     sym->ns->proc_name->name);
+		  /* F2018, 18.3.6 (6).  */
+		  if (!sym->ts.deferred)
+		    {
+		      if (sym->attr.allocatable)
+			gfc_error ("Allocatable character dummy argument %qs "
+				   "at %L must have deferred length as "
+				   "procedure %qs is BIND(C)", sym->name,
+				   &sym->declared_at, sym->ns->proc_name->name);
+		      else
+			gfc_error ("Pointer character dummy argument %qs at %L "
+				   "must have deferred length as procedure %qs "
+				   "is BIND(C)", sym->name, &sym->declared_at,
+				   sym->ns->proc_name->name);
+		      retval = false;
+		    }
+		  else if (!gfc_notify_std (GFC_STD_F2018,
+					    "Deferred-length character dummy "
+					    "argument %qs at %L of procedure "
+					    "%qs with BIND(C) attribute",
+					    sym->name, &sym->declared_at,
+					    sym->ns->proc_name->name))
+		    retval = false;
+		}
+	      else if (sym->attr.value
+		       && (!cl || !cl->length
+			   || cl->length->expr_type != EXPR_CONSTANT
+			   || mpz_cmp_si (cl->length->value.integer, 1) != 0))
+		{
+		  gfc_error ("Character dummy argument %qs at %L must be "
+			     "of length 1 as it has the VALUE attribute",
+			     sym->name, &sym->declared_at);
 		  retval = false;
+		}
+	      else if (!cl || !cl->length)
+		{
+		  /* Assumed length; F2018, 18.3.6 (5)(2).
+		     Uses the CFI array descriptor - also for scalars and
+		     explicit-size/assumed-size arrays.  */
+		  if (!gfc_notify_std (GFC_STD_F2018,
+				      "Assumed-length character dummy argument "
+				      "%qs at %L of procedure %qs with BIND(C) "
+				      "attribute", sym->name, &sym->declared_at,
+				      sym->ns->proc_name->name))
+		    retval = false;
+		}
+	      else if (cl->length->expr_type != EXPR_CONSTANT
+		       || mpz_cmp_si (cl->length->value.integer, 1) != 0)
+		{
+		  /* F2018, 18.3.6, (5), item 4.  */
+		  if (!sym->attr.dimension
+		      || sym->as->type == AS_ASSUMED_SIZE
+		      || sym->as->type == AS_EXPLICIT)
+		    {
+		      gfc_error ("Character dummy argument %qs at %L must be "
+				 "of constant length of one or assumed length, "
+				 "unless it has assumed shape or assumed rank, "
+				 "as procedure %qs has the BIND(C) attribute",
+				 sym->name, &sym->declared_at,
+				 sym->ns->proc_name->name);
+		      retval = false;
+		    }
+		  /* else: valid only since F2018 - and an assumed-shape/rank
+		     array; however, gfc_notify_std is already called when
+		     those array types are used. Thus, silently accept F200x. */
 		}
 	    }
 
@@ -2078,6 +2163,24 @@ add_init_expr_to_sym (const char *name, gfc_expr **initp, locus *var_locus)
 	  sym->as->type = AS_EXPLICIT;
 	}
 
+      /* Ensure that explicit bounds are simplified.  */
+      if (sym->attr.flavor == FL_PARAMETER && sym->attr.dimension
+	  && sym->as->type == AS_EXPLICIT)
+	{
+	  for (int dim = 0; dim < sym->as->rank; ++dim)
+	    {
+	      gfc_expr *e;
+
+	      e = sym->as->lower[dim];
+	      if (e->expr_type != EXPR_CONSTANT)
+		gfc_reduce_init_expr (e);
+
+	      e = sym->as->upper[dim];
+	      if (e->expr_type != EXPR_CONSTANT)
+		gfc_reduce_init_expr (e);
+	    }
+	}
+
       /* Need to check if the expression we initialized this
 	 to was one of the iso_c_binding named constants.  If so,
 	 and we're a parameter (constant), let it be iso_c.
@@ -2105,12 +2208,16 @@ add_init_expr_to_sym (const char *name, gfc_expr **initp, locus *var_locus)
 	  gfc_expr *array;
 	  int n;
 	  if (sym->attr.flavor == FL_PARAMETER
-		&& init->expr_type == EXPR_CONSTANT
-		&& spec_size (sym->as, &size)
-		&& mpz_cmp_si (size, 0) > 0)
+	      && gfc_is_constant_expr (init)
+	      && (init->expr_type == EXPR_CONSTANT
+		  || init->expr_type == EXPR_STRUCTURE)
+	      && spec_size (sym->as, &size)
+	      && mpz_cmp_si (size, 0) > 0)
 	    {
 	      array = gfc_get_array_expr (init->ts.type, init->ts.kind,
 					  &init->where);
+	      if (init->ts.type == BT_DERIVED)
+		array->ts.u.derived = init->ts.u.derived;
 	      for (n = 0; n < (int)mpz_get_si (size); n++)
 		gfc_constructor_append_expr (&array->value.constructor,
 					     n == 0
@@ -2718,7 +2825,7 @@ variable_decl (int elem)
     }
 
   /* %FILL components may not have initializers.  */
-  if (gfc_str_startswith (name, "%FILL") && gfc_match_eos () != MATCH_YES)
+  if (startswith (name, "%FILL") && gfc_match_eos () != MATCH_YES)
     {
       gfc_error ("%qs entity cannot have an initializer at %C", "%FILL");
       m = MATCH_ERROR;
@@ -3063,8 +3170,7 @@ gfc_match_old_kind_spec (gfc_typespec *ts)
 	  if (flag_real4_kind == 16)
 	    ts->kind = 16;
 	}
-
-      if (ts->kind == 8)
+      else if (ts->kind == 8)
 	{
 	  if (flag_real8_kind == 4)
 	    ts->kind = 4;
@@ -3243,8 +3349,7 @@ close_brackets:
 	  if (flag_real4_kind == 16)
 	    ts->kind = 16;
 	}
-
-      if (ts->kind == 8)
+      else if (ts->kind == 8)
 	{
 	  if (flag_real8_kind == 4)
 	    ts->kind = 4;
@@ -4832,7 +4937,7 @@ gfc_match_implicit (void)
       /* Last chance -- check <TYPE> <SELECTOR> (<RANGE>).  */
       if (ts.type == BT_CHARACTER)
 	m = gfc_match_char_spec (&ts);
-      else if (ts.type != BT_DERIVED)
+      else if (gfc_numeric_ts(&ts) || ts.type == BT_LOGICAL)
 	{
 	  m = gfc_match_kind_spec (&ts, false);
 	  if (m == MATCH_NO)
@@ -6004,7 +6109,7 @@ get_bind_c_idents (void)
       found_id = MATCH_YES;
       gfc_get_ha_symbol (name, &tmp_sym);
     }
-  else if (match_common_name (name) == MATCH_YES)
+  else if (gfc_match_common_name (name) == MATCH_YES)
     {
       found_id = MATCH_YES;
       com_block = gfc_get_common (name, 0);
@@ -6049,7 +6154,7 @@ get_bind_c_idents (void)
 	      found_id = MATCH_YES;
 	      gfc_get_ha_symbol (name, &tmp_sym);
 	    }
-	  else if (match_common_name (name) == MATCH_YES)
+	  else if (gfc_match_common_name (name) == MATCH_YES)
 	    {
 	      found_id = MATCH_YES;
 	      com_block = gfc_get_common (name, 0);
@@ -7405,6 +7510,7 @@ gfc_match_function_decl (void)
      procedure interface body.  */
     if (sym->attr.is_bind_c && sym->attr.module_procedure && sym->old_symbol
   	&& strcmp (sym->name, sym->old_symbol->name) == 0
+	&& sym->binding_label && sym->old_symbol->binding_label
 	&& strcmp (sym->binding_label, sym->old_symbol->binding_label) != 0)
       {
 	  const char *null = "NULL", *s1, *s2;
@@ -7920,6 +8026,7 @@ gfc_match_subroutine (void)
 	 procedure interface body.  */
       if (sym->attr.module_procedure && sym->old_symbol
   	  && strcmp (sym->name, sym->old_symbol->name) == 0
+	  && sym->binding_label && sym->old_symbol->binding_label
 	  && strcmp (sym->binding_label, sym->old_symbol->binding_label) != 0)
 	{
 	  const char *null = "NULL", *s1, *s2;
@@ -8218,7 +8325,7 @@ gfc_match_end (gfc_statement *st)
     {
     case COMP_ASSOCIATE:
     case COMP_BLOCK:
-      if (gfc_str_startswith (block_name, "block@"))
+      if (startswith (block_name, "block@"))
 	block_name = NULL;
       break;
 
@@ -9816,6 +9923,15 @@ gfc_match_submod_proc (void)
 
   if (gfc_match_eos () != MATCH_YES)
     {
+      /* Unset st->n.sym. Note: in reject_statement (), the symbol changes are
+	 undone, such that the st->n.sym->formal points to the original symbol;
+	 if now this namespace is finalized, the formal namespace is freed,
+	 but it might be still needed in the parent namespace.  */
+      gfc_symtree *st = gfc_find_symtree (gfc_current_ns->sym_root, sym->name);
+      st->n.sym = NULL;
+      gfc_free_symbol (sym->tlink);
+      sym->tlink = NULL;
+      sym->refs--;
       gfc_syntax_error (ST_MODULE_PROC);
       return MATCH_ERROR;
     }
@@ -9842,7 +9958,8 @@ gfc_match_modproc (void)
   gfc_namespace *module_ns;
   gfc_interface *old_interface_head, *interface;
 
-  if (gfc_state_stack->state != COMP_INTERFACE
+  if ((gfc_state_stack->state != COMP_INTERFACE
+       && gfc_state_stack->state != COMP_CONTAINS)
       || gfc_state_stack->previous == NULL
       || current_interface.type == INTERFACE_NAMELESS
       || current_interface.type == INTERFACE_ABSTRACT)
@@ -11573,6 +11690,7 @@ const ext_attr_t ext_attr_list[] = {
   { "stdcall",      EXT_ATTR_STDCALL,      "stdcall"   },
   { "fastcall",     EXT_ATTR_FASTCALL,     "fastcall"  },
   { "no_arg_check", EXT_ATTR_NO_ARG_CHECK, NULL        },
+  { "deprecated",   EXT_ATTR_DEPRECATED,   NULL	       },
   { NULL,           EXT_ATTR_LAST,         NULL        }
 };
 

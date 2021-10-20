@@ -2,12 +2,14 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+//go:build aix || darwin || dragonfly || freebsd || hurd || linux || netbsd || openbsd || solaris
 // +build aix darwin dragonfly freebsd hurd linux netbsd openbsd solaris
 
 package net
 
 import (
 	"errors"
+	"io/fs"
 	"os"
 	"reflect"
 	"strings"
@@ -183,7 +185,7 @@ func TestDNSReadMissingFile(t *testing.T) {
 
 	conf := dnsReadConfig("a-nonexistent-file")
 	if !os.IsNotExist(conf.err) {
-		t.Errorf("missing resolv.conf:\ngot: %v\nwant: %v", conf.err, os.ErrNotExist)
+		t.Errorf("missing resolv.conf:\ngot: %v\nwant: %v", conf.err, fs.ErrNotExist)
 	}
 	conf.err = nil
 	want := &dnsConfig{

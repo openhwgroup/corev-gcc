@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---          Copyright (C) 1992-2020, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2021, Free Software Foundation, Inc.         --
 --                                                                          --
 -- This specification is derived from the Ada Reference Manual for use with --
 -- GNAT. The copyright notice above, and the license provisions that follow --
@@ -36,8 +36,9 @@
 --  Preconditions in this unit are meant for analysis only, not for run-time
 --  checking, so that the expected exceptions are raised. This is enforced by
 --  setting the corresponding assertion policy to Ignore. These preconditions
---  are partial and protect against Status_Error, Mode_Error, and Layout_Error,
---  but not against other types of errors.
+--  are partial. They protect fully against Status_Error and Mode_Error,
+--  partially against Layout_Error (see SPARK User's Guide for details), and
+--  not against other types of errors.
 
 pragma Assertion_Policy (Pre => Ignore);
 
@@ -55,8 +56,9 @@ with System.File_Control_Block;
 with System.WCh_Con;
 
 package Ada.Text_IO with
-  Abstract_State    => (File_System),
-  Initializes       => (File_System),
+  SPARK_Mode,
+  Abstract_State    => File_System,
+  Initializes       => File_System,
   Initial_Condition => Line_Length = 0 and Page_Length = 0
 is
    pragma Elaborate_Body;
@@ -84,9 +86,6 @@ is
    --  Line and page length
 
    subtype Field is Integer range 0 .. 255;
-   --  Note: if for any reason, there is a need to increase this value, then it
-   --  will be necessary to change the corresponding value in System.Img_Real
-   --  in file s-imgrea.adb.
 
    subtype Number_Base is Integer range 2 .. 16;
 
@@ -549,6 +548,7 @@ is
    Layout_Error : exception renames IO_Exceptions.Layout_Error;
 
 private
+   pragma SPARK_Mode (Off);
 
    --  The following procedures have a File_Type formal of mode IN OUT because
    --  they may close the original file. The Close operation may raise an
@@ -717,7 +717,7 @@ private
    --  Returns the system-specific character indicating the end of a text file.
    --  This is exported for use by child packages such as Enumeration_Aux to
    --  eliminate their needing to depend directly on Interfaces.C_Streams,
-   --  which is not available in certain target environments (such as AAMP).
+   --  which might not be available in certain target environments.
 
    procedure Initialize_Standard_Files;
    --  Initializes the file control blocks for the standard files. Called from

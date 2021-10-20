@@ -1,6 +1,6 @@
 // Core algorithmic facilities -*- C++ -*-
 
-// Copyright (C) 2001-2020 Free Software Foundation, Inc.
+// Copyright (C) 2001-2021 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -420,11 +420,11 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	__copy_m(const _Tp* __first, const _Tp* __last, _Tp* __result)
 	{
 #if __cplusplus >= 201103L
-	  using __assignable = conditional<_IsMove,
-					   is_move_assignable<_Tp>,
-					   is_copy_assignable<_Tp>>;
+	  using __assignable = __conditional_t<_IsMove,
+					       is_move_assignable<_Tp>,
+					       is_copy_assignable<_Tp>>;
 	  // trivial types can have deleted assignment
-	  static_assert( __assignable::type::value, "type is not assignable" );
+	  static_assert( __assignable::value, "type must be assignable" );
 #endif
 	  const ptrdiff_t _Num = __last - __first;
 	  if (_Num)
@@ -594,7 +594,7 @@ _GLIBCXX_END_NAMESPACE_CONTAINER
    *  @param  __first  An input iterator.
    *  @param  __last   An input iterator.
    *  @param  __result An output iterator.
-   *  @return   result + (first - last)
+   *  @return   result + (last - first)
    *
    *  This inline function will boil down to a call to @c memmove whenever
    *  possible.  Failing that, if random access iterators are passed, then the
@@ -613,7 +613,7 @@ _GLIBCXX_END_NAMESPACE_CONTAINER
       // concept requirements
       __glibcxx_function_requires(_InputIteratorConcept<_II>)
       __glibcxx_function_requires(_OutputIteratorConcept<_OI,
-	    typename iterator_traits<_II>::value_type>)
+	    typename iterator_traits<_II>::reference>)
       __glibcxx_requires_can_increment_range(__first, __last, __result);
 
       return std::__copy_move_a<__is_move_iterator<_II>::__value>
@@ -627,7 +627,7 @@ _GLIBCXX_END_NAMESPACE_CONTAINER
    *  @param  __first  An input iterator.
    *  @param  __last   An input iterator.
    *  @param  __result An output iterator.
-   *  @return   result + (first - last)
+   *  @return   result + (last - first)
    *
    *  This inline function will boil down to a call to @c memmove whenever
    *  possible.  Failing that, if random access iterators are passed, then the
@@ -646,7 +646,7 @@ _GLIBCXX_END_NAMESPACE_CONTAINER
       // concept requirements
       __glibcxx_function_requires(_InputIteratorConcept<_II>)
       __glibcxx_function_requires(_OutputIteratorConcept<_OI,
-	    typename iterator_traits<_II>::value_type>)
+	    typename iterator_traits<_II>::value_type&&>)
       __glibcxx_requires_can_increment_range(__first, __last, __result);
 
       return std::__copy_move_a<true>(std::__miter_base(__first),
@@ -731,11 +731,11 @@ _GLIBCXX_END_NAMESPACE_CONTAINER
 	__copy_move_b(const _Tp* __first, const _Tp* __last, _Tp* __result)
 	{
 #if __cplusplus >= 201103L
-	  using __assignable = conditional<_IsMove,
-					   is_move_assignable<_Tp>,
-					   is_copy_assignable<_Tp>>;
+	  using __assignable = __conditional_t<_IsMove,
+					       is_move_assignable<_Tp>,
+					       is_copy_assignable<_Tp>>;
 	  // trivial types can have deleted assignment
-	  static_assert( __assignable::type::value, "type is not assignable" );
+	  static_assert( __assignable::value, "type must be assignable" );
 #endif
 	  const ptrdiff_t _Num = __last - __first;
 	  if (_Num)
@@ -830,7 +830,7 @@ _GLIBCXX_END_NAMESPACE_CONTAINER
    *  @param  __first  A bidirectional iterator.
    *  @param  __last   A bidirectional iterator.
    *  @param  __result A bidirectional iterator.
-   *  @return   result - (first - last)
+   *  @return   result - (last - first)
    *
    *  The function has the same effect as copy, but starts at the end of the
    *  range and works its way to the start, returning the start of the result.
@@ -850,9 +850,8 @@ _GLIBCXX_END_NAMESPACE_CONTAINER
       // concept requirements
       __glibcxx_function_requires(_BidirectionalIteratorConcept<_BI1>)
       __glibcxx_function_requires(_Mutable_BidirectionalIteratorConcept<_BI2>)
-      __glibcxx_function_requires(_ConvertibleConcept<
-	    typename iterator_traits<_BI1>::value_type,
-	    typename iterator_traits<_BI2>::value_type>)
+      __glibcxx_function_requires(_OutputIteratorConcept<_BI2,
+	    typename iterator_traits<_BI1>::reference>)
       __glibcxx_requires_can_decrement_range(__first, __last, __result);
 
       return std::__copy_move_backward_a<__is_move_iterator<_BI1>::__value>
@@ -866,7 +865,7 @@ _GLIBCXX_END_NAMESPACE_CONTAINER
    *  @param  __first  A bidirectional iterator.
    *  @param  __last   A bidirectional iterator.
    *  @param  __result A bidirectional iterator.
-   *  @return   result - (first - last)
+   *  @return   result - (last - first)
    *
    *  The function has the same effect as move, but starts at the end of the
    *  range and works its way to the start, returning the start of the result.
@@ -886,9 +885,8 @@ _GLIBCXX_END_NAMESPACE_CONTAINER
       // concept requirements
       __glibcxx_function_requires(_BidirectionalIteratorConcept<_BI1>)
       __glibcxx_function_requires(_Mutable_BidirectionalIteratorConcept<_BI2>)
-      __glibcxx_function_requires(_ConvertibleConcept<
-	    typename iterator_traits<_BI1>::value_type,
-	    typename iterator_traits<_BI2>::value_type>)
+      __glibcxx_function_requires(_OutputIteratorConcept<_BI2,
+	    typename iterator_traits<_BI1>::value_type&&>)
       __glibcxx_requires_can_decrement_range(__first, __last, __result);
 
       return std::__copy_move_backward_a<true>(std::__miter_base(__first),
@@ -1014,27 +1012,27 @@ _GLIBCXX_END_NAMESPACE_CONTAINER
   __size_to_integer(unsigned long long __n) { return __n; }
 
 #if defined(__GLIBCXX_TYPE_INT_N_0)
-  inline _GLIBCXX_CONSTEXPR __GLIBCXX_TYPE_INT_N_0
+  __extension__ inline _GLIBCXX_CONSTEXPR __GLIBCXX_TYPE_INT_N_0
   __size_to_integer(__GLIBCXX_TYPE_INT_N_0 __n) { return __n; }
-  inline _GLIBCXX_CONSTEXPR unsigned __GLIBCXX_TYPE_INT_N_0
+  __extension__ inline _GLIBCXX_CONSTEXPR unsigned __GLIBCXX_TYPE_INT_N_0
   __size_to_integer(unsigned __GLIBCXX_TYPE_INT_N_0 __n) { return __n; }
 #endif
 #if defined(__GLIBCXX_TYPE_INT_N_1)
-  inline _GLIBCXX_CONSTEXPR __GLIBCXX_TYPE_INT_N_1
+  __extension__ inline _GLIBCXX_CONSTEXPR __GLIBCXX_TYPE_INT_N_1
   __size_to_integer(__GLIBCXX_TYPE_INT_N_1 __n) { return __n; }
-  inline _GLIBCXX_CONSTEXPR unsigned __GLIBCXX_TYPE_INT_N_1
+  __extension__ inline _GLIBCXX_CONSTEXPR unsigned __GLIBCXX_TYPE_INT_N_1
   __size_to_integer(unsigned __GLIBCXX_TYPE_INT_N_1 __n) { return __n; }
 #endif
 #if defined(__GLIBCXX_TYPE_INT_N_2)
-  inline _GLIBCXX_CONSTEXPR __GLIBCXX_TYPE_INT_N_2
+  __extension__ inline _GLIBCXX_CONSTEXPR __GLIBCXX_TYPE_INT_N_2
   __size_to_integer(__GLIBCXX_TYPE_INT_N_2 __n) { return __n; }
-  inline _GLIBCXX_CONSTEXPR unsigned __GLIBCXX_TYPE_INT_N_2
+  __extension__ inline _GLIBCXX_CONSTEXPR unsigned __GLIBCXX_TYPE_INT_N_2
   __size_to_integer(unsigned __GLIBCXX_TYPE_INT_N_2 __n) { return __n; }
 #endif
 #if defined(__GLIBCXX_TYPE_INT_N_3)
-  inline _GLIBCXX_CONSTEXPR unsigned __GLIBCXX_TYPE_INT_N_3
+  __extension__ inline _GLIBCXX_CONSTEXPR unsigned __GLIBCXX_TYPE_INT_N_3
   __size_to_integer(__GLIBCXX_TYPE_INT_N_3 __n) { return __n; }
-  inline _GLIBCXX_CONSTEXPR __GLIBCXX_TYPE_INT_N_3
+  __extension__ inline _GLIBCXX_CONSTEXPR __GLIBCXX_TYPE_INT_N_3
   __size_to_integer(unsigned __GLIBCXX_TYPE_INT_N_3 __n) { return __n; }
 #endif
 
@@ -1045,7 +1043,7 @@ _GLIBCXX_END_NAMESPACE_CONTAINER
   inline _GLIBCXX_CONSTEXPR long long
   __size_to_integer(long double __n) { return (long long)__n; }
 #if !defined(__STRICT_ANSI__) && defined(_GLIBCXX_USE_FLOAT128)
-  inline _GLIBCXX_CONSTEXPR long long
+  __extension__ inline _GLIBCXX_CONSTEXPR long long
   __size_to_integer(__float128 __n) { return (long long)__n; }
 #endif
 
@@ -1144,7 +1142,7 @@ _GLIBCXX_END_NAMESPACE_CONTAINER
     fill_n(_OI __first, _Size __n, const _Tp& __value)
     {
       // concept requirements
-      __glibcxx_function_requires(_OutputIteratorConcept<_OI, _Tp>)
+      __glibcxx_function_requires(_OutputIteratorConcept<_OI, const _Tp&>)
 
       return std::__fill_n_a(__first, std::__size_to_integer(__n), __value,
 			       std::__iterator_category(__first));
@@ -1368,9 +1366,7 @@ _GLIBCXX_END_NAMESPACE_CONTAINER
       typedef typename iterator_traits<_II1>::value_type _ValueType1;
       typedef typename iterator_traits<_II2>::value_type _ValueType2;
       const bool __simple =
-	(__is_byte<_ValueType1>::__value && __is_byte<_ValueType2>::__value
-	 && !__gnu_cxx::__numeric_traits<_ValueType1>::__is_signed
-	 && !__gnu_cxx::__numeric_traits<_ValueType2>::__is_signed
+	(__is_memcmp_ordered_with<_ValueType1, _ValueType2>::__value
 	 && __is_pointer<_II1>::__value
 	 && __is_pointer<_II2>::__value
 #if __cplusplus > 201703L && __cpp_lib_concepts
@@ -1785,8 +1781,7 @@ _GLIBCXX_BEGIN_NAMESPACE_ALGO
   // or std::byte, suitable for comparison by memcmp.
   template<typename _Iter>
     concept __is_byte_iter = contiguous_iterator<_Iter>
-      && __is_byte<iter_value_t<_Iter>>::__value != 0
-      && !__gnu_cxx::__numeric_traits<iter_value_t<_Iter>>::__is_signed;
+      && __is_memcmp_ordered<iter_value_t<_Iter>>::__value;
 
   // Return a struct with two members, initialized to the smaller of x and y
   // (or x if they compare equal) and the result of the comparison x <=> y.
@@ -2128,6 +2123,26 @@ _GLIBCXX_END_NAMESPACE_ALGO
 	if (__pred(__first))
 	  ++__n;
       return __n;
+    }
+
+  template<typename _ForwardIterator, typename _Predicate>
+    _GLIBCXX20_CONSTEXPR
+    _ForwardIterator
+    __remove_if(_ForwardIterator __first, _ForwardIterator __last,
+		_Predicate __pred)
+    {
+      __first = std::__find_if(__first, __last, __pred);
+      if (__first == __last)
+	return __first;
+      _ForwardIterator __result = __first;
+      ++__first;
+      for (; __first != __last; ++__first)
+	if (!__pred(__first))
+	  {
+	    *__result = _GLIBCXX_MOVE(*__first);
+	    ++__result;
+	  }
+      return __result;
     }
 
 #if __cplusplus >= 201103L

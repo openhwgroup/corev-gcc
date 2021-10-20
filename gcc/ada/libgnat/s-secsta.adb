@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2020, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2021, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -587,15 +587,18 @@ package body System.Secondary_Stack is
    --  Start of processing for SS_Allocate
 
    begin
-      --  It should not be possible to request an allocation of negative or
-      --  zero size.
-
-      pragma Assert (Storage_Size > 0);
-
       --  Round the requested size up to the nearest multiple of the maximum
       --  alignment to ensure efficient access.
 
-      Mem_Size := Round_Up (Storage_Size);
+      if Storage_Size = 0 then
+         Mem_Size := Memory_Alignment;
+      else
+         --  It should not be possible to request an allocation of negative
+         --  size.
+
+         pragma Assert (Storage_Size >= 0);
+         Mem_Size := Round_Up (Storage_Size);
+      end if;
 
       if Sec_Stack_Dynamic then
          Allocate_Dynamic (Stack, Mem_Size, Addr);

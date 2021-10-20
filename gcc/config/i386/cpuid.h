@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2007-2020 Free Software Foundation, Inc.
+ * Copyright (C) 2007-2021 Free Software Foundation, Inc.
  *
  * This file is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -25,7 +25,9 @@
 #define _CPUID_H_INCLUDED
 
 /* %eax */
+#define bit_AVXVNNI	(1 << 4)
 #define bit_AVX512BF16	(1 << 5)
+#define bit_HRESET	(1 << 22)
 
 /* %ecx */
 #define bit_SSE3	(1 << 0)
@@ -118,15 +120,21 @@
 #define bit_MOVDIR64B	(1 << 28)
 #define bit_ENQCMD	(1 << 29)
 #define bit_CLDEMOTE	(1 << 25)
+#define bit_KL		(1 << 23)
 
 /* %edx */
 #define bit_AVX5124VNNIW (1 << 2)
 #define bit_AVX5124FMAPS (1 << 3)
 #define bit_AVX512VP2INTERSECT	(1 << 8)
+#define bit_AVX512FP16   (1 << 23)
 #define bit_IBT	(1 << 20)
+#define bit_UINTR (1 << 5)
 #define bit_PCONFIG	(1 << 18)
 #define bit_SERIALIZE	(1 << 14)
 #define bit_TSXLDTRK    (1 << 16)
+#define bit_AMX_BF16    (1 << 22)
+#define bit_AMX_TILE    (1 << 24)
+#define bit_AMX_INT8    (1 << 25)
 
 /* XFEATURE_ENABLED_MASK register bits (%eax == 0xd, %ecx == 0) */
 #define bit_BNDREGS     (1 << 3)
@@ -140,6 +148,12 @@
 /* PT sub leaf (%eax == 0x14, %ecx == 0) */
 /* %ebx */
 #define bit_PTWRITE	(1 << 4)
+
+/* Keylocker leaf (%eax == 0x19) */
+/* %ebx */
+#define bit_AESKLE	( 1<<0 )
+#define bit_WIDEKL	( 1<<2 )
+
 
 /* Signatures for different CPU implementations as returned in uses
    of cpuid with level 0.  */
@@ -199,28 +213,28 @@
 /* At least one cpu (Winchip 2) does not set %ebx and %ecx
    for cpuid leaf 1. Forcibly zero the two registers before
    calling cpuid as a precaution.  */
-#define __cpuid(level, a, b, c, d)			\
-  do {							\
-    if (__builtin_constant_p (level) && (level) != 1)	\
-      __asm__ ("cpuid\n\t"				\
-	      : "=a" (a), "=b" (b), "=c" (c), "=d" (d)	\
-	      : "0" (level));				\
-    else						\
-      __asm__ ("cpuid\n\t"				\
-	      : "=a" (a), "=b" (b), "=c" (c), "=d" (d)	\
-	      : "0" (level), "1" (0), "2" (0));		\
+#define __cpuid(level, a, b, c, d)					\
+  do {									\
+    if (__builtin_constant_p (level) && (level) != 1)			\
+      __asm__ __volatile__ ("cpuid\n\t"					\
+			    : "=a" (a), "=b" (b), "=c" (c), "=d" (d)	\
+			    : "0" (level));				\
+    else								\
+      __asm__ __volatile__ ("cpuid\n\t"					\
+			    : "=a" (a), "=b" (b), "=c" (c), "=d" (d)	\
+			    : "0" (level), "1" (0), "2" (0));		\
   } while (0)
 #else
-#define __cpuid(level, a, b, c, d)			\
-  __asm__ ("cpuid\n\t"					\
-	   : "=a" (a), "=b" (b), "=c" (c), "=d" (d)	\
-	   : "0" (level))
+#define __cpuid(level, a, b, c, d)					\
+  __asm__ __volatile__ ("cpuid\n\t"					\
+			: "=a" (a), "=b" (b), "=c" (c), "=d" (d)	\
+			: "0" (level))
 #endif
 
-#define __cpuid_count(level, count, a, b, c, d)		\
-  __asm__ ("cpuid\n\t"					\
-	   : "=a" (a), "=b" (b), "=c" (c), "=d" (d)	\
-	   : "0" (level), "2" (count))
+#define __cpuid_count(level, count, a, b, c, d)				\
+  __asm__ __volatile__ ("cpuid\n\t"					\
+			: "=a" (a), "=b" (b), "=c" (c), "=d" (d)	\
+			: "0" (level), "2" (count))
 
 
 /* Return highest supported input value for cpuid instruction.  ext can

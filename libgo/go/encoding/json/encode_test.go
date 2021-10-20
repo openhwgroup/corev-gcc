@@ -183,7 +183,15 @@ type PointerCycleIndirect struct {
 	Ptrs []interface{}
 }
 
-var pointerCycleIndirect = &PointerCycleIndirect{}
+type RecursiveSlice []RecursiveSlice
+
+var (
+	pointerCycleIndirect = &PointerCycleIndirect{}
+	mapCycle             = make(map[string]interface{})
+	sliceCycle           = []interface{}{nil}
+	sliceNoCycle         = []interface{}{nil, nil}
+	recursiveSliceCycle  = []RecursiveSlice{nil}
+)
 
 func init() {
 	ptr := &SamePointerNoCycle{}
@@ -192,10 +200,24 @@ func init() {
 
 	pointerCycle.Ptr = pointerCycle
 	pointerCycleIndirect.Ptrs = []interface{}{pointerCycleIndirect}
+
+	mapCycle["x"] = mapCycle
+	sliceCycle[0] = sliceCycle
+	sliceNoCycle[1] = sliceNoCycle[:1]
+	for i := startDetectingCyclesAfter; i > 0; i-- {
+		sliceNoCycle = []interface{}{sliceNoCycle}
+	}
+	recursiveSliceCycle[0] = recursiveSliceCycle
 }
 
 func TestSamePointerNoCycle(t *testing.T) {
 	if _, err := Marshal(samePointerNoCycle); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestSliceNoCycle(t *testing.T) {
+	if _, err := Marshal(sliceNoCycle); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -206,6 +228,9 @@ var unsupportedValues = []interface{}{
 	math.Inf(1),
 	pointerCycle,
 	pointerCycleIndirect,
+	mapCycle,
+	sliceCycle,
+	recursiveSliceCycle,
 }
 
 func TestUnsupportedValues(t *testing.T) {
@@ -217,6 +242,22 @@ func TestUnsupportedValues(t *testing.T) {
 		} else {
 			t.Errorf("for %v, expected error", v)
 		}
+	}
+}
+
+// Issue 43207
+func TestMarshalTextFloatMap(t *testing.T) {
+	m := map[textfloat]string{
+		textfloat(math.NaN()): "1",
+		textfloat(math.NaN()): "1",
+	}
+	got, err := Marshal(m)
+	if err != nil {
+		t.Errorf("Marshal() error: %v", err)
+	}
+	want := `{"TF:NaN":"1","TF:NaN":"1"}`
+	if string(got) != want {
+		t.Errorf("Marshal() = %s, want %s", got, want)
 	}
 }
 
@@ -829,6 +870,10 @@ func tenc(format string, a ...interface{}) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+type textfloat float64
+
+func (f textfloat) MarshalText() ([]byte, error) { return tenc(`TF:%0.2f`, f) }
+
 // Issue 13783
 func TestEncodeBytekind(t *testing.T) {
 	testdata := []struct {
@@ -847,6 +892,7 @@ func TestEncodeBytekind(t *testing.T) {
 		{[]jsonint{5, 4}, `[{"JI":5},{"JI":4}]`},
 		{[]textint{9, 3}, `["TI:9","TI:3"]`},
 		{[]int{9, 3}, `[9,3]`},
+		{[]textfloat{12, 3}, `["TF:12.00","TF:3.00"]`},
 	}
 	for _, d := range testdata {
 		js, err := Marshal(d.data)

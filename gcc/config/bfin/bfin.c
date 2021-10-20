@@ -1,5 +1,5 @@
 /* The Blackfin code generation auxiliary output file.
-   Copyright (C) 2005-2020 Free Software Foundation, Inc.
+   Copyright (C) 2005-2021 Free Software Foundation, Inc.
    Contributed by Analog Devices.
 
    This file is part of GCC.
@@ -53,6 +53,7 @@
 #include "hw-doloop.h"
 #include "dumpfile.h"
 #include "builtins.h"
+#include "opts.h"
 
 /* This file should be included last.  */
 #include "target-def.h"
@@ -1046,7 +1047,7 @@ bfin_load_pic_reg (rtx dest)
   if (local_info_node && local_info_node->local)
     return pic_offset_table_rtx;
       
-  if (global_options_set.x_bfin_library_id)
+  if (OPTION_SET_P (bfin_library_id))
     addr = plus_constant (Pmode, pic_offset_table_rtx,
 			   -4 - bfin_library_id * 4);
   else
@@ -1773,8 +1774,8 @@ function_arg_regno_p (int n)
 int
 symbolic_reference_mentioned_p (rtx op)
 {
-  register const char *fmt;
-  register int i;
+  const char *fmt;
+  int i;
 
   if (GET_CODE (op) == SYMBOL_REF || GET_CODE (op) == LABEL_REF)
     return 1;
@@ -1784,7 +1785,7 @@ symbolic_reference_mentioned_p (rtx op)
     {
       if (fmt[i] == 'E')
 	{
-	  register int j;
+	  int j;
 
 	  for (j = XVECLEN (op, i) - 1; j >= 0; j--)
 	    if (symbolic_reference_mentioned_p (XVECEXP (op, i, j)))
@@ -2369,7 +2370,7 @@ bfin_option_override (void)
 #endif
 
   /* Library identification */
-  if (global_options_set.x_bfin_library_id && ! TARGET_ID_SHARED_LIBRARY)
+  if (OPTION_SET_P (bfin_library_id) && ! TARGET_ID_SHARED_LIBRARY)
     error ("%<-mshared-library-id=%> specified without "
 	   "%<-mid-shared-library%>");
 

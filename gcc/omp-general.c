@@ -1,7 +1,7 @@
 /* General types and functions that are uselful for processing of OpenMP,
    OpenACC and similar directivers at various stages of compilation.
 
-   Copyright (C) 2005-2020 Free Software Foundation, Inc.
+   Copyright (C) 2005-2021 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -42,6 +42,9 @@ along with GCC; see the file COPYING3.  If not see
 #include "tree-pass.h"
 #include "omp-device-properties.h"
 #include "tree-iterator.h"
+#include "data-streamer.h"
+#include "streamer-hooks.h"
+#include "opts.h"
 
 enum omp_requires omp_requires_mask;
 
@@ -77,10 +80,11 @@ omp_check_optional_argument (tree decl, bool for_present_check)
   return lang_hooks.decls.omp_check_optional_argument (decl, for_present_check);
 }
 
-/* Return true if DECL is a reference type.  */
+/* True if OpenMP should privatize what this DECL points to rather
+   than the DECL itself.  */
 
 bool
-omp_is_reference (tree decl)
+omp_privatize_by_reference (tree decl)
 {
   return lang_hooks.decls.omp_privatize_by_reference (decl);
 }
@@ -190,6 +194,7 @@ omp_extract_for_data (gomp_for *for_stmt, struct omp_for_data *fd,
 		    == GF_OMP_FOR_KIND_DISTRIBUTE;
   bool taskloop = gimple_omp_for_kind (for_stmt)
 		  == GF_OMP_FOR_KIND_TASKLOOP;
+  bool order_reproducible = false;
   tree iterv, countv;
 
   fd->for_stmt = for_stmt;
@@ -274,10 +279,25 @@ omp_extract_for_data (gomp_for *for_stmt, struct omp_for_data *fd,
 	    && !OMP_CLAUSE__SCANTEMP__CONTROL (t))
 	  fd->have_nonctrl_scantemp = true;
 	break;
+      case OMP_CLAUSE_ORDER:
+	/* FIXME: For OpenMP 5.2 this should change to
+	   if (OMP_CLAUSE_ORDER_REPRODUCIBLE (t))
+	   (with the exception of loop construct but that lowers to
+	   no schedule/dist_schedule clauses currently).  */
+	if (!OMP_CLAUSE_ORDER_UNCONSTRAINED (t))
+	  order_reproducible = true;
       default:
 	break;
       }
 
+  /* For order(reproducible:concurrent) schedule ({dynamic,guided,runtime})
+     we have either the option to expensively remember at runtime how we've
+     distributed work from first loop and reuse that in following loops with
+     the same number of iterations and schedule, or just force static schedule.
+     OpenMP API calls etc. aren't allowed in order(concurrent) bodies so
+     users can't observe it easily anyway.  */
+  if (order_reproducible)
+    fd->sched_kind = OMP_CLAUSE_SCHEDULE_STATIC;
   if (fd->collapse > 1 || fd->tiling)
     fd->loops = loops;
   else
@@ -933,7 +953,7 @@ omp_max_vf (void)
       || optimize_debug
       || !flag_tree_loop_optimize
       || (!flag_tree_loop_vectorize
-	  && global_options_set.x_flag_tree_loop_vectorize))
+	  && OPTION_SET_P (flag_tree_loop_vectorize)))
     return 1;
 
   auto_vector_modes modes;
@@ -966,7 +986,7 @@ omp_max_simt_vf (void)
   if (ENABLE_OFFLOADING)
     for (const char *c = getenv ("OFFLOAD_TARGET_NAMES"); c;)
       {
-	if (!strncmp (c, "nvptx", strlen ("nvptx")))
+	if (startswith (c, "nvptx"))
 	  return 32;
 	else if ((c = strchr (c, ':')))
 	  c++;
@@ -1075,6 +1095,146 @@ omp_maybe_offloaded (void)
   return false;
 }
 
+
+/* Diagnose errors in an OpenMP context selector, return CTX if
+   it is correct or error_mark_node otherwise.  */
+
+tree
+omp_check_context_selector (location_t loc, tree ctx)
+{
+  /* Each trait-set-selector-name can only be specified once.
+     There are just 4 set names.  */
+  for (tree t1 = ctx; t1; t1 = TREE_CHAIN (t1))
+    for (tree t2 = TREE_CHAIN (t1); t2; t2 = TREE_CHAIN (t2))
+      if (TREE_PURPOSE (t1) == TREE_PURPOSE (t2))
+	{
+	  error_at (loc, "selector set %qs specified more than once",
+		    IDENTIFIER_POINTER (TREE_PURPOSE (t1)));
+	  return error_mark_node;
+	}
+  for (tree t = ctx; t; t = TREE_CHAIN (t))
+    {
+      /* Each trait-selector-name can only be specified once.  */
+      if (list_length (TREE_VALUE (t)) < 5)
+	{
+	  for (tree t1 = TREE_VALUE (t); t1; t1 = TREE_CHAIN (t1))
+	    for (tree t2 = TREE_CHAIN (t1); t2; t2 = TREE_CHAIN (t2))
+	      if (TREE_PURPOSE (t1) == TREE_PURPOSE (t2))
+		{
+		  error_at (loc,
+			    "selector %qs specified more than once in set %qs",
+			    IDENTIFIER_POINTER (TREE_PURPOSE (t1)),
+			    IDENTIFIER_POINTER (TREE_PURPOSE (t)));
+		  return error_mark_node;
+		}
+	}
+      else
+	{
+	  hash_set<tree> pset;
+	  for (tree t1 = TREE_VALUE (t); t1; t1 = TREE_CHAIN (t1))
+	    if (pset.add (TREE_PURPOSE (t1)))
+	      {
+		error_at (loc,
+			  "selector %qs specified more than once in set %qs",
+			  IDENTIFIER_POINTER (TREE_PURPOSE (t1)),
+			  IDENTIFIER_POINTER (TREE_PURPOSE (t)));
+		return error_mark_node;
+	      }
+	}
+
+      static const char *const kind[] = {
+	"host", "nohost", "cpu", "gpu", "fpga", "any", NULL };
+      static const char *const vendor[] = {
+	"amd", "arm", "bsc", "cray", "fujitsu", "gnu", "ibm", "intel",
+	"llvm", "nvidia", "pgi", "ti", "unknown", NULL };
+      static const char *const extension[] = { NULL };
+      static const char *const atomic_default_mem_order[] = {
+	"seq_cst", "relaxed", "acq_rel", NULL };
+      struct known_properties { const char *set; const char *selector;
+				const char *const *props; };
+      known_properties props[] = {
+	{ "device", "kind", kind },
+	{ "implementation", "vendor", vendor },
+	{ "implementation", "extension", extension },
+	{ "implementation", "atomic_default_mem_order",
+	  atomic_default_mem_order } };
+      for (tree t1 = TREE_VALUE (t); t1; t1 = TREE_CHAIN (t1))
+	for (unsigned i = 0; i < ARRAY_SIZE (props); i++)
+	  if (!strcmp (IDENTIFIER_POINTER (TREE_PURPOSE (t1)),
+					   props[i].selector)
+	      && !strcmp (IDENTIFIER_POINTER (TREE_PURPOSE (t)),
+					      props[i].set))
+	    for (tree t2 = TREE_VALUE (t1); t2; t2 = TREE_CHAIN (t2))
+	      for (unsigned j = 0; ; j++)
+		{
+		  if (props[i].props[j] == NULL)
+		    {
+		      if (TREE_PURPOSE (t2)
+			  && !strcmp (IDENTIFIER_POINTER (TREE_PURPOSE (t2)),
+				      " score"))
+			break;
+		      if (props[i].props == atomic_default_mem_order)
+			{
+			  error_at (loc,
+				    "incorrect property %qs of %qs selector",
+				    IDENTIFIER_POINTER (TREE_PURPOSE (t2)),
+				    "atomic_default_mem_order");
+			  return error_mark_node;
+			}
+		      else if (TREE_PURPOSE (t2))
+			warning_at (loc, 0,
+				    "unknown property %qs of %qs selector",
+				    IDENTIFIER_POINTER (TREE_PURPOSE (t2)),
+				    props[i].selector);
+		      else
+			warning_at (loc, 0,
+				    "unknown property %qE of %qs selector",
+				    TREE_VALUE (t2), props[i].selector);
+		      break;
+		    }
+		  else if (TREE_PURPOSE (t2) == NULL_TREE)
+		    {
+		      const char *str = TREE_STRING_POINTER (TREE_VALUE (t2));
+		      if (!strcmp (str, props[i].props[j])
+			  && ((size_t) TREE_STRING_LENGTH (TREE_VALUE (t2))
+			      == strlen (str) + (lang_GNU_Fortran () ? 0 : 1)))
+			break;
+		    }
+		  else if (!strcmp (IDENTIFIER_POINTER (TREE_PURPOSE (t2)),
+				    props[i].props[j]))
+		    break;
+		}
+    }
+  return ctx;
+}
+
+
+/* Register VARIANT as variant of some base function marked with
+   #pragma omp declare variant.  CONSTRUCT is corresponding construct
+   selector set.  */
+
+void
+omp_mark_declare_variant (location_t loc, tree variant, tree construct)
+{
+  tree attr = lookup_attribute ("omp declare variant variant",
+				DECL_ATTRIBUTES (variant));
+  if (attr == NULL_TREE)
+    {
+      attr = tree_cons (get_identifier ("omp declare variant variant"),
+			unshare_expr (construct),
+			DECL_ATTRIBUTES (variant));
+      DECL_ATTRIBUTES (variant) = attr;
+      return;
+    }
+  if ((TREE_VALUE (attr) != NULL_TREE) != (construct != NULL_TREE)
+      || (construct != NULL_TREE
+	  && omp_context_selector_set_compare ("construct", TREE_VALUE (attr),
+					       construct)))
+    error_at (loc, "%qD used as a variant with incompatible %<construct%> "
+		   "selector sets", variant);
+}
+
+
 /* Return a name from PROP, a property in selectors accepting
    name lists.  */
 
@@ -1086,7 +1246,8 @@ omp_context_name_list_prop (tree prop)
   else
     {
       const char *ret = TREE_STRING_POINTER (TREE_VALUE (prop));
-      if ((size_t) TREE_STRING_LENGTH (TREE_VALUE (prop)) == strlen (ret) + 1)
+      if ((size_t) TREE_STRING_LENGTH (TREE_VALUE (prop))
+	  == strlen (ret) + (lang_GNU_Fortran () ? 0 : 1))
 	return ret;
       return NULL;
     }
@@ -1491,7 +1652,7 @@ omp_construct_simd_compare (tree clauses1, tree clauses2)
 	  }
 	unsigned HOST_WIDE_INT argno = tree_to_uhwi (OMP_CLAUSE_DECL (c));
 	if (argno >= v->length ())
-	  v->safe_grow_cleared (argno + 1);
+	  v->safe_grow_cleared (argno + 1, true);
 	(*v)[argno] = c;
       }
   /* Here, r is used as a bitmask, 2 is set if CLAUSES1 has something
@@ -2337,6 +2498,125 @@ omp_resolve_declare_variant (tree base)
 	  ? TREE_PURPOSE (TREE_VALUE (variant1)) : base);
 }
 
+void
+omp_lto_output_declare_variant_alt (lto_simple_output_block *ob,
+				    cgraph_node *node,
+				    lto_symtab_encoder_t encoder)
+{
+  gcc_assert (node->declare_variant_alt);
+
+  omp_declare_variant_base_entry entry;
+  entry.base = NULL;
+  entry.node = node;
+  entry.variants = NULL;
+  omp_declare_variant_base_entry *entryp
+    = omp_declare_variant_alt->find_with_hash (&entry, DECL_UID (node->decl));
+  gcc_assert (entryp);
+
+  int nbase = lto_symtab_encoder_lookup (encoder, entryp->base);
+  gcc_assert (nbase != LCC_NOT_FOUND);
+  streamer_write_hwi_stream (ob->main_stream, nbase);
+
+  streamer_write_hwi_stream (ob->main_stream, entryp->variants->length ());
+
+  unsigned int i;
+  omp_declare_variant_entry *varentry;
+  FOR_EACH_VEC_SAFE_ELT (entryp->variants, i, varentry)
+    {
+      int nvar = lto_symtab_encoder_lookup (encoder, varentry->variant);
+      gcc_assert (nvar != LCC_NOT_FOUND);
+      streamer_write_hwi_stream (ob->main_stream, nvar);
+
+      for (widest_int *w = &varentry->score; ;
+	   w = &varentry->score_in_declare_simd_clone)
+	{
+	  unsigned len = w->get_len ();
+	  streamer_write_hwi_stream (ob->main_stream, len);
+	  const HOST_WIDE_INT *val = w->get_val ();
+	  for (unsigned j = 0; j < len; j++)
+	    streamer_write_hwi_stream (ob->main_stream, val[j]);
+	  if (w == &varentry->score_in_declare_simd_clone)
+	    break;
+	}
+
+      HOST_WIDE_INT cnt = -1;
+      HOST_WIDE_INT i = varentry->matches ? 1 : 0;
+      for (tree attr = DECL_ATTRIBUTES (entryp->base->decl);
+	   attr; attr = TREE_CHAIN (attr), i += 2)
+	{
+	  attr = lookup_attribute ("omp declare variant base", attr);
+	  if (attr == NULL_TREE)
+	    break;
+
+	  if (varentry->ctx == TREE_VALUE (TREE_VALUE (attr)))
+	    {
+	      cnt = i;
+	      break;
+	    }
+	}
+
+      gcc_assert (cnt != -1);
+      streamer_write_hwi_stream (ob->main_stream, cnt);
+    }
+}
+
+void
+omp_lto_input_declare_variant_alt (lto_input_block *ib, cgraph_node *node,
+				   vec<symtab_node *> nodes)
+{
+  gcc_assert (node->declare_variant_alt);
+  omp_declare_variant_base_entry *entryp
+    = ggc_cleared_alloc<omp_declare_variant_base_entry> ();
+  entryp->base = dyn_cast<cgraph_node *> (nodes[streamer_read_hwi (ib)]);
+  entryp->node = node;
+  unsigned int len = streamer_read_hwi (ib);
+  vec_alloc (entryp->variants, len);
+
+  for (unsigned int i = 0; i < len; i++)
+    {
+      omp_declare_variant_entry varentry;
+      varentry.variant
+	= dyn_cast<cgraph_node *> (nodes[streamer_read_hwi (ib)]);
+      for (widest_int *w = &varentry.score; ;
+	   w = &varentry.score_in_declare_simd_clone)
+	{
+	  unsigned len2 = streamer_read_hwi (ib);
+	  HOST_WIDE_INT arr[WIDE_INT_MAX_ELTS];
+	  gcc_assert (len2 <= WIDE_INT_MAX_ELTS);
+	  for (unsigned int j = 0; j < len2; j++)
+	    arr[j] = streamer_read_hwi (ib);
+	  *w = widest_int::from_array (arr, len2, true);
+	  if (w == &varentry.score_in_declare_simd_clone)
+	    break;
+	}
+
+      HOST_WIDE_INT cnt = streamer_read_hwi (ib);
+      HOST_WIDE_INT j = 0;
+      varentry.ctx = NULL_TREE;
+      varentry.matches = (cnt & 1) ? true : false;
+      cnt &= ~HOST_WIDE_INT_1;
+      for (tree attr = DECL_ATTRIBUTES (entryp->base->decl);
+	   attr; attr = TREE_CHAIN (attr), j += 2)
+	{
+	  attr = lookup_attribute ("omp declare variant base", attr);
+	  if (attr == NULL_TREE)
+	    break;
+
+	  if (cnt == j)
+	    {
+	      varentry.ctx = TREE_VALUE (TREE_VALUE (attr));
+	      break;
+	    }
+	}
+      gcc_assert (varentry.ctx != NULL_TREE);
+      entryp->variants->quick_push (varentry);
+    }
+  if (omp_declare_variant_alt == NULL)
+    omp_declare_variant_alt
+      = hash_table<omp_declare_variant_alt_hasher>::create_ggc (64);
+  *omp_declare_variant_alt->find_slot_with_hash (entryp, DECL_UID (node->decl),
+						 INSERT) = entryp;
+}
 
 /* Encode an oacc launch argument.  This matches the GOMP_LAUNCH_PACK
    macro on gomp-constants.h.  We do not check for overflow.  */
@@ -2455,6 +2735,7 @@ oacc_verify_routine_clauses (tree fndecl, tree *clauses, location_t loc,
 			     const char *routine_str)
 {
   tree c_level = NULL_TREE;
+  tree c_nohost = NULL_TREE;
   tree c_p = NULL_TREE;
   for (tree c = *clauses; c; c_p = c, c = OMP_CLAUSE_CHAIN (c))
     switch (OMP_CLAUSE_CODE (c))
@@ -2486,6 +2767,10 @@ oacc_verify_routine_clauses (tree fndecl, tree *clauses, location_t loc,
 	    OMP_CLAUSE_CHAIN (c_p) = OMP_CLAUSE_CHAIN (c);
 	    c = c_p;
 	  }
+	break;
+      case OMP_CLAUSE_NOHOST:
+	/* Don't worry about duplicate clauses here.  */
+	c_nohost = c;
 	break;
       default:
 	gcc_unreachable ();
@@ -2521,6 +2806,7 @@ oacc_verify_routine_clauses (tree fndecl, tree *clauses, location_t loc,
 	 this one for compatibility.  */
       /* Collect previous directive's clauses.  */
       tree c_level_p = NULL_TREE;
+      tree c_nohost_p = NULL_TREE;
       for (tree c = TREE_VALUE (attr); c; c = OMP_CLAUSE_CHAIN (c))
 	switch (OMP_CLAUSE_CODE (c))
 	  {
@@ -2530,6 +2816,10 @@ oacc_verify_routine_clauses (tree fndecl, tree *clauses, location_t loc,
 	  case OMP_CLAUSE_SEQ:
 	    gcc_checking_assert (c_level_p == NULL_TREE);
 	    c_level_p = c;
+	    break;
+	  case OMP_CLAUSE_NOHOST:
+	    gcc_checking_assert (c_nohost_p == NULL_TREE);
+	    c_nohost_p = c;
 	    break;
 	  default:
 	    gcc_unreachable ();
@@ -2544,6 +2834,13 @@ oacc_verify_routine_clauses (tree fndecl, tree *clauses, location_t loc,
 	{
 	  c_diag = c_level;
 	  c_diag_p = c_level_p;
+	  goto incompatible;
+	}
+      /* Matching 'nohost' clauses?  */
+      if ((c_nohost == NULL_TREE) != (c_nohost_p == NULL_TREE))
+	{
+	  c_diag = c_nohost;
+	  c_diag_p = c_nohost_p;
 	  goto incompatible;
 	}
       /* Compatible.  */

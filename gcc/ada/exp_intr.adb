@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2020, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2021, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -23,39 +23,41 @@
 --                                                                          --
 ------------------------------------------------------------------------------
 
-with Atree;    use Atree;
-with Checks;   use Checks;
-with Einfo;    use Einfo;
-with Elists;   use Elists;
-with Expander; use Expander;
-with Exp_Atag; use Exp_Atag;
-with Exp_Ch4;  use Exp_Ch4;
-with Exp_Ch7;  use Exp_Ch7;
-with Exp_Ch11; use Exp_Ch11;
-with Exp_Code; use Exp_Code;
-with Exp_Fixd; use Exp_Fixd;
-with Exp_Util; use Exp_Util;
-with Freeze;   use Freeze;
-with Inline;   use Inline;
-with Nmake;    use Nmake;
-with Nlists;   use Nlists;
-with Opt;      use Opt;
-with Restrict; use Restrict;
-with Rident;   use Rident;
-with Rtsfind;  use Rtsfind;
-with Sem;      use Sem;
-with Sem_Aux;  use Sem_Aux;
-with Sem_Eval; use Sem_Eval;
-with Sem_Res;  use Sem_Res;
-with Sem_Type; use Sem_Type;
-with Sem_Util; use Sem_Util;
-with Sinfo;    use Sinfo;
-with Sinput;   use Sinput;
-with Snames;   use Snames;
-with Stand;    use Stand;
-with Tbuild;   use Tbuild;
-with Uintp;    use Uintp;
-with Urealp;   use Urealp;
+with Atree;          use Atree;
+with Checks;         use Checks;
+with Einfo;          use Einfo;
+with Einfo.Entities; use Einfo.Entities;
+with Einfo.Utils;    use Einfo.Utils;
+with Elists;         use Elists;
+with Expander;       use Expander;
+with Exp_Atag;       use Exp_Atag;
+with Exp_Ch7;        use Exp_Ch7;
+with Exp_Ch11;       use Exp_Ch11;
+with Exp_Code;       use Exp_Code;
+with Exp_Fixd;       use Exp_Fixd;
+with Exp_Util;       use Exp_Util;
+with Freeze;         use Freeze;
+with Inline;         use Inline;
+with Nmake;          use Nmake;
+with Nlists;         use Nlists;
+with Opt;            use Opt;
+with Restrict;       use Restrict;
+with Rident;         use Rident;
+with Rtsfind;        use Rtsfind;
+with Sem;            use Sem;
+with Sem_Aux;        use Sem_Aux;
+with Sem_Eval;       use Sem_Eval;
+with Sem_Res;        use Sem_Res;
+with Sem_Type;       use Sem_Type;
+with Sem_Util;       use Sem_Util;
+with Sinfo;          use Sinfo;
+with Sinfo.Nodes;    use Sinfo.Nodes;
+with Sinfo.Utils;    use Sinfo.Utils;
+with Sinput;         use Sinput;
+with Snames;         use Snames;
+with Stand;          use Stand;
+with Tbuild;         use Tbuild;
+with Uintp;          use Uintp;
 
 package body Exp_Intr is
 
@@ -66,9 +68,6 @@ package body Exp_Intr is
    procedure Expand_Binary_Operator_Call (N : Node_Id);
    --  Expand a call to an intrinsic arithmetic operator when the operand
    --  types or sizes are not identical.
-
-   procedure Expand_Is_Negative (N : Node_Id);
-   --  Expand a call to the intrinsic Is_Negative function
 
    procedure Expand_Dispatching_Constructor_Call (N : Node_Id);
    --  Expand a call to an instantiation of Generic_Dispatching_Constructor
@@ -205,12 +204,16 @@ package body Exp_Intr is
          return;
       end if;
 
-      --  Use Unsigned_32 for sizes of 32 or below, else Unsigned_64
+      --  Use the appropriate type for the size
 
-      if Siz > 32 then
-         T3 := RTE (RE_Unsigned_64);
-      else
+      if Siz <= 32 then
          T3 := RTE (RE_Unsigned_32);
+
+      elsif Siz <= 64 then
+         T3 := RTE (RE_Unsigned_64);
+
+      else pragma Assert (Siz <= 128);
+         T3 := RTE (RE_Unsigned_128);
       end if;
 
       --  Copy operator node, and reset type and entity fields, for
@@ -322,7 +325,7 @@ package body Exp_Intr is
       Result_Typ := Class_Wide_Type (Etype (Act_Constr));
 
       --  Check that the accessibility level of the tag is no deeper than that
-      --  of the constructor function (unless CodePeer_Mode)
+      --  of the constructor function (unless CodePeer_Mode).
 
       if not CodePeer_Mode then
          Insert_Action (N,
@@ -332,7 +335,8 @@ package body Exp_Intr is
                  Left_Opnd  =>
                    Build_Get_Access_Level (Loc, New_Copy_Tree (Tag_Arg)),
                  Right_Opnd =>
-                   Make_Integer_Literal (Loc, Scope_Depth (Act_Constr))),
+                   Make_Integer_Literal
+                     (Loc, Scope_Depth_Default_0 (Act_Constr))),
 
              Then_Statements => New_List (
                Make_Raise_Statement (Loc,
@@ -518,7 +522,7 @@ package body Exp_Intr is
             if No (Choice_Parameter (P)) then
                E := Make_Temporary (Loc, 'E');
                Set_Choice_Parameter (P, E);
-               Set_Ekind (E, E_Variable);
+               Mutate_Ekind (E, E_Variable);
                Set_Etype (E, RTE (RE_Exception_Occurrence));
                Set_Scope (E, Current_Scope);
             end if;
@@ -633,9 +637,6 @@ package body Exp_Intr is
       then
          Expand_Import_Call (N);
 
-      elsif Nam = Name_Is_Negative then
-         Expand_Is_Negative (N);
-
       elsif Nam = Name_Rotate_Left then
          Expand_Shift (N, E, N_Op_Rotate_Left);
 
@@ -692,58 +693,6 @@ package body Exp_Intr is
          null;
       end if;
    end Expand_Intrinsic_Call;
-
-   ------------------------
-   -- Expand_Is_Negative --
-   ------------------------
-
-   procedure Expand_Is_Negative (N : Node_Id) is
-      Loc   : constant Source_Ptr := Sloc (N);
-      Opnd  : constant Node_Id    := Relocate_Node (First_Actual (N));
-
-   begin
-
-      --  We replace the function call by the following expression
-
-      --    if Opnd < 0.0 then
-      --       True
-      --    else
-      --       if Opnd > 0.0 then
-      --          False;
-      --       else
-      --          Float_Unsigned!(Float (Opnd)) /= 0
-      --       end if;
-      --    end if;
-
-      Rewrite (N,
-        Make_If_Expression (Loc,
-          Expressions => New_List (
-            Make_Op_Lt (Loc,
-              Left_Opnd  => Duplicate_Subexpr (Opnd),
-              Right_Opnd => Make_Real_Literal (Loc, Ureal_0)),
-
-            New_Occurrence_Of (Standard_True, Loc),
-
-            Make_If_Expression (Loc,
-             Expressions => New_List (
-               Make_Op_Gt (Loc,
-                 Left_Opnd  => Duplicate_Subexpr_No_Checks (Opnd),
-                 Right_Opnd => Make_Real_Literal (Loc, Ureal_0)),
-
-               New_Occurrence_Of (Standard_False, Loc),
-
-                Make_Op_Ne (Loc,
-                  Left_Opnd =>
-                    Unchecked_Convert_To
-                      (RTE (RE_Float_Unsigned),
-                       Convert_To
-                         (Standard_Float,
-                          Duplicate_Subexpr_No_Checks (Opnd))),
-                  Right_Opnd =>
-                    Make_Integer_Literal (Loc, 0)))))));
-
-      Analyze_And_Resolve (N, Standard_Boolean);
-   end Expand_Is_Negative;
 
    ------------------
    -- Expand_Shift --
@@ -853,7 +802,7 @@ package body Exp_Intr is
    ---------------------------
 
    procedure Expand_Unc_Conversion (N : Node_Id; E : Entity_Id) is
-      Func : constant Entity_Id  := Entity (Name (N));
+      Func : constant Entity_Id := Entity (Name (N));
       Conv : Node_Id;
       Ftyp : Entity_Id;
       Ttyp : Entity_Id;
@@ -904,12 +853,7 @@ package body Exp_Intr is
       end if;
 
       Rewrite (N, Unchecked_Convert_To (Ttyp, Conv));
-      Set_Etype (N, Ttyp);
-      Set_Analyzed (N);
-
-      if Nkind (N) = N_Unchecked_Type_Conversion then
-         Expand_N_Unchecked_Type_Conversion (N);
-      end if;
+      Analyze_And_Resolve (N, Ttyp);
    end Expand_Unc_Conversion;
 
    -----------------------------
@@ -1208,7 +1152,7 @@ package body Exp_Intr is
 
          else
             Set_Procedure_To_Call
-              (Free_Nod, Find_Prim_Op (Etype (Pool), Name_Deallocate));
+              (Free_Nod, Find_Storage_Op (Etype (Pool), Name_Deallocate));
          end if;
       end if;
 
@@ -1225,9 +1169,8 @@ package body Exp_Intr is
 
          if Is_Class_Wide_Type (Desig_Typ)
            or else
-            (Is_Array_Type (Desig_Typ)
-              and then not Is_Constrained (Desig_Typ)
-              and then Is_Packed (Desig_Typ))
+            (Is_Packed_Array (Desig_Typ)
+              and then not Is_Constrained (Desig_Typ))
          then
             declare
                Deref    : constant Node_Id :=

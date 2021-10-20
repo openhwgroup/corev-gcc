@@ -1,4 +1,4 @@
-/* Copyright (C) 2017-2020 Free Software Foundation, Inc.
+/* Copyright (C) 2017-2021 Free Software Foundation, Inc.
 
    This file is part of GCC.
    
@@ -44,125 +44,6 @@
 #include "cgraph.h"
 #include "targhooks.h"
 #include "langhooks-def.h"
-
-/* }}}  */
-/* {{{ OMP GCN pass.
- 
-   This pass is intended to make any GCN-specfic transformations to OpenMP
-   target regions.
- 
-   At present, its only purpose is to convert some "omp" built-in functions
-   to use closer-to-the-metal "gcn" built-in functions.  */
-
-unsigned int
-execute_omp_gcn (void)
-{
-  tree thr_num_tree = builtin_decl_explicit (BUILT_IN_OMP_GET_THREAD_NUM);
-  tree thr_num_id = DECL_NAME (thr_num_tree);
-  tree team_num_tree = builtin_decl_explicit (BUILT_IN_OMP_GET_TEAM_NUM);
-  tree team_num_id = DECL_NAME (team_num_tree);
-  basic_block bb;
-  gimple_stmt_iterator gsi;
-  unsigned int todo = 0;
-
-  FOR_EACH_BB_FN (bb, cfun)
-    for (gsi = gsi_start_bb (bb); !gsi_end_p (gsi); gsi_next (&gsi))
-    {
-      gimple *call = gsi_stmt (gsi);
-      tree decl;
-
-      if (is_gimple_call (call) && (decl = gimple_call_fndecl (call)))
-	{
-	  tree decl_id = DECL_NAME (decl);
-	  tree lhs = gimple_get_lhs (call);
-
-	  if (decl_id == thr_num_id)
-	    {
-	      if (dump_file && (dump_flags & TDF_DETAILS))
-		fprintf (dump_file,
-			 "Replace '%s' with __builtin_gcn_dim_pos.\n",
-			 IDENTIFIER_POINTER (decl_id));
-
-	      /* Transform this:
-	         lhs = __builtin_omp_get_thread_num ()
-	         to this:
-	         lhs = __builtin_gcn_dim_pos (1)  */
-	      tree fn = targetm.builtin_decl (GCN_BUILTIN_OMP_DIM_POS, 0);
-	      tree fnarg = build_int_cst (unsigned_type_node, 1);
-	      gimple *stmt = gimple_build_call (fn, 1, fnarg);
-	      gimple_call_set_lhs (stmt, lhs);
-	      gsi_replace (&gsi, stmt, true);
-
-	      todo |= TODO_update_ssa;
-	    }
-	  else if (decl_id == team_num_id)
-	    {
-	      if (dump_file && (dump_flags & TDF_DETAILS))
-		fprintf (dump_file,
-			 "Replace '%s' with __builtin_gcn_dim_pos.\n",
-			 IDENTIFIER_POINTER (decl_id));
-
-	      /* Transform this:
-	         lhs = __builtin_omp_get_team_num ()
-	         to this:
-	         lhs = __builtin_gcn_dim_pos (0)  */
-	      tree fn = targetm.builtin_decl (GCN_BUILTIN_OMP_DIM_POS, 0);
-	      tree fnarg = build_zero_cst (unsigned_type_node);
-	      gimple *stmt = gimple_build_call (fn, 1, fnarg);
-	      gimple_call_set_lhs (stmt, lhs);
-	      gsi_replace (&gsi, stmt, true);
-
-	      todo |= TODO_update_ssa;
-	    }
-	}
-    }
-
-  return todo;
-}
-
-namespace
-{
-
-  const pass_data pass_data_omp_gcn = {
-    GIMPLE_PASS,
-    "omp_gcn",			/* name */
-    OPTGROUP_NONE,		/* optinfo_flags */
-    TV_NONE,			/* tv_id */
-    0,				/* properties_required */
-    0,				/* properties_provided */
-    0,				/* properties_destroyed */
-    0,				/* todo_flags_start */
-    TODO_df_finish,		/* todo_flags_finish */
-  };
-
-  class pass_omp_gcn : public gimple_opt_pass
-  {
-  public:
-    pass_omp_gcn (gcc::context *ctxt)
-      : gimple_opt_pass (pass_data_omp_gcn, ctxt)
-    {
-    }
-
-    /* opt_pass methods: */
-    virtual bool gate (function *)
-    {
-      return flag_openmp;
-    }
-
-    virtual unsigned int execute (function *)
-    {
-      return execute_omp_gcn ();
-    }
-
-  }; /* class pass_omp_gcn.  */
-
-} /* anon namespace.  */
-
-gimple_opt_pass *
-make_pass_omp_gcn (gcc::context *ctxt)
-{
-  return new pass_omp_gcn (ctxt);
-}
 
 /* }}}  */
 /* {{{ OpenACC reductions.  */
@@ -428,7 +309,6 @@ static tree
 gcn_goacc_get_worker_red_decl (tree type, unsigned offset)
 {
   machine_function *machfun = cfun->machine;
-  tree existing_decl;
 
   if (TREE_CODE (type) == REFERENCE_TYPE)
     type = TREE_TYPE (type);
@@ -438,31 +318,12 @@ gcn_goacc_get_worker_red_decl (tree type, unsigned offset)
 			    (TYPE_QUALS (type)
 			     | ENCODE_QUAL_ADDR_SPACE (ADDR_SPACE_LDS)));
 
-  if (machfun->reduc_decls
-      && offset < machfun->reduc_decls->length ()
-      && (existing_decl = (*machfun->reduc_decls)[offset]))
-    {
-      gcc_assert (TREE_TYPE (existing_decl) == var_type);
-      return existing_decl;
-    }
-  else
-    {
-      char name[50];
-      sprintf (name, ".oacc_reduction_%u", offset);
-      tree decl = create_tmp_var_raw (var_type, name);
+  gcc_assert (offset
+	      < (machfun->reduction_limit - machfun->reduction_base));
+  tree ptr_type = build_pointer_type (var_type);
+  tree addr = build_int_cst (ptr_type, machfun->reduction_base + offset);
 
-      DECL_CONTEXT (decl) = NULL_TREE;
-      TREE_STATIC (decl) = 1;
-
-      varpool_node::finalize_decl (decl);
-
-      vec_safe_grow_cleared (machfun->reduc_decls, offset + 1);
-      (*machfun->reduc_decls)[offset] = decl;
-
-      return decl;
-    }
-
-  return NULL_TREE;
+  return build_simple_mem_ref (addr);
 }
 
 /* Expand IFN_GOACC_REDUCTION_SETUP.  */
@@ -619,7 +480,7 @@ gcn_goacc_reduction_teardown (gcall *call)
     }
 
   if (lhs)
-    gimplify_assign (lhs, var, &seq);
+    gimplify_assign (lhs, unshare_expr (var), &seq);
 
   pop_gimplify_context (NULL);
 
@@ -667,38 +528,12 @@ gcn_goacc_reduction (gcall *call)
     }
 }
 
-/* Implement TARGET_GOACC_ADJUST_PROPAGATION_RECORD.
- 
-   Tweak (worker) propagation record, e.g. to put it in shared memory.  */
-
 tree
-gcn_goacc_adjust_propagation_record (tree record_type, bool sender,
-				     const char *name)
+gcn_goacc_adjust_private_decl (location_t, tree var, int level)
 {
-  tree type = record_type;
+  if (level != GOMP_DIM_GANG)
+    return var;
 
-  TYPE_ADDR_SPACE (type) = ADDR_SPACE_LDS;
-
-  if (!sender)
-    type = build_pointer_type (type);
-
-  tree decl = create_tmp_var_raw (type, name);
-
-  if (sender)
-    {
-      DECL_CONTEXT (decl) = NULL_TREE;
-      TREE_STATIC (decl) = 1;
-    }
-
-  if (sender)
-    varpool_node::finalize_decl (decl);
-
-  return decl;
-}
-
-void
-gcn_goacc_adjust_gangprivate_decl (tree var)
-{
   tree type = TREE_TYPE (var);
   tree lds_type = build_qualified_type (type,
 		    TYPE_QUALS_NO_ADDR_SPACE (type)
@@ -716,6 +551,34 @@ gcn_goacc_adjust_gangprivate_decl (tree var)
 
   if (machfun)
     machfun->use_flat_addressing = true;
+
+  return var;
+}
+
+/* Implement TARGET_GOACC_CREATE_WORKER_BROADCAST_RECORD.
+
+   Create OpenACC worker state propagation record in shared memory.  */
+
+tree
+gcn_goacc_create_worker_broadcast_record (tree record_type, bool sender,
+					  const char *name,
+					  unsigned HOST_WIDE_INT offset)
+{
+  tree type = build_qualified_type (record_type,
+				    TYPE_QUALS_NO_ADDR_SPACE (record_type)
+				    | ENCODE_QUAL_ADDR_SPACE (ADDR_SPACE_LDS));
+
+  if (!sender)
+    {
+      tree ptr_type = build_pointer_type (type);
+      return create_tmp_var_raw (ptr_type, name);
+    }
+
+  if (record_type == char_type_node)
+    offset = 1;
+
+  tree ptr_type = build_pointer_type (type);
+  return build_int_cst (ptr_type, offset);
 }
 
 /* }}}  */

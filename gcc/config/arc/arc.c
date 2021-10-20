@@ -1,5 +1,5 @@
 /* Subroutines used for code generation on the Synopsys DesignWare ARC cpu.
-   Copyright (C) 1994-2020 Free Software Foundation, Inc.
+   Copyright (C) 1994-2021 Free Software Foundation, Inc.
 
    Sources derived from work done by Sankhya Technologies (www.sankhya.com) on
    behalf of Synopsys Inc.
@@ -901,7 +901,7 @@ arc_secondary_reload (bool in_p,
 
 	  /* It is a pseudo that ends in a stack location.  This
 	     procedure only works with the old reload step.  */
-	  if (reg_equiv_mem (REGNO (x)) && !lra_in_progress)
+	  if (!lra_in_progress && reg_equiv_mem (REGNO (x)))
 	    {
 	      /* Get the equivalent address and check the range of the
 		 offset.  */
@@ -1440,23 +1440,22 @@ arc_override_options (void)
   if (flag_pic)
     target_flags |= MASK_NO_SDATA_SET;
 
-  if (flag_no_common == 255)
-    flag_no_common = !TARGET_NO_SDATA_SET;
-
   /* Check for small data option */
-  if (!global_options_set.x_g_switch_value && !TARGET_NO_SDATA_SET)
+  if (!OPTION_SET_P (g_switch_value) && !TARGET_NO_SDATA_SET)
     g_switch_value = TARGET_LL64 ? 8 : 4;
 
   /* A7 has an issue with delay slots.  */
   if (TARGET_ARC700 && (arc_tune != ARC_TUNE_ARC7XX))
     flag_delayed_branch = 0;
 
-  /* Millicode thunks doesn't work with long calls.  */
-  if (TARGET_LONG_CALLS_SET)
+  /* Millicode thunks doesn't work for long calls.  */
+  if (TARGET_LONG_CALLS_SET
+      /* neither for RF16.  */
+      || TARGET_RF16)
     target_flags &= ~MASK_MILLICODE_THUNK_SET;
 
   /* Set unaligned to all HS cpus.  */
-  if (!global_options_set.x_unaligned_access && TARGET_HS)
+  if (!OPTION_SET_P (unaligned_access) && TARGET_HS)
     unaligned_access = 1;
 
   /* These need to be done at start up.  It's convenient to do them here.  */
@@ -2488,8 +2487,8 @@ arc_address_cost (rtx addr, machine_mode, addr_space_t, bool speed)
 
     case PLUS :
       {
-	register rtx plus0 = XEXP (addr, 0);
-	register rtx plus1 = XEXP (addr, 1);
+	rtx plus0 = XEXP (addr, 0);
+	rtx plus1 = XEXP (addr, 1);
 
 	if (GET_CODE (plus0) != REG
 	    && (GET_CODE (plus0) != MULT
@@ -4418,10 +4417,10 @@ arc_initialize_trampoline (rtx tramp, tree fndecl, rtx cxt)
 		   GEN_INT (TRAMPOLINE_SIZE), BLOCK_OP_NORMAL);
   emit_move_insn (adjust_address (tramp, SImode, 8), fnaddr);
   emit_move_insn (adjust_address (tramp, SImode, 12), cxt);
-  emit_library_call (gen_rtx_SYMBOL_REF (Pmode, "__clear_cache"),
-		     LCT_NORMAL, VOIDmode, XEXP (tramp, 0), Pmode,
-		     plus_constant (Pmode, XEXP (tramp, 0), TRAMPOLINE_SIZE),
-		     Pmode);
+  maybe_emit_call_builtin___clear_cache (XEXP (tramp, 0),
+					 plus_constant (Pmode,
+							XEXP (tramp, 0),
+							TRAMPOLINE_SIZE));
 }
 
 /* Add the given function declaration to emit code in JLI section.  */
@@ -5032,7 +5031,7 @@ arc_print_operand (FILE *file, rtx x, int code)
 void
 arc_print_operand_address (FILE *file , rtx addr)
 {
-  register rtx base, index = 0;
+  rtx base, index = 0;
 
   switch (GET_CODE (addr))
     {
@@ -5157,7 +5156,7 @@ static void
 arc_ccfsm_advance (rtx_insn *insn, struct arc_ccfsm *state)
 {
   /* BODY will hold the body of INSN.  */
-  register rtx body;
+  rtx body;
 
   /* This will be 1 if trying to repeat the trick (ie: do the `else' part of
      an if/then/else), and things need to be reversed.  */
@@ -6130,8 +6129,8 @@ arc_legitimate_pic_addr_p (rtx addr)
 static bool
 symbolic_reference_mentioned_p (rtx op)
 {
-  register const char *fmt;
-  register int i;
+  const char *fmt;
+  int i;
 
   if (GET_CODE (op) == SYMBOL_REF || GET_CODE (op) == LABEL_REF)
     return true;
@@ -6141,7 +6140,7 @@ symbolic_reference_mentioned_p (rtx op)
     {
       if (fmt[i] == 'E')
 	{
-	  register int j;
+	  int j;
 
 	  for (j = XVECLEN (op, i) - 1; j >= 0; j--)
 	    if (symbolic_reference_mentioned_p (XVECEXP (op, i, j)))
@@ -6163,8 +6162,8 @@ symbolic_reference_mentioned_p (rtx op)
 bool
 arc_raw_symbolic_reference_mentioned_p (rtx op, bool skip_local)
 {
-  register const char *fmt;
-  register int i;
+  const char *fmt;
+  int i;
 
   if (GET_CODE(op) == UNSPEC)
     return false;
@@ -6184,7 +6183,7 @@ arc_raw_symbolic_reference_mentioned_p (rtx op, bool skip_local)
     {
       if (fmt[i] == 'E')
 	{
-	  register int j;
+	  int j;
 
 	  for (j = XVECLEN (op, i) - 1; j >= 0; j--)
 	    if (arc_raw_symbolic_reference_mentioned_p (XVECEXP (op, i, j),
@@ -7663,11 +7662,18 @@ arc_invalid_within_doloop (const rtx_insn *insn)
 static rtx_insn *
 arc_active_insn (rtx_insn *insn)
 {
-  rtx_insn *nxt = next_active_insn (insn);
-
-  if (nxt && GET_CODE (PATTERN (nxt)) == ASM_INPUT)
-    nxt = next_active_insn (nxt);
-  return nxt;
+  while (insn)
+    {
+      insn = NEXT_INSN (insn);
+      if (insn == 0
+	  || (active_insn_p (insn)
+	      && NONDEBUG_INSN_P (insn)
+	      && !NOTE_P (insn)
+	      && GET_CODE (PATTERN (insn)) != UNSPEC_VOLATILE
+	      && GET_CODE (PATTERN (insn)) != PARALLEL))
+	break;
+    }
+  return insn;
 }
 
 /* Search for a sequence made out of two stores and a given number of
@@ -7686,11 +7692,10 @@ check_store_cacheline_hazard (void)
       if (!succ0)
 	return;
 
-      if (!single_set (insn) || !single_set (succ0))
+      if (!single_set (insn))
 	continue;
 
-      if ((get_attr_type (insn) != TYPE_STORE)
-	  || (get_attr_type (succ0) != TYPE_STORE))
+      if ((get_attr_type (insn) != TYPE_STORE))
 	continue;
 
       /* Found at least two consecutive stores.  Goto the end of the
@@ -7698,6 +7703,9 @@ check_store_cacheline_hazard (void)
       for (insn1 = succ0; insn1; insn1 = arc_active_insn (insn1))
 	if (!single_set (insn1) || get_attr_type (insn1) != TYPE_STORE)
 	  break;
+
+      /* Save were we are.  */
+      succ0 = insn1;
 
       /* Now, check the next two instructions for the following cases:
          1. next instruction is a LD => insert 2 nops between store
@@ -7730,9 +7738,13 @@ check_store_cacheline_hazard (void)
 	    }
 	}
 
-      insn = insn1;
       if (found)
-	found = false;
+	{
+	  insn = insn1;
+	  found = false;
+	}
+      else
+	insn = succ0;
     }
 }
 
@@ -7807,7 +7819,6 @@ static void
 workaround_arc_anomaly (void)
 {
   rtx_insn *insn, *succ0;
-  rtx_insn *succ1;
 
   /* For any architecture: call arc_hazard here.  */
   for (insn = get_insns (); insn; insn = NEXT_INSN (insn))
@@ -7826,24 +7837,6 @@ workaround_arc_anomaly (void)
      nops between any sequence of stores and a load.  */
   if (arc_tune != ARC_TUNE_ARC7XX)
     check_store_cacheline_hazard ();
-
-  for (insn = get_insns (); insn; insn = NEXT_INSN (insn))
-    {
-      succ0 = next_real_insn (insn);
-      if (arc_store_addr_hazard_internal_p (insn, succ0))
-	{
-	  emit_insn_after (gen_nopv (), insn);
-	  emit_insn_after (gen_nopv (), insn);
-	  continue;
-	}
-
-      /* Avoid adding nops if the instruction between the ST and LD is
-	 a call or jump.  */
-      succ1 = next_real_insn (succ0);
-      if (succ0 && !JUMP_P (succ0) && !CALL_P (succ0)
-	  && arc_store_addr_hazard_internal_p (insn, succ1))
-	emit_insn_after (gen_nopv (), insn);
-    }
 }
 
 /* A callback for the hw-doloop pass.  Called when a loop we have discovered
@@ -8439,7 +8432,7 @@ arc_reorg (void)
 
       if (!INSN_ADDRESSES_SET_P())
 	  fatal_error (input_location,
-		       "insn addresses not set after shorten_branches");
+		       "insn addresses not set after shorten branches");
 
       for (insn = get_insns (); insn; insn = NEXT_INSN (insn))
 	{
@@ -8589,6 +8582,7 @@ arc_reorg (void)
 		  if (!brcc_nolimm_operator (op, VOIDmode)
 		      && !long_immediate_operand (op1, VOIDmode)
 		      && (TARGET_ARC700
+			  || (TARGET_V2 && optimize_size)
 			  || next_active_insn (link_insn) != insn))
 		    continue;
 
@@ -9239,13 +9233,21 @@ prepare_move_operands (rtx *operands, machine_mode mode)
 	}
       if (arc_is_uncached_mem_p (operands[1]))
 	{
+	  rtx tmp = operands[0];
+
 	  if (MEM_P (operands[0]))
-	    operands[0] = force_reg (mode, operands[0]);
+	    tmp = gen_reg_rtx (mode);
+
 	  emit_insn (gen_rtx_SET
-		     (operands[0],
+		     (tmp,
 		      gen_rtx_UNSPEC_VOLATILE
 		      (mode, gen_rtvec (1, operands[1]),
 		       VUNSPEC_ARC_LDDI)));
+	  if (MEM_P (operands[0]))
+	    {
+	      operands[1] = tmp;
+	      return false;
+	    }
 	  return true;
 	}
     }
@@ -9865,29 +9867,6 @@ gen_acc2 (void)
   return gen_rtx_REG (SImode, TARGET_BIG_ENDIAN ? 57: 56);
 }
 
-/* FIXME: a parameter should be added, and code added to final.c,
-   to reproduce this functionality in shorten_branches.  */
-#if 0
-/* Return nonzero iff BRANCH should be unaligned if possible by upsizing
-   a previous instruction.  */
-int
-arc_unalign_branch_p (rtx branch)
-{
-  rtx note;
-
-  if (!TARGET_UNALIGN_BRANCH)
-    return 0;
-  /* Do not do this if we have a filled delay slot.  */
-  if (get_attr_delay_slot_filled (branch) == DELAY_SLOT_FILLED_YES
-      && !NEXT_INSN (branch)->deleted ())
-    return 0;
-  note = find_reg_note (branch, REG_BR_PROB, 0);
-  return (!note
-	  || (arc_unalign_prob_threshold && !br_prob_note_reliable_p (note))
-	  || INTVAL (XEXP (note, 0)) < arc_unalign_prob_threshold);
-}
-#endif
-
 /* When estimating sizes during arc_reorg, when optimizing for speed, there
    are three reasons why we need to consider branches to be length 6:
    - annull-false delay slot insns are implemented using conditional execution,
@@ -10126,6 +10105,31 @@ arc_process_double_reg_moves (rtx *operands)
   return true;
 }
 
+
+/* Check if we need to split a 64bit move.  We do not need to split it if we can
+   use vadd2 or ldd/std instructions.  */
+
+bool
+arc_split_move_p (rtx *operands)
+{
+  machine_mode mode = GET_MODE (operands[0]);
+
+  if (TARGET_LL64
+      && ((memory_operand (operands[0], mode)
+	   && (even_register_operand (operands[1], mode)
+	       || satisfies_constraint_Cm3 (operands[1])))
+	  || (memory_operand (operands[1], mode)
+	      && even_register_operand (operands[0], mode))))
+    return false;
+
+  if (TARGET_PLUS_QMACW
+      && even_register_operand (operands[0], mode)
+      && even_register_operand (operands[1], mode))
+    return false;
+
+  return true;
+}
+
 /* operands 0..1 are the operands of a 64 bit move instruction.
    split it into two moves with operands 2/3 and 4/5.  */
 
@@ -10142,17 +10146,6 @@ arc_split_move (rtx *operands)
     if (arc_process_double_reg_moves (operands))
       return;
   }
-
-  if (TARGET_LL64
-      && ((memory_operand (operands[0], mode)
-	   && (even_register_operand (operands[1], mode)
-	       || satisfies_constraint_Cm3 (operands[1])))
-	  || (memory_operand (operands[1], mode)
-	      && even_register_operand (operands[0], mode))))
-    {
-      emit_move_insn (operands[0], operands[1]);
-      return;
-    }
 
   if (TARGET_PLUS_QMACW
       && GET_CODE (operands[1]) == CONST_VECTOR)
@@ -10272,76 +10265,6 @@ arc_regno_use_in (unsigned int regno, rtx x)
     }
 
   return NULL_RTX;
-}
-
-/* Return the integer value of the "type" attribute for INSN, or -1 if
-   INSN can't have attributes.  */
-
-static int
-arc_attr_type (rtx_insn *insn)
-{
-  if (NONJUMP_INSN_P (insn)
-      ? (GET_CODE (PATTERN (insn)) == USE
-	 || GET_CODE (PATTERN (insn)) == CLOBBER)
-      : JUMP_P (insn)
-      ? (GET_CODE (PATTERN (insn)) == ADDR_VEC
-	 || GET_CODE (PATTERN (insn)) == ADDR_DIFF_VEC)
-      : !CALL_P (insn))
-    return -1;
-  return get_attr_type (insn);
-}
-
-/* Return true if insn sets the condition codes.  */
-
-bool
-arc_sets_cc_p (rtx_insn *insn)
-{
-  if (NONJUMP_INSN_P (insn))
-    if (rtx_sequence *seq = dyn_cast <rtx_sequence *> (PATTERN (insn)))
-      insn = seq->insn (seq->len () - 1);
-  return arc_attr_type (insn) == TYPE_COMPARE;
-}
-
-/* Return true if INSN is an instruction with a delay slot we may want
-   to fill.  */
-
-bool
-arc_need_delay (rtx_insn *insn)
-{
-  rtx_insn *next;
-
-  if (!flag_delayed_branch)
-    return false;
-  /* The return at the end of a function needs a delay slot.  */
-  if (NONJUMP_INSN_P (insn) && GET_CODE (PATTERN (insn)) == USE
-      && (!(next = next_active_insn (insn))
-	  || ((!NONJUMP_INSN_P (next) || GET_CODE (PATTERN (next)) != SEQUENCE)
-	      && arc_attr_type (next) == TYPE_RETURN))
-      && (!TARGET_PAD_RETURN
-	  || (prev_active_insn (insn)
-	      && prev_active_insn (prev_active_insn (insn))
-	      && prev_active_insn (prev_active_insn (prev_active_insn (insn))))))
-    return true;
-  if (NONJUMP_INSN_P (insn)
-      ? (GET_CODE (PATTERN (insn)) == USE
-	 || GET_CODE (PATTERN (insn)) == CLOBBER
-	 || GET_CODE (PATTERN (insn)) == SEQUENCE)
-      : JUMP_P (insn)
-      ? (GET_CODE (PATTERN (insn)) == ADDR_VEC
-	 || GET_CODE (PATTERN (insn)) == ADDR_DIFF_VEC)
-      : !CALL_P (insn))
-    return false;
-  return num_delay_slots (insn) != 0;
-}
-
-/* Return true if the scheduling pass(es) has/have already run,
-   i.e. where possible, we should try to mitigate high latencies
-   by different instruction selection.  */
-
-bool
-arc_scheduling_not_expected (void)
-{
-  return cfun->machine->arc_reorg_started;
 }
 
 /* Code has a minimum p2 alignment of 1, which we must restore after

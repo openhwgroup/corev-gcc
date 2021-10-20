@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 2014-2020, Free Software Foundation, Inc.         --
+--          Copyright (C) 2014-2021, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -23,30 +23,34 @@
 --                                                                          --
 ------------------------------------------------------------------------------
 
-with Atree;    use Atree;
-with Debug;    use Debug;
-with Einfo;    use Einfo;
-with Elists;   use Elists;
-with Exp_Util; use Exp_Util;
-with Lib;      use Lib;
-with Namet;    use Namet;
-with Nlists;   use Nlists;
-with Nmake;    use Nmake;
+with Atree;          use Atree;
+with Debug;          use Debug;
+with Einfo;          use Einfo;
+with Einfo.Entities; use Einfo.Entities;
+with Einfo.Utils;    use Einfo.Utils;
+with Elists;         use Elists;
+with Exp_Util;       use Exp_Util;
+with Lib;            use Lib;
+with Namet;          use Namet;
+with Nlists;         use Nlists;
+with Nmake;          use Nmake;
 with Opt;
-with Output;   use Output;
-with Rtsfind;  use Rtsfind;
-with Sem;      use Sem;
-with Sem_Aux;  use Sem_Aux;
-with Sem_Ch8;  use Sem_Ch8;
-with Sem_Mech; use Sem_Mech;
-with Sem_Res;  use Sem_Res;
-with Sem_Util; use Sem_Util;
-with Sinfo;    use Sinfo;
-with Sinput;   use Sinput;
-with Snames;   use Snames;
-with Stand;    use Stand;
-with Tbuild;   use Tbuild;
-with Uintp;    use Uintp;
+with Output;         use Output;
+with Rtsfind;        use Rtsfind;
+with Sem;            use Sem;
+with Sem_Aux;        use Sem_Aux;
+with Sem_Ch8;        use Sem_Ch8;
+with Sem_Mech;       use Sem_Mech;
+with Sem_Res;        use Sem_Res;
+with Sem_Util;       use Sem_Util;
+with Sinfo;          use Sinfo;
+with Sinfo.Nodes;    use Sinfo.Nodes;
+with Sinfo.Utils;    use Sinfo.Utils;
+with Sinput;         use Sinput;
+with Snames;         use Snames;
+with Stand;          use Stand;
+with Tbuild;         use Tbuild;
+with Uintp;          use Uintp;
 
 package body Exp_Unst is
 
@@ -187,7 +191,7 @@ package body Exp_Unst is
 
    begin
       Typ := Make_Temporary (Loc, 'S');
-      Set_Ekind (Typ, E_General_Access_Type);
+      Mutate_Ekind (Typ, E_General_Access_Type);
       Set_Etype (Typ, Typ);
       Set_Scope (Typ, Scop);
       Set_Directly_Designated_Type (Typ, Etype (E));
@@ -251,13 +255,8 @@ package body Exp_Unst is
    -----------------------
 
    function Needs_Fat_Pointer (E : Entity_Id) return Boolean is
-      Typ : Entity_Id := Etype (E);
-
+      Typ : constant Entity_Id := Get_Fullest_View (Etype (E));
    begin
-      if Is_Private_Type (Typ) and then Present (Full_View (Typ)) then
-         Typ := Full_View (Typ);
-      end if;
-
       return Is_Array_Type (Typ) and then not Is_Constrained (Typ);
    end Needs_Fat_Pointer;
 
@@ -271,7 +270,9 @@ package body Exp_Unst is
    begin
       pragma Assert (Is_Subprogram (E));
 
-      if Subps_Index (E) = Uint_0 then
+      if Field_Is_Initial_Zero (E, F_Subps_Index)
+        or else Subps_Index (E) = Uint_0
+      then
          E := Ultimate_Alias (E);
 
          --  The body of a protected operation has a different name and
@@ -471,21 +472,23 @@ package body Exp_Unst is
             Callee : Entity_Id;
 
             procedure Check_Static_Type
-              (T                : Entity_Id;
+              (In_T             : Entity_Id;
                N                : Node_Id;
                DT               : in out Boolean;
                Check_Designated : Boolean := False);
-            --  Given a type T, checks if it is a static type defined as a type
-            --  with no dynamic bounds in sight. If so, the only action is to
-            --  set Is_Static_Type True for T. If T is not a static type, then
-            --  all types with dynamic bounds associated with T are detected,
-            --  and their bounds are marked as uplevel referenced if not at the
-            --  library level, and DT is set True. If N is specified, it's the
-            --  node that will need to be replaced. If not specified, it means
-            --  we can't do a replacement because the bound is implicit.
+            --  Given a type In_T, checks if it is a static type defined as
+            --  a type with no dynamic bounds in sight. If so, the only
+            --  action is to set Is_Static_Type True for In_T. If In_T is
+            --  not a static type, then all types with dynamic bounds
+            --  associated with In_T are detected, and their bounds are
+            --  marked as uplevel referenced if not at the library level,
+            --  and DT is set True. If N is specified, it's the node that
+            --  will need to be replaced. If not specified, it means we
+            --  can't do a replacement because the bound is implicit.
 
-            --  If Check_Designated is True and T or its full view is an access
-            --  type, check whether the designated type has dynamic bounds.
+            --  If Check_Designated is True and In_T or its full view
+            --  is an access type, check whether the designated type
+            --  has dynamic bounds.
 
             procedure Note_Uplevel_Ref
               (E      : Entity_Id;
@@ -505,11 +508,13 @@ package body Exp_Unst is
             -----------------------
 
             procedure Check_Static_Type
-              (T                : Entity_Id;
+              (In_T             : Entity_Id;
                N                : Node_Id;
                DT               : in out Boolean;
                Check_Designated : Boolean := False)
             is
+               T : constant Entity_Id := Get_Fullest_View (In_T);
+
                procedure Note_Uplevel_Bound (N : Node_Id; Ref : Node_Id);
                --  N is the bound of a dynamic type. This procedure notes that
                --  this bound is uplevel referenced, it can handle references
@@ -528,14 +533,17 @@ package body Exp_Unst is
                   --  Entity name case. Make sure that the entity is declared
                   --  in a subprogram. This may not be the case for a type in a
                   --  loop appearing in a precondition.
-                  --  Exclude explicitly  discriminants (that can appear
-                  --  in bounds of discriminated components).
+                  --  Exclude explicitly discriminants (that can appear
+                  --  in bounds of discriminated components) and enumeration
+                  --  literals.
 
                   if Is_Entity_Name (N) then
                      if Present (Entity (N))
                        and then not Is_Type (Entity (N))
                        and then Present (Enclosing_Subprogram (Entity (N)))
-                       and then Ekind (Entity (N)) /= E_Discriminant
+                       and then
+                         Ekind (Entity (N))
+                           not in E_Discriminant | E_Enumeration_Literal
                      then
                         Note_Uplevel_Ref
                           (E      => Entity (N),
@@ -877,9 +885,11 @@ package body Exp_Unst is
                      --  within Subp. Calls to Subp itself or to subprograms
                      --  outside the nested structure do not affect us.
 
-                     if Scope_Within (Ent, Subp)
-                        and then Is_Subprogram (Ent)
-                        and then not Is_Imported (Ent)
+                     if Is_Subprogram (Ent)
+                       and then not Is_Generic_Subprogram (Ent)
+                       and then not Is_Imported (Ent)
+                       and then not Is_Intrinsic_Subprogram (Ent)
+                       and then Scope_Within (Ultimate_Alias (Ent), Subp)
                      then
                         Append_Unique_Call ((N, Current_Subprogram, Ent));
                      end if;
@@ -894,6 +904,8 @@ package body Exp_Unst is
                      DT     : Boolean := False;
                      Formal : Node_Id;
                      Subp   : Entity_Id;
+                     F_Type : Entity_Id;
+                     A_Type : Entity_Id;
 
                   begin
                      if Nkind (Name (N)) = N_Explicit_Dereference then
@@ -904,12 +916,16 @@ package body Exp_Unst is
 
                      Actual := First_Actual (N);
                      Formal := First_Formal_With_Extras (Subp);
+
                      while Present (Actual) loop
-                        if Is_Array_Type (Etype (Formal))
-                          and then not Is_Constrained (Etype (Formal))
-                          and then Is_Constrained (Etype (Actual))
+                        F_Type := Get_Fullest_View (Etype (Formal));
+                        A_Type := Get_Fullest_View (Etype (Actual));
+
+                        if Is_Array_Type (F_Type)
+                          and then not Is_Constrained (F_Type)
+                          and then Is_Constrained (A_Type)
                         then
-                           Check_Static_Type (Etype (Actual), Empty, DT);
+                           Check_Static_Type (A_Type, Empty, DT);
                         end if;
 
                         Next_Actual (Actual);
@@ -1553,7 +1569,7 @@ package body Exp_Unst is
 
                   --  A subprogram instantiation does not have an explicit
                   --  body. If unused, we could remove the corresponding
-                  --  wrapper package and its body (TBD).
+                  --  wrapper package and its body.
 
                   if Present (STJ.Bod) then
                      Spec := Corresponding_Spec (STJ.Bod);
@@ -1780,7 +1796,7 @@ package body Exp_Unst is
                      --  Decorate the new formal entity
 
                      Set_Scope                (Form, STJ.Ent);
-                     Set_Ekind                (Form, E_In_Parameter);
+                     Mutate_Ekind             (Form, E_In_Parameter);
                      Set_Etype                (Form, STJE.ARECnPT);
                      Set_Mechanism            (Form, By_Copy);
                      Set_Never_Set_In_Source  (Form, True);

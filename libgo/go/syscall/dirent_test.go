@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+//go:build aix || darwin || dragonfly || freebsd || linux || netbsd || openbsd || solaris
 // +build aix darwin dragonfly freebsd linux netbsd openbsd solaris
 
 package syscall_test
@@ -9,7 +10,6 @@ package syscall_test
 import (
 	"bytes"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -27,16 +27,12 @@ func TestDirent(t *testing.T) {
 		filenameMinSize = 11
 	)
 
-	d, err := ioutil.TempDir("", "dirent-test")
-	if err != nil {
-		t.Fatalf("tempdir: %v", err)
-	}
-	defer os.RemoveAll(d)
+	d := t.TempDir()
 	t.Logf("tmpdir: %s", d)
 
 	for i, c := range []byte("0123456789") {
 		name := string(bytes.Repeat([]byte{c}, filenameMinSize+i))
-		err = ioutil.WriteFile(filepath.Join(d, name), nil, 0644)
+		err := os.WriteFile(filepath.Join(d, name), nil, 0644)
 		if err != nil {
 			t.Fatalf("writefile: %v", err)
 		}
@@ -93,18 +89,14 @@ func TestDirentRepeat(t *testing.T) {
 	}
 
 	// Make a directory containing N files
-	d, err := ioutil.TempDir("", "direntRepeat-test")
-	if err != nil {
-		t.Fatalf("tempdir: %v", err)
-	}
-	defer os.RemoveAll(d)
+	d := t.TempDir()
 
 	var files []string
 	for i := 0; i < N; i++ {
 		files = append(files, fmt.Sprintf("file%d", i))
 	}
 	for _, file := range files {
-		err = ioutil.WriteFile(filepath.Join(d, file), []byte("contents"), 0644)
+		err := os.WriteFile(filepath.Join(d, file), []byte("contents"), 0644)
 		if err != nil {
 			t.Fatalf("writefile: %v", err)
 		}

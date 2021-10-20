@@ -237,7 +237,10 @@ func playExample(file *ast.File, f *ast.FuncDecl) *ast.File {
 				}
 			}
 
-			ast.Inspect(d.Body, inspectFunc)
+			// Functions might not have a body. See #42706.
+			if d.Body != nil {
+				ast.Inspect(d.Body, inspectFunc)
+			}
 		case *ast.GenDecl:
 			for _, spec := range d.Specs {
 				switch s := spec.(type) {
@@ -486,7 +489,7 @@ func classifyExamples(p *Package, examples []*Example) {
 			ids[f.Name] = &f.Examples
 		}
 		for _, m := range t.Methods {
-			if !token.IsExported(m.Name) || m.Level != 0 { // avoid forwarded methods from embedding
+			if !token.IsExported(m.Name) {
 				continue
 			}
 			ids[strings.TrimPrefix(m.Recv, "*")+"_"+m.Name] = &m.Examples

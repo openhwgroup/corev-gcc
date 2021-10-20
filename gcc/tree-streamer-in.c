@@ -1,6 +1,6 @@
 /* Routines for reading trees from a file stream.
 
-   Copyright (C) 2011-2020 Free Software Foundation, Inc.
+   Copyright (C) 2011-2021 Free Software Foundation, Inc.
    Contributed by Diego Novillo <dnovillo@google.com>
 
 This file is part of GCC.
@@ -256,7 +256,11 @@ unpack_ts_decl_common_value_fields (struct bitpack_d *bp, tree expr)
       DECL_PACKED (expr) = (unsigned) bp_unpack_value (bp, 1);
       DECL_NONADDRESSABLE_P (expr) = (unsigned) bp_unpack_value (bp, 1);
       DECL_PADDING_P (expr) = (unsigned) bp_unpack_value (bp, 1);
-      DECL_FIELD_ABI_IGNORED (expr) = (unsigned) bp_unpack_value (bp, 1);
+      unsigned val = (unsigned) bp_unpack_value (bp, 1);
+      if (DECL_BIT_FIELD (expr))
+	SET_DECL_FIELD_CXX_ZERO_WIDTH_BIT_FIELD (expr, val);
+      else
+	SET_DECL_FIELD_ABI_IGNORED (expr, val);
       expr->decl_common.off_align = bp_unpack_value (bp, 8);
     }
 
@@ -333,7 +337,7 @@ unpack_ts_function_decl_value_fields (struct bitpack_d *bp, tree expr)
   DECL_IS_NOVOPS (expr) = (unsigned) bp_unpack_value (bp, 1);
   DECL_IS_RETURNS_TWICE (expr) = (unsigned) bp_unpack_value (bp, 1);
   DECL_IS_MALLOC (expr) = (unsigned) bp_unpack_value (bp, 1);
-  DECL_SET_IS_OPERATOR_NEW (expr, (unsigned) bp_unpack_value (bp, 1));
+  FUNCTION_DECL_DECL_TYPE (expr) = (function_decl_type) bp_unpack_value (bp, 2);
   DECL_SET_IS_OPERATOR_DELETE (expr, (unsigned) bp_unpack_value (bp, 1));
   DECL_DECLARED_INLINE_P (expr) = (unsigned) bp_unpack_value (bp, 1);
   DECL_STATIC_CHAIN (expr) = (unsigned) bp_unpack_value (bp, 1);
@@ -555,7 +559,7 @@ streamer_read_tree_bitfields (class lto_input_block *ib,
     {
       unsigned HOST_WIDE_INT length = bp_unpack_var_len_unsigned (&bp);
       if (length > 0)
-	vec_safe_grow (CONSTRUCTOR_ELTS (expr), length);
+	vec_safe_grow (CONSTRUCTOR_ELTS (expr), length, true);
     }
 
 #ifndef ACCEL_COMPILER
@@ -800,11 +804,12 @@ lto_input_ts_function_decl_tree_pointers (class lto_input_block *ib,
     tree opts = DECL_FUNCTION_SPECIFIC_OPTIMIZATION (expr);
     if (opts)
       {
-	struct gcc_options tmp;
+	struct gcc_options tmp, tmp_set;
 	init_options_struct (&tmp, NULL);
-	cl_optimization_restore (&tmp, TREE_OPTIMIZATION (opts));
-	finish_options (&tmp, &global_options_set, UNKNOWN_LOCATION);
-	opts = build_optimization_node (&tmp);
+	memset (&tmp_set, 0, sizeof (tmp_set));
+	cl_optimization_restore (&tmp, &tmp_set, TREE_OPTIMIZATION (opts));
+	finish_options (&tmp, &tmp_set, UNKNOWN_LOCATION);
+	opts = build_optimization_node (&tmp, &tmp_set);
 	DECL_FUNCTION_SPECIFIC_OPTIMIZATION (expr) = opts;
       }
   }

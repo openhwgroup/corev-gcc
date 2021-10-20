@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2020, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2021, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -23,52 +23,56 @@
 --                                                                          --
 ------------------------------------------------------------------------------
 
-with Aspects;   use Aspects;
-with Atree;     use Atree;
-with Contracts; use Contracts;
-with Debug;     use Debug;
-with Einfo;     use Einfo;
-with Errout;    use Errout;
+with Aspects;        use Aspects;
+with Atree;          use Atree;
+with Contracts;      use Contracts;
+with Debug;          use Debug;
+with Einfo;          use Einfo;
+with Einfo.Entities; use Einfo.Entities;
+with Einfo.Utils;    use Einfo.Utils;
+with Errout;         use Errout;
 with Exp_Put_Image;
-with Exp_Util;  use Exp_Util;
-with Elists;    use Elists;
-with Fname;     use Fname;
-with Fname.UF;  use Fname.UF;
-with Freeze;    use Freeze;
-with Impunit;   use Impunit;
-with Inline;    use Inline;
-with Lib;       use Lib;
-with Lib.Load;  use Lib.Load;
-with Lib.Xref;  use Lib.Xref;
-with Namet;     use Namet;
-with Nlists;    use Nlists;
-with Nmake;     use Nmake;
-with Opt;       use Opt;
-with Output;    use Output;
-with Par_SCO;   use Par_SCO;
-with Restrict;  use Restrict;
-with Rident;    use Rident;
-with Rtsfind;   use Rtsfind;
-with Sem;       use Sem;
-with Sem_Aux;   use Sem_Aux;
-with Sem_Ch3;   use Sem_Ch3;
-with Sem_Ch6;   use Sem_Ch6;
-with Sem_Ch7;   use Sem_Ch7;
-with Sem_Ch8;   use Sem_Ch8;
-with Sem_Ch13;  use Sem_Ch13;
-with Sem_Dist;  use Sem_Dist;
-with Sem_Prag;  use Sem_Prag;
-with Sem_Util;  use Sem_Util;
-with Sem_Warn;  use Sem_Warn;
-with Stand;     use Stand;
-with Sinfo;     use Sinfo;
-with Sinfo.CN;  use Sinfo.CN;
-with Sinput;    use Sinput;
-with Snames;    use Snames;
-with Style;     use Style;
-with Stylesw;   use Stylesw;
-with Tbuild;    use Tbuild;
-with Uname;     use Uname;
+with Exp_Util;       use Exp_Util;
+with Elists;         use Elists;
+with Fname;          use Fname;
+with Fname.UF;       use Fname.UF;
+with Freeze;         use Freeze;
+with Impunit;        use Impunit;
+with Inline;         use Inline;
+with Lib;            use Lib;
+with Lib.Load;       use Lib.Load;
+with Lib.Xref;       use Lib.Xref;
+with Namet;          use Namet;
+with Nlists;         use Nlists;
+with Nmake;          use Nmake;
+with Opt;            use Opt;
+with Output;         use Output;
+with Par_SCO;        use Par_SCO;
+with Restrict;       use Restrict;
+with Rident;         use Rident;
+with Rtsfind;        use Rtsfind;
+with Sem;            use Sem;
+with Sem_Aux;        use Sem_Aux;
+with Sem_Ch3;        use Sem_Ch3;
+with Sem_Ch6;        use Sem_Ch6;
+with Sem_Ch7;        use Sem_Ch7;
+with Sem_Ch8;        use Sem_Ch8;
+with Sem_Ch13;       use Sem_Ch13;
+with Sem_Dist;       use Sem_Dist;
+with Sem_Prag;       use Sem_Prag;
+with Sem_Util;       use Sem_Util;
+with Sem_Warn;       use Sem_Warn;
+with Stand;          use Stand;
+with Sinfo;          use Sinfo;
+with Sinfo.Nodes;    use Sinfo.Nodes;
+with Sinfo.Utils;    use Sinfo.Utils;
+with Sinfo.CN;       use Sinfo.CN;
+with Sinput;         use Sinput;
+with Snames;         use Snames;
+with Style;          use Style;
+with Stylesw;        use Stylesw;
+with Tbuild;         use Tbuild;
+with Uname;          use Uname;
 
 package body Sem_Ch10 is
 
@@ -622,7 +626,7 @@ package body Sem_Ch10 is
    --  Start of processing for Analyze_Compilation_Unit
 
    begin
-      Exp_Put_Image.Preload_Sink (N);
+      Exp_Put_Image.Preload_Root_Buffer_Type (N);
 
       Process_Compilation_Unit_Pragmas (N);
 
@@ -768,7 +772,7 @@ package body Sem_Ch10 is
             Unum := Get_Cunit_Unit_Number (N);
             Par_Spec_Name := Get_Parent_Spec_Name (Unit_Name (Unum));
 
-            if Par_Spec_Name /= No_Unit_Name then
+            if Present (Par_Spec_Name) then
                Unum :=
                  Load_Unit
                    (Load_Name  => Par_Spec_Name,
@@ -828,6 +832,7 @@ package body Sem_Ch10 is
                      --  of the child unit does not act as spec any longer.
 
                      Set_Acts_As_Spec (N, False);
+                     Move_Aspects (From => Unit_Node, To => Unit (Lib_Unit));
                      Set_Is_Child_Unit (Defining_Entity (Unit_Node));
                      Set_Debug_Info_Needed (Defining_Entity (Unit (Lib_Unit)));
                      Set_Comes_From_Source_Default (SCS);
@@ -1560,9 +1565,9 @@ package body Sem_Ch10 is
                                  Error_Msg_N
                                    ("simultaneous visibility of limited and "
                                     & "unlimited views not allowed", Item);
-                                 Error_Msg_NE
+                                 Error_Msg_N
                                    ("\unlimited view visible through context "
-                                    & "clause #", Item, It);
+                                    & "clause #", Item);
                                  exit;
 
                               elsif Nkind (Unit_Name) = N_Identifier then
@@ -1642,7 +1647,7 @@ package body Sem_Ch10 is
          --  when we load the proper body.
 
          Set_Scope (Id, Current_Scope);
-         Set_Ekind (Id, E_Package_Body);
+         Mutate_Ekind (Id, E_Package_Body);
          Set_Etype (Id, Standard_Void_Type);
 
          if Has_Aspects (N) then
@@ -1984,7 +1989,7 @@ package body Sem_Ch10 is
          Opts := Save_Config_Switches;
 
          Set_Scope (Id, Current_Scope);
-         Set_Ekind (Id, E_Protected_Body);
+         Mutate_Ekind (Id, E_Protected_Body);
          Set_Etype (Id, Standard_Void_Type);
 
          if Has_Aspects (N) then
@@ -2432,8 +2437,10 @@ package body Sem_Ch10 is
 
       --  The syntax rules require a proper body for a subprogram subunit
 
-      if Nkind (Proper_Body (Sinfo.Unit (N))) = N_Subprogram_Declaration then
-         if Null_Present (Specification (Proper_Body (Sinfo.Unit (N)))) then
+      if Nkind (Proper_Body (Sinfo.Nodes.Unit (N))) = N_Subprogram_Declaration
+      then
+         if Null_Present (Specification (Proper_Body (Sinfo.Nodes.Unit (N))))
+         then
             Error_Msg_N
               ("null procedure not allowed as subunit",
                Proper_Body (Unit (N)));
@@ -2493,7 +2500,7 @@ package body Sem_Ch10 is
 
       else
          Set_Scope (Id, Current_Scope);
-         Set_Ekind (Id, E_Task_Body);
+         Mutate_Ekind (Id, E_Task_Body);
          Set_Etype (Id, Standard_Void_Type);
 
          if Has_Aspects (N) then
@@ -2701,11 +2708,11 @@ package body Sem_Ch10 is
                      Error_Msg_N ("& is an Ada 2012 unit?i?", Name (N));
                   end if;
 
-               when Ada_202X_Unit =>
-                  if Ada_Version < Ada_2020
-                    and then Warn_On_Ada_202X_Compatibility
+               when Ada_2022_Unit =>
+                  if Ada_Version < Ada_2022
+                    and then Warn_On_Ada_2022_Compatibility
                   then
-                     Error_Msg_N ("& is an Ada 202x unit?i?", Name (N));
+                     Error_Msg_N ("& is an Ada 2022 unit?i?", Name (N));
                   end if;
             end case;
          end if;
@@ -3831,7 +3838,7 @@ package body Sem_Ch10 is
 
                   if E2 = WEnt then
                      Error_Msg_N
-                       ("unlimited view visible through use clause ", W);
+                       ("unlimited view visible through use clause", W);
                      return;
                   end if;
                end if;
@@ -4113,7 +4120,8 @@ package body Sem_Ch10 is
                      Set_Subtype_Indication (Decl,
                        New_Occurrence_Of (Non_Lim_View, Sloc (Def_Id)));
                      Set_Etype (Def_Id, Non_Lim_View);
-                     Set_Ekind (Def_Id, Subtype_Kind (Ekind (Non_Lim_View)));
+                     Mutate_Ekind
+                       (Def_Id, Subtype_Kind (Ekind (Non_Lim_View)));
                      Set_Analyzed (Decl, False);
 
                      --  Reanalyze the declaration, suppressing the call to
@@ -4154,8 +4162,7 @@ package body Sem_Ch10 is
       end if;
 
       if Ekind (P_Name) = E_Generic_Package
-        and then Nkind (Lib_Unit) not in N_Generic_Subprogram_Declaration
-                                       | N_Generic_Package_Declaration
+        and then Nkind (Lib_Unit) not in N_Generic_Declaration
                                        | N_Generic_Renaming_Declaration
       then
          Error_Msg_N
@@ -4479,10 +4486,6 @@ package body Sem_Ch10 is
          Pack   : Entity_Id) return Boolean;
       --  Determine whether any package in the ancestor chain starting with
       --  C_Unit has a limited with clause for package Pack.
-
-      function Is_Visible_Through_Renamings (P : Entity_Id) return Boolean;
-      --  Check if some package installed though normal with-clauses has a
-      --  renaming declaration of package P. AARM 10.1.2(21/2).
 
       -------------------------
       -- Check_Body_Required --
@@ -4813,108 +4816,6 @@ package body Sem_Ch10 is
          return False;
       end Has_Limited_With_Clause;
 
-      ----------------------------------
-      -- Is_Visible_Through_Renamings --
-      ----------------------------------
-
-      function Is_Visible_Through_Renamings (P : Entity_Id) return Boolean is
-         Kind     : constant Node_Kind :=
-                      Nkind (Unit (Cunit (Current_Sem_Unit)));
-         Aux_Unit : Node_Id;
-         Item     : Node_Id;
-         Decl     : Entity_Id;
-
-      begin
-         --  Example of the error detected by this subprogram:
-
-         --  package P is
-         --    type T is ...
-         --  end P;
-
-         --  with P;
-         --  package Q is
-         --     package Ren_P renames P;
-         --  end Q;
-
-         --  with Q;
-         --  package R is ...
-
-         --  limited with P; -- ERROR
-         --  package R.C is ...
-
-         Aux_Unit := Cunit (Current_Sem_Unit);
-
-         loop
-            Item := First (Context_Items (Aux_Unit));
-            while Present (Item) loop
-               if Nkind (Item) = N_With_Clause
-                 and then not Limited_Present (Item)
-                 and then Nkind (Unit (Library_Unit (Item))) =
-                                                  N_Package_Declaration
-               then
-                  Decl :=
-                    First (Visible_Declarations
-                            (Specification (Unit (Library_Unit (Item)))));
-                  while Present (Decl) loop
-                     if Nkind (Decl) = N_Package_Renaming_Declaration
-                       and then Entity (Name (Decl)) = P
-                     then
-                        --  Generate the error message only if the current unit
-                        --  is a package declaration; in case of subprogram
-                        --  bodies and package bodies we just return True to
-                        --  indicate that the limited view must not be
-                        --  installed.
-
-                        if Kind = N_Package_Declaration then
-                           Error_Msg_N
-                             ("simultaneous visibility of the limited and " &
-                              "unlimited views not allowed", N);
-                           Error_Msg_Sloc := Sloc (Item);
-                           Error_Msg_NE
-                             ("\\  unlimited view of & visible through the " &
-                              "context clause #", N, P);
-                           Error_Msg_Sloc := Sloc (Decl);
-                           Error_Msg_NE ("\\  and the renaming #", N, P);
-                        end if;
-
-                        return True;
-                     end if;
-
-                     Next (Decl);
-                  end loop;
-               end if;
-
-               Next (Item);
-            end loop;
-
-            --  If it is a body not acting as spec, follow pointer to the
-            --  corresponding spec, otherwise follow pointer to parent spec.
-
-            if Present (Library_Unit (Aux_Unit))
-              and then Nkind (Unit (Aux_Unit)) in
-                         N_Package_Body | N_Subprogram_Body
-            then
-               if Aux_Unit = Library_Unit (Aux_Unit) then
-
-                  --  Aux_Unit is a body that acts as a spec. Clause has
-                  --  already been flagged as illegal.
-
-                  return False;
-
-               else
-                  Aux_Unit := Library_Unit (Aux_Unit);
-               end if;
-
-            else
-               Aux_Unit := Parent_Spec (Unit (Aux_Unit));
-            end if;
-
-            exit when No (Aux_Unit);
-         end loop;
-
-         return False;
-      end Is_Visible_Through_Renamings;
-
    --  Start of processing for Install_Limited_With_Clause
 
    begin
@@ -4952,7 +4853,7 @@ package body Sem_Ch10 is
       --  Do not install the limited-view if the full-view is already visible
       --  through renaming declarations.
 
-      if Is_Visible_Through_Renamings (P) then
+      if Is_Visible_Through_Renamings (P, N) then
          return;
       end if;
 
@@ -5085,7 +4986,7 @@ package body Sem_Ch10 is
 
             --  Minimum decoration
 
-            Set_Ekind (P, E_Package);
+            Mutate_Ekind (P, E_Package);
             Set_Etype (P, Standard_Void_Type);
             Set_Scope (P, Standard_Standard);
             Set_Is_Visible_Lib_Unit (P);
@@ -5303,8 +5204,9 @@ package body Sem_Ch10 is
       --  analyzing the private part of the package).
 
       if Private_Present (With_Clause)
-        and then Nkind (Unit (Parent (With_Clause))) = N_Package_Declaration
-        and then not (Private_With_OK)
+        and then Nkind (Unit (Parent (With_Clause)))
+                   in N_Package_Declaration | N_Generic_Package_Declaration
+        and then not Private_With_OK
       then
          return;
       end if;
@@ -5371,7 +5273,7 @@ package body Sem_Ch10 is
             Set_Is_Visible_Lib_Unit (Uname);
 
             --  If the unit is a wrapper package for a compilation unit that is
-            --  a subprogrm instance, indicate that the instance itself is a
+            --  a subprogram instance, indicate that the instance itself is a
             --  visible unit. This is necessary if the instance is inlined.
 
             if Is_Wrapper_Package (Uname) then
@@ -5551,6 +5453,148 @@ package body Sem_Ch10 is
       end if;
    end Is_Ancestor_Unit;
 
+   ----------------------------------
+   -- Is_Visible_Through_Renamings --
+   ----------------------------------
+
+   function Is_Visible_Through_Renamings
+     (P          : Entity_Id;
+      Error_Node : Node_Id := Empty) return Boolean
+   is
+      function Is_Limited_Withed_Unit
+        (Lib_Unit : Node_Id;
+         Pkg_Ent  : Entity_Id) return Boolean;
+      --  Return True if Pkg_Ent is a limited-withed package of the given
+      --  library unit.
+
+      ----------------------------
+      -- Is_Limited_Withed_Unit --
+      ----------------------------
+
+      function Is_Limited_Withed_Unit
+        (Lib_Unit : Node_Id;
+         Pkg_Ent  : Entity_Id) return Boolean
+      is
+         Item : Node_Id := First (Context_Items (Lib_Unit));
+
+      begin
+         while Present (Item) loop
+            if Nkind (Item) = N_With_Clause
+              and then Limited_Present (Item)
+              and then Entity (Name (Item)) = Pkg_Ent
+            then
+               return True;
+            end if;
+
+            Next (Item);
+         end loop;
+
+         return False;
+      end Is_Limited_Withed_Unit;
+
+      --  Local variables
+
+      Kind     : constant Node_Kind := Nkind (Unit (Cunit (Current_Sem_Unit)));
+      Aux_Unit : Node_Id;
+      Item     : Node_Id;
+      Decl     : Entity_Id;
+
+   begin
+      --  Example of the error detected by this subprogram:
+
+      --  package P is
+      --    type T is ...
+      --  end P;
+
+      --  with P;
+      --  package Q is
+      --     package Ren_P renames P;
+      --  end Q;
+
+      --  with Q;
+      --  package R is ...
+
+      --  limited with P; -- ERROR
+      --  package R.C is ...
+
+      Aux_Unit := Cunit (Current_Sem_Unit);
+
+      loop
+         Item := First (Context_Items (Aux_Unit));
+         while Present (Item) loop
+            if Nkind (Item) = N_With_Clause
+              and then not Limited_Present (Item)
+              and then Nkind (Unit (Library_Unit (Item))) =
+                                               N_Package_Declaration
+            then
+               Decl :=
+                 First (Visible_Declarations
+                         (Specification (Unit (Library_Unit (Item)))));
+               while Present (Decl) loop
+                  if Nkind (Decl) = N_Package_Renaming_Declaration
+                    and then Entity (Name (Decl)) = P
+                    and then not Is_Limited_Withed_Unit
+                                   (Lib_Unit => Library_Unit (Item),
+                                    Pkg_Ent  => Entity (Name (Decl)))
+                  then
+                     --  Generate the error message only if the current unit
+                     --  is a package declaration; in case of subprogram
+                     --  bodies and package bodies we just return True to
+                     --  indicate that the limited view must not be
+                     --  installed.
+
+                     if Kind = N_Package_Declaration
+                       and then Present (Error_Node)
+                     then
+                        Error_Msg_N
+                          ("simultaneous visibility of the limited and " &
+                           "unlimited views not allowed", Error_Node);
+                        Error_Msg_Sloc := Sloc (Item);
+                        Error_Msg_NE
+                          ("\\  unlimited view of & visible through the " &
+                           "context clause #", Error_Node, P);
+                        Error_Msg_Sloc := Sloc (Decl);
+                        Error_Msg_NE ("\\  and the renaming #", Error_Node, P);
+                     end if;
+
+                     return True;
+                  end if;
+
+                  Next (Decl);
+               end loop;
+            end if;
+
+            Next (Item);
+         end loop;
+
+         --  If it is a body not acting as spec, follow pointer to the
+         --  corresponding spec, otherwise follow pointer to parent spec.
+
+         if Present (Library_Unit (Aux_Unit))
+           and then Nkind (Unit (Aux_Unit)) in
+                      N_Package_Body | N_Subprogram_Body
+         then
+            if Aux_Unit = Library_Unit (Aux_Unit) then
+
+               --  Aux_Unit is a body that acts as a spec. Clause has
+               --  already been flagged as illegal.
+
+               return False;
+
+            else
+               Aux_Unit := Library_Unit (Aux_Unit);
+            end if;
+
+         else
+            Aux_Unit := Parent_Spec (Unit (Aux_Unit));
+         end if;
+
+         exit when No (Aux_Unit);
+      end loop;
+
+      return False;
+   end Is_Visible_Through_Renamings;
+
    -----------------------
    -- Load_Needed_Body --
    -----------------------
@@ -5565,9 +5609,8 @@ package body Sem_Ch10 is
    --  demand, at the point of instantiation (see ch12).
 
    procedure Load_Needed_Body
-     (N          : Node_Id;
-      OK         : out Boolean;
-      Do_Analyze : Boolean := True)
+     (N  : Node_Id;
+      OK : out Boolean)
    is
       Body_Name : Unit_Name_Type;
       Unum      : Unit_Number_Type;
@@ -5601,9 +5644,8 @@ package body Sem_Ch10 is
                Write_Eol;
             end if;
 
-            if Do_Analyze then
-               Semantics (Cunit (Unum));
-            end if;
+            --  We always perform analyses
+            Semantics (Cunit (Unum));
          end if;
 
          OK := True;
@@ -5694,9 +5736,9 @@ package body Sem_Ch10 is
          --  The abstract view of a variable is a state, not another variable
 
          if Ekind (Ent) = E_Variable then
-            Set_Ekind (Shadow, E_Abstract_State);
+            Mutate_Ekind (Shadow, E_Abstract_State);
          else
-            Set_Ekind (Shadow, Ekind (Ent));
+            Mutate_Ekind (Shadow, Ekind (Ent));
          end if;
 
          Set_Is_Internal       (Shadow);
@@ -5741,7 +5783,7 @@ package body Sem_Ch10 is
 
       procedure Decorate_Package (Ent : Entity_Id; Scop : Entity_Id) is
       begin
-         Set_Ekind (Ent, E_Package);
+         Mutate_Ekind (Ent, E_Package);
          Set_Etype (Ent, Standard_Void_Type);
          Set_Scope (Ent, Scop);
       end Decorate_Package;
@@ -5752,7 +5794,7 @@ package body Sem_Ch10 is
 
       procedure Decorate_State (Ent : Entity_Id; Scop : Entity_Id) is
       begin
-         Set_Ekind               (Ent, E_Abstract_State);
+         Mutate_Ekind            (Ent, E_Abstract_State);
          Set_Etype               (Ent, Standard_Void_Type);
          Set_Scope               (Ent, Scop);
          Set_Encapsulating_State (Ent, Empty);
@@ -5774,13 +5816,13 @@ package body Sem_Ch10 is
          --  An unanalyzed type or a shadow entity of a type is treated as an
          --  incomplete type, and carries the corresponding attributes.
 
-         Set_Ekind              (Ent, E_Incomplete_Type);
+         Mutate_Ekind           (Ent, E_Incomplete_Type);
          Set_Etype              (Ent, Ent);
          Set_Full_View          (Ent, Empty);
          Set_Is_First_Subtype   (Ent);
          Set_Scope              (Ent, Scop);
          Set_Stored_Constraint  (Ent, No_Elist);
-         Init_Size_Align        (Ent);
+         Reinit_Size_Align      (Ent);
 
          if From_Limited_With (Ent) then
             Set_Private_Dependents (Ent, New_Elmt_List);
@@ -5810,7 +5852,7 @@ package body Sem_Ch10 is
 
             Set_Parent (CW_Typ, Parent (Ent));
 
-            Set_Ekind                     (CW_Typ, E_Class_Wide_Type);
+            Mutate_Ekind                  (CW_Typ, E_Class_Wide_Type);
             Set_Class_Wide_Type           (CW_Typ, CW_Typ);
             Set_Etype                     (CW_Typ, Ent);
             Set_Equivalent_Type           (CW_Typ, Empty);
@@ -5820,7 +5862,7 @@ package body Sem_Ch10 is
             Set_Is_Tagged_Type            (CW_Typ);
             Set_Materialize_Entity        (CW_Typ, Materialize);
             Set_Scope                     (CW_Typ, Scop);
-            Init_Size_Align               (CW_Typ);
+            Reinit_Size_Align             (CW_Typ);
          end if;
       end Decorate_Type;
 
@@ -5830,7 +5872,7 @@ package body Sem_Ch10 is
 
       procedure Decorate_Variable (Ent : Entity_Id; Scop : Entity_Id) is
       begin
-         Set_Ekind (Ent, E_Variable);
+         Mutate_Ekind (Ent, E_Variable);
          Set_Etype (Ent, Standard_Void_Type);
          Set_Scope (Ent, Scop);
       end Decorate_Variable;
@@ -6146,34 +6188,33 @@ package body Sem_Ch10 is
             null;
 
          when N_Subprogram_Declaration =>
-            Error_Msg_N ("subprograms not allowed in limited with_clauses", N);
+            Error_Msg_N
+              ("subprogram not allowed in `LIMITED WITH` clause", N);
             return;
 
-         when N_Generic_Package_Declaration
-            | N_Generic_Subprogram_Declaration
-         =>
-            Error_Msg_N ("generics not allowed in limited with_clauses", N);
+         when N_Generic_Declaration =>
+            Error_Msg_N ("generic not allowed in `LIMITED WITH` clause", N);
             return;
 
          when N_Generic_Instantiation =>
             Error_Msg_N
-              ("generic instantiations not allowed in limited with_clauses",
+              ("generic instantiation not allowed in `LIMITED WITH` clause",
                N);
             return;
 
          when N_Generic_Renaming_Declaration =>
             Error_Msg_N
-              ("generic renamings not allowed in limited with_clauses", N);
+              ("generic renaming not allowed in `LIMITED WITH` clause", N);
             return;
 
          when N_Subprogram_Renaming_Declaration =>
             Error_Msg_N
-              ("renamed subprograms not allowed in limited with_clauses", N);
+              ("renamed subprogram not allowed in `LIMITED WITH` clause", N);
             return;
 
          when N_Package_Renaming_Declaration =>
             Error_Msg_N
-              ("renamed packages not allowed in limited with_clauses", N);
+              ("renamed package not allowed in `LIMITED WITH` clause", N);
             return;
 
          when others =>
@@ -6184,7 +6225,7 @@ package body Sem_Ch10 is
       --  must be minimally decorated. This ensures that the checks on unused
       --  with clauses also process limieted withs.
 
-      Set_Ekind (Pack, E_Package);
+      Mutate_Ekind (Pack, E_Package);
       Set_Etype (Pack, Standard_Void_Type);
 
       if Is_Entity_Name (Nam) then
@@ -6206,7 +6247,7 @@ package body Sem_Ch10 is
       --  incomplete view of all types and packages declared within.
 
       Shadow_Pack := Make_Temporary (Sloc (N), 'Z');
-      Set_Ekind        (Shadow_Pack, E_Package);
+      Mutate_Ekind     (Shadow_Pack, E_Package);
       Set_Is_Internal  (Shadow_Pack);
       Set_Limited_View (Pack, Shadow_Pack);
 
@@ -6464,7 +6505,7 @@ package body Sem_Ch10 is
             null;
 
          elsif Nkind (Item) = N_With_Clause
-            and then Context_Installed (Item)
+           and then Context_Installed (Item)
          then
             --  Remove items from one with'ed unit
 
@@ -6818,12 +6859,12 @@ package body Sem_Ch10 is
       -- In_Regular_With_Clause --
       ----------------------------
 
-      function In_Regular_With_Clause (E : Entity_Id) return Boolean
-      is
+      function In_Regular_With_Clause (E : Entity_Id) return Boolean is
          Item : Node_Id;
 
       begin
          Item := First (Context_Items (Comp_Unit));
+
          while Present (Item) loop
             if Nkind (Item) = N_With_Clause
 
@@ -6836,6 +6877,7 @@ package body Sem_Ch10 is
             then
                return True;
             end if;
+
             Next (Item);
          end loop;
 

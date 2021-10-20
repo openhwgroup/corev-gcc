@@ -1,5 +1,5 @@
 /* toir.cc -- Lower D frontend statements to GCC trees.
-   Copyright (C) 2006-2020 Free Software Foundation, Inc.
+   Copyright (C) 2006-2021 Free Software Foundation, Inc.
 
 GCC is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -992,7 +992,7 @@ public:
 
   void visit (SwitchErrorStatement *s)
   {
-    add_stmt (d_assert_call (s->loc, LIBCALL_SWITCH_ERROR));
+    add_stmt (build_assert_call (s->loc, LIBCALL_SWITCH_ERROR));
   }
 
   /* A return statement exits the current function and supplies its return
@@ -1015,19 +1015,98 @@ public:
 	&& type->toBasetype ()->ty == Tvoid)
       type = Type::tint32;
 
-    if (this->func_->nrvo_can && this->func_->nrvo_var)
+    if (this->func_->shidden)
       {
-	/* Just refer to the DECL_RESULT; this differs from using
-	   NULL_TREE in that it indicates that we care about the value
-	   of the DECL_RESULT.  */
+	/* Returning by hidden reference, store the result into the retval decl.
+	   The result returned then becomes the retval reference itself.  */
 	tree decl = DECL_RESULT (get_symbol_decl (this->func_));
+	gcc_assert (!tf->isref);
+
+	/* If returning via NRVO, just refer to the DECL_RESULT; this differs
+	   from using NULL_TREE in that it indicates that we care about the
+	   value of the DECL_RESULT.  */
+	if (this->func_->nrvo_can && this->func_->nrvo_var)
+	  {
+	    add_stmt (return_expr (decl));
+	    return;
+	  }
+
+	/* Detect a call to a constructor function, or if returning a struct
+	   literal, write result directly into the return value.  */
+	StructLiteralExp *sle = NULL;
+	bool using_rvo_p = false;
+
+	if (DotVarExp *dve = (s->exp->op == TOKcall
+			      && s->exp->isCallExp ()->e1->op == TOKdotvar
+			      ? s->exp->isCallExp ()->e1->isDotVarExp ()
+			      : NULL))
+	  {
+	    if (dve->var->isCtorDeclaration ())
+	      {
+		if (CommaExp *ce = dve->e1->isCommaExp ())
+		  {
+		    /* Temporary initialized inside a return expression, and
+		       used as the return value.  Replace it with the hidden
+			reference to allow RVO return.  */
+		    DeclarationExp *de = ce->e1->isDeclarationExp ();
+		    VarExp *ve = ce->e2->isVarExp ();
+		    if (de != NULL && ve != NULL
+			&& ve->var == de->declaration
+			&& ve->var->storage_class & STCtemp)
+		      {
+			tree var = get_symbol_decl (ve->var);
+			TREE_ADDRESSABLE (var) = 1;
+			SET_DECL_VALUE_EXPR (var, decl);
+			DECL_HAS_VALUE_EXPR_P (var) = 1;
+			SET_DECL_LANG_NRVO (var, this->func_->shidden);
+			using_rvo_p = true;
+		      }
+		  }
+		else
+		  sle = dve->e1->isStructLiteralExp ();
+	      }
+	  }
+	else
+	  sle = s->exp->isStructLiteralExp ();
+
+	if (sle != NULL)
+	  {
+	    StructDeclaration *sd = type->baseElemOf ()->isTypeStruct ()->sym;
+	    sle->sym = build_address (this->func_->shidden);
+	    using_rvo_p = true;
+
+	    /* Fill any alignment holes in the return slot using memset.  */
+	    if (!identity_compare_p (sd) || sd->isUnionDeclaration ())
+	      add_stmt (build_memset_call (this->func_->shidden));
+	  }
+
+	if (using_rvo_p == true)
+	  {
+	    /* Generate: (expr, return <retval>);  */
+	    add_stmt (build_expr_dtor (s->exp));
+	  }
+	else
+	  {
+	    /* Generate: (<retval> = expr, return <retval>);  */
+	    tree expr = build_expr_dtor (s->exp);
+	    tree init = stabilize_expr (&expr);
+	    expr = build_assign (INIT_EXPR, this->func_->shidden, expr);
+	    add_stmt (compound_expr (init, expr));
+	  }
+
 	add_stmt (return_expr (decl));
+      }
+    else if (tf->next->ty == Tnoreturn)
+      {
+	/* Returning an expression that has no value, but has a side effect
+	   that should never return.  */
+	add_stmt (build_expr_dtor (s->exp));
+	add_stmt (return_expr (NULL_TREE));
       }
     else
       {
 	/* Convert for initializing the DECL_RESULT.  */
-	tree expr = build_return_dtor (s->exp, type, tf);
-	add_stmt (expr);
+	add_stmt (build_return_dtor (s->exp, type, tf));
       }
   }
 

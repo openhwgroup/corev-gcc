@@ -1,7 +1,7 @@
 /* PR middle-end/91458 - inconsistent warning for writing past the end
    of an array member
    { dg-do compile }
-   { dg-options "-O2 -Wall -Wno-array-bounds" } */
+   { dg-options "-O2 -Wall -Wno-array-bounds -fno-ipa-icf" } */
 
 void sink (void*);
 
@@ -10,7 +10,7 @@ void sink (void*);
 struct Ax
 {
   char n;
-  char a[];                     // { dg-message "declared here" }
+  char a[];                     // { dg-message "destination object" "note" }
 };
 
 // Verify warning for a definition with no initializer.
@@ -91,7 +91,7 @@ void gaxx (void)
 struct A0
 {
   char n;
-  char a[0];                    // { dg-message "declared here" }
+  char a[0];                    // { dg-message "destination object" "note" }
 };
 
 // Verify warning for a definition with no initializer.
@@ -158,7 +158,7 @@ void ga0x (void)
 struct A1
 {
   char n;
-  char a[1];                    // { dg-message "declared here" }
+  char a[1];                    // { dg-message "destination object" "note" }
 };
 
 // Verify warning for a definition with no initializer.
@@ -190,7 +190,7 @@ void ga1__ (void)
   struct A1 a = { 1 };
   a.a[0] = 0;
   a.a[1] = 1;                    // { dg-warning "\\\[-Wstringop-overflow" }
-  a.a[2] = 2;                    // { dg-warning "\\\[-Wstringop-overflow" }
+  a.a[2] = 2;                    // { dg-warning "\\\[-Wstringop-overflow" "pr102462" { xfail { vect_slp_v2qi_store } } }
   sink (&a);
 }
 
@@ -207,7 +207,7 @@ void ga1_0_ (void)
   struct A1 a = { 1, { } };
   a.a[0] = 0;
   a.a[1] = 1;                   // { dg-warning "\\\[-Wstringop-overflow" }
-  a.a[2] = 2;                   // { dg-warning "\\\[-Wstringop-overflow" }
+  a.a[2] = 2;                   // { dg-warning "\\\[-Wstringop-overflow" "pr102462" { xfail { vect_slp_v2qi_store } } }
   sink (&a);
 }
 
@@ -221,10 +221,10 @@ void ga1_1 (void)
   a1_1.a[1] = 1;                // { dg-warning "\\\[-Wstringop-overflow" }
   a1_1.a[2] = 2;                // { dg-warning "\\\[-Wstringop-overflow" }
 
-  struct A1 a = { 0, { 1 } };
+  struct A1 a = { 0, { 1 } };   // { dg-warning "\\\[-Wstringop-overflow" "pr102706" { target { vect_slp_v4qi_store } } }
   a.a[0] = 0;
-  a.a[1] = 1;                   // { dg-warning "\\\[-Wstringop-overflow" }
-  a.a[2] = 2;                   // { dg-warning "\\\[-Wstringop-overflow" }
+  a.a[1] = 1;                   // { dg-warning "\\\[-Wstringop-overflow" "" { xfail { vect_slp_v4qi_store } } }
+  a.a[2] = 2;                   // { dg-warning "\\\[-Wstringop-overflow" "" { xfail { vect_slp_v4qi_store } } }
   sink (&a);
 }
 
@@ -256,7 +256,7 @@ void ga1x (void)
 struct A1i
 {
   char n;
-  char a[1];                    // { dg-message "declared here" }
+  char a[1];                    // { dg-message "destination object" }
   char x;
 };
 
@@ -289,7 +289,7 @@ void ga1i__ (void)
   struct A1i a = { 0 };
   a.a[0] = 0;
   a.a[1] = 1;                    // { dg-warning "\\\[-Wstringop-overflow" }
-  a.a[2] = 2;                    // { dg-warning "\\\[-Wstringop-overflow" }
+  a.a[2] = 2;                    // { dg-warning "\\\[-Wstringop-overflow" "pr102462" { xfail { vect_slp_v2qi_store } } }
   sink (&a);
 }
 
@@ -306,7 +306,7 @@ void ga1i_0_ (void)
   struct A1 a = { 0, { } };
   a.a[0] = 0;
   a.a[1] = 1;                   // { dg-warning "\\\[-Wstringop-overflow" }
-  a.a[2] = 2;                   // { dg-warning "\\\[-Wstringop-overflow" }
+  a.a[2] = 2;                   // { dg-warning "\\\[-Wstringop-overflow" "pr102462" { xfail { vect_slp_v2qi_store } } }
   sink (&a);
 }
 
@@ -320,10 +320,10 @@ void ga1i_1 (void)
   a1i_1.a[1] = 1;               // { dg-warning "\\\[-Wstringop-overflow" }
   a1i_1.a[2] = 2;               // { dg-warning "\\\[-Wstringop-overflow" }
 
-  struct A1 a = { 0, { 1 } };
+  struct A1 a = { 0, { 1 } };   // { dg-warning "\\\[-Wstringop-overflow" "pr102462" { target { vect_slp_v4qi_store } } }
   a.a[0] = 1;
-  a.a[1] = 2;                   // { dg-warning "\\\[-Wstringop-overflow" }
-  a.a[2] = 3;                   // { dg-warning "\\\[-Wstringop-overflow" }
+  a.a[1] = 2;                   // { dg-warning "\\\[-Wstringop-overflow" "pr102462" { xfail { vect_slp_v4qi_store } } }
+  a.a[2] = 3;                   // { dg-warning "\\\[-Wstringop-overflow" "pr102462" { xfail { vect_slp_v4qi_store } } }
   sink (&a);
 }
 

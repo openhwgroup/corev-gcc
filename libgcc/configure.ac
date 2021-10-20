@@ -224,7 +224,7 @@ AC_SUBST(long_double_type_size)
 
 AC_CHECK_HEADERS(inttypes.h stdint.h stdlib.h ftw.h \
 	unistd.h sys/stat.h sys/types.h \
-	string.h strings.h memory.h sys/auxv.h)
+	string.h strings.h memory.h sys/auxv.h sys/mman.h)
 AC_HEADER_STDC
 
 # Check for decimal float support.
@@ -383,11 +383,11 @@ AC_COMPUTE_INT([glibc_version_minor], [__GLIBC_MINOR__],
 				      [glibc_version_minor=0])])
 AC_MSG_RESULT([$glibc_version_major.$glibc_version_minor])
 
-# Determine floating-point type for powerpc*-*-linux*.
+# Determine floating-point type for powerpc*-*-linux* or vxworks7*.
 # Single-precision-only FPRs are not a supported configuration for
 # this target, so are not allowed for in this test.
 case ${host} in
-powerpc*-*-linux*)
+powerpc*-*-linux* | powerpc*-*-vxworks7*)
   cat > conftest.c <<EOF
 #ifdef __powerpc64__
 ppc_fp_type=64
@@ -457,6 +457,31 @@ powerpc*-*-linux*)
 	__attribute__ ((__ifunc__ ("add_resolver")));])],
     [libgcc_cv_powerpc_float128_hw=yes],
     [libgcc_cv_powerpc_float128_hw=no])])
+  CFLAGS="$saved_CFLAGS"
+
+  saved_CFLAGS="$CFLAGS"
+  CFLAGS="$CFLAGS -mcpu=power10 -mfloat128-hardware"
+  AC_CACHE_CHECK([for PowerPC ISA 3.1 to build hardware __float128 libraries],
+		 [libgcc_cv_powerpc_3_1_float128_hw],
+		 [AC_COMPILE_IFELSE(
+    [AC_LANG_SOURCE([#include <sys/auxv.h>
+     #ifndef AT_PLATFORM
+     #error "AT_PLATFORM is not defined"
+     #endif
+     #ifndef __BUILTIN_CPU_SUPPORTS__
+     #error "__builtin_cpu_supports is not available"
+     #endif
+     vector unsigned char conv (vector unsigned char qs)
+     {
+       vector unsigned char ret;
+       __asm__ ("xscvsqqp %0,%1" : "=v" (ret) : "v" (qs));
+       return ret;
+     }
+     void *conv_resolver (void) { return (void *) conv; }
+     __float128 conv_ifunc (__float128)
+	__attribute__ ((__ifunc__ ("conv_resolver")));])],
+    [libgcc_cv_powerpc_3_1_float128_hw=yes],
+    [libgcc_cv_powerpc_3_1_float128_hw=no])])
   CFLAGS="$saved_CFLAGS"
 esac
 

@@ -7,8 +7,10 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
+	"internal/buildcfg"
 	"log"
 	"os"
 	"path/filepath"
@@ -34,6 +36,7 @@ import (
 	"cmd/go/internal/run"
 	"cmd/go/internal/test"
 	"cmd/go/internal/tool"
+	"cmd/go/internal/trace"
 	"cmd/go/internal/version"
 	"cmd/go/internal/vet"
 	"cmd/go/internal/work"
@@ -73,10 +76,11 @@ func init() {
 		modload.HelpModules,
 		modget.HelpModuleGet,
 		modfetch.HelpModuleAuth,
-		modfetch.HelpModulePrivate,
 		help.HelpPackages,
+		modfetch.HelpPrivate,
 		test.HelpTestflag,
 		test.HelpTestfunc,
+		modget.HelpVCS,
 	}
 }
 
@@ -144,19 +148,6 @@ func main() {
 		os.Exit(2)
 	}
 
-	// Set environment (GOOS, GOARCH, etc) explicitly.
-	// In theory all the commands we invoke should have
-	// the same default computation of these as we do,
-	// but in practice there might be skew
-	// This makes sure we all agree.
-	cfg.OrigEnv = os.Environ()
-	cfg.CmdEnv = envcmd.MkEnv()
-	for _, env := range cfg.CmdEnv {
-		if os.Getenv(env.Name) != env.Value {
-			os.Setenv(env.Name, env.Value)
-		}
-	}
-
 BigCmdLoop:
 	for bigCmd := base.Go; ; {
 		for _, cmd := range bigCmd.Commands {
@@ -182,15 +173,7 @@ BigCmdLoop:
 			if !cmd.Runnable() {
 				continue
 			}
-			cmd.Flag.Usage = func() { cmd.Usage() }
-			if cmd.CustomFlags {
-				args = args[1:]
-			} else {
-				base.SetFromGOFLAGS(&cmd.Flag)
-				cmd.Flag.Parse(args[1:])
-				args = cmd.Flag.Args()
-			}
-			cmd.Run(cmd, args)
+			invoke(cmd, args)
 			base.Exit()
 			return
 		}
@@ -204,6 +187,39 @@ BigCmdLoop:
 	}
 }
 
+func invoke(cmd *base.Command, args []string) {
+	// 'go env' handles checking the build config
+	if cmd != envcmd.CmdEnv {
+		buildcfg.Check()
+	}
+
+	// Set environment (GOOS, GOARCH, etc) explicitly.
+	// In theory all the commands we invoke should have
+	// the same default computation of these as we do,
+	// but in practice there might be skew
+	// This makes sure we all agree.
+	cfg.OrigEnv = os.Environ()
+	cfg.CmdEnv = envcmd.MkEnv()
+	for _, env := range cfg.CmdEnv {
+		if os.Getenv(env.Name) != env.Value {
+			os.Setenv(env.Name, env.Value)
+		}
+	}
+
+	cmd.Flag.Usage = func() { cmd.Usage() }
+	if cmd.CustomFlags {
+		args = args[1:]
+	} else {
+		base.SetFromGOFLAGS(&cmd.Flag)
+		cmd.Flag.Parse(args[1:])
+		args = cmd.Flag.Args()
+	}
+	ctx := maybeStartTrace(context.Background())
+	ctx, span := trace.StartSpan(ctx, fmt.Sprint("Running ", cmd.Name(), " command"))
+	cmd.Run(ctx, cmd, args)
+	span.Done()
+}
+
 func init() {
 	base.Usage = mainUsage
 }
@@ -211,4 +227,22 @@ func init() {
 func mainUsage() {
 	help.PrintUsage(os.Stderr, base.Go)
 	os.Exit(2)
+}
+
+func maybeStartTrace(pctx context.Context) context.Context {
+	if cfg.DebugTrace == "" {
+		return pctx
+	}
+
+	ctx, close, err := trace.Start(pctx, cfg.DebugTrace)
+	if err != nil {
+		base.Fatalf("failed to start trace: %v", err)
+	}
+	base.AtExit(func() {
+		if err := close(); err != nil {
+			base.Fatalf("failed to stop trace: %v", err)
+		}
+	})
+
+	return ctx
 }

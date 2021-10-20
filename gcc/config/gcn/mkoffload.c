@@ -1,6 +1,6 @@
 /* Offload image generation tool for AMD GCN.
 
-   Copyright (C) 2014-2020 Free Software Foundation, Inc.
+   Copyright (C) 2014-2021 Free Software Foundation, Inc.
 
    This file is part of GCC.
 
@@ -42,8 +42,10 @@
 
 #undef  ELFOSABI_AMDGPU_HSA
 #define ELFOSABI_AMDGPU_HSA	 64
-#undef  ELFABIVERSION_AMDGPU_HSA
-#define ELFABIVERSION_AMDGPU_HSA 1
+#undef  ELFABIVERSION_AMDGPU_HSA_V3
+#define ELFABIVERSION_AMDGPU_HSA_V3 1
+#undef  ELFABIVERSION_AMDGPU_HSA_V4
+#define ELFABIVERSION_AMDGPU_HSA_V4 2
 
 #undef  EF_AMDGPU_MACH_AMDGCN_GFX803
 #define EF_AMDGPU_MACH_AMDGCN_GFX803 0x2a
@@ -51,6 +53,58 @@
 #define EF_AMDGPU_MACH_AMDGCN_GFX900 0x2c
 #undef  EF_AMDGPU_MACH_AMDGCN_GFX906
 #define EF_AMDGPU_MACH_AMDGCN_GFX906 0x2f
+#undef  EF_AMDGPU_MACH_AMDGCN_GFX908
+#define EF_AMDGPU_MACH_AMDGCN_GFX908 0x30
+
+#define EF_AMDGPU_XNACK_V3    0x100
+#define EF_AMDGPU_SRAM_ECC_V3 0x200
+
+#define EF_AMDGPU_FEATURE_XNACK_V4	0x300  /* Mask.  */
+#define EF_AMDGPU_FEATURE_XNACK_UNSUPPORTED_V4	0x000
+#define EF_AMDGPU_FEATURE_XNACK_ANY_V4	0x100
+#define EF_AMDGPU_FEATURE_XNACK_OFF_V4	0x200
+#define EF_AMDGPU_FEATURE_XNACK_ON_V4	0x300
+
+#define EF_AMDGPU_FEATURE_SRAMECC_V4	0xc00  /* Mask.  */
+#define EF_AMDGPU_FEATURE_SRAMECC_UNSUPPORTED_V4	0x000
+#define EF_AMDGPU_FEATURE_SRAMECC_ANY_V4	0x400
+#define EF_AMDGPU_FEATURE_SRAMECC_OFF_V4	0x800
+#define EF_AMDGPU_FEATURE_SRAMECC_ON_V4		0xc00
+
+#ifdef HAVE_GCN_ASM_V3_SYNTAX
+#define SET_XNACK_ON(VAR) VAR |= EF_AMDGPU_XNACK_V3
+#define SET_XNACK_OFF(VAR) VAR &= ~EF_AMDGPU_XNACK_V3
+#define TEST_XNACK(VAR) (VAR & EF_AMDGPU_XNACK_V3)
+
+#define SET_SRAM_ECC_ON(VAR) VAR |= EF_AMDGPU_SRAM_ECC_V3
+#define SET_SRAM_ECC_ANY(VAR) SET_SRAM_ECC_ON (VAR)
+#define SET_SRAM_ECC_OFF(VAR) VAR &= ~EF_AMDGPU_SRAM_ECC_V3
+#define SET_SRAM_ECC_UNSUPPORTED(VAR) SET_SRAM_ECC_OFF (VAR)
+#define TEST_SRAM_ECC_ANY(VAR) 0 /* Not supported.  */
+#define TEST_SRAM_ECC_ON(VAR) (VAR & EF_AMDGPU_SRAM_ECC_V3)
+#endif
+#ifdef HAVE_GCN_ASM_V4_SYNTAX
+#define SET_XNACK_ON(VAR) VAR = ((VAR & ~EF_AMDGPU_FEATURE_XNACK_V4) \
+				 | EF_AMDGPU_FEATURE_XNACK_ON_V4)
+#define SET_XNACK_OFF(VAR) VAR = ((VAR & ~EF_AMDGPU_FEATURE_XNACK_V4) \
+				  | EF_AMDGPU_FEATURE_XNACK_OFF_V4)
+#define TEST_XNACK(VAR) ((VAR & EF_AMDGPU_FEATURE_XNACK_V4) \
+			 == EF_AMDGPU_FEATURE_XNACK_ON_V4)
+
+#define SET_SRAM_ECC_ON(VAR) VAR = ((VAR & ~EF_AMDGPU_FEATURE_SRAMECC_V4) \
+				    | EF_AMDGPU_FEATURE_SRAMECC_ON_V4)
+#define SET_SRAM_ECC_ANY(VAR) VAR = ((VAR & ~EF_AMDGPU_FEATURE_SRAMECC_V4) \
+				     | EF_AMDGPU_FEATURE_SRAMECC_ANY_V4)
+#define SET_SRAM_ECC_OFF(VAR) VAR = ((VAR & ~EF_AMDGPU_FEATURE_SRAMECC_V4) \
+				     | EF_AMDGPU_FEATURE_SRAMECC_OFF_V4)
+#define SET_SRAM_ECC_UNSUPPORTED(VAR) \
+  VAR = ((VAR & ~EF_AMDGPU_FEATURE_SRAMECC_V4) \
+	 | EF_AMDGPU_FEATURE_SRAMECC_UNSUPPORTED_V4)
+#define TEST_SRAM_ECC_ANY(VAR) ((VAR & EF_AMDGPU_FEATURE_SRAMECC_V4) \
+				== EF_AMDGPU_FEATURE_SRAMECC_ANY_V4)
+#define TEST_SRAM_ECC_ON(VAR) ((VAR & EF_AMDGPU_FEATURE_SRAMECC_V4) \
+			       == EF_AMDGPU_FEATURE_SRAMECC_ON_V4)
+#endif
 
 #ifndef R_AMDGPU_NONE
 #define R_AMDGPU_NONE		0
@@ -75,6 +129,13 @@ static struct obstack files_to_cleanup;
 
 enum offload_abi offload_abi = OFFLOAD_ABI_UNSET;
 uint32_t elf_arch = EF_AMDGPU_MACH_AMDGCN_GFX803;  // Default GPU architecture.
+uint32_t elf_flags =
+#ifdef HAVE_GCN_ASM_V3_SYNTAX
+    0;
+#endif
+#ifdef HAVE_GCN_ASM_V4_SYNTAX
+    (EF_AMDGPU_FEATURE_XNACK_ANY_V4 | EF_AMDGPU_FEATURE_SRAMECC_ANY_V4);
+#endif
 
 /* Delete tempfiles.  */
 
@@ -291,12 +352,27 @@ copy_early_debug_info (const char *infile, const char *outfile)
   /* We only support host relocations of x86_64, for now.  */
   gcc_assert (ehdr.e_machine == EM_X86_64);
 
+  /* Fiji devices use HSACOv3 regardless of the assembler.  */
+  uint32_t elf_flags_actual = (elf_arch == EF_AMDGPU_MACH_AMDGCN_GFX803
+			       ? 0 : elf_flags);
+  /* GFX900 devices don't support the sramecc attribute even if
+     a buggy assembler thinks it does.  This must match gcn-hsa.h  */
+  if (elf_arch == EF_AMDGPU_MACH_AMDGCN_GFX900)
+    SET_SRAM_ECC_UNSUPPORTED (elf_flags_actual);
+
   /* Patch the correct elf architecture flag into the file.  */
   ehdr.e_ident[7] = ELFOSABI_AMDGPU_HSA;
-  ehdr.e_ident[8] = ELFABIVERSION_AMDGPU_HSA;
+#ifdef HAVE_GCN_ASM_V3_SYNTAX
+  ehdr.e_ident[8] = ELFABIVERSION_AMDGPU_HSA_V3;
+#endif
+#ifdef HAVE_GCN_ASM_V4_SYNTAX
+  ehdr.e_ident[8] = (elf_arch == EF_AMDGPU_MACH_AMDGCN_GFX803
+		     ? ELFABIVERSION_AMDGPU_HSA_V3
+		     : ELFABIVERSION_AMDGPU_HSA_V4);
+#endif
   ehdr.e_type = ET_REL;
   ehdr.e_machine = EM_AMDGPU;
-  ehdr.e_flags = elf_arch;
+  ehdr.e_flags = elf_arch | elf_flags_actual;
 
   /* Load the section headers so we can walk them later.  */
   Elf64_Shdr *sections = (Elf64_Shdr *)xmalloc (sizeof (Elf64_Shdr)
@@ -336,19 +412,24 @@ copy_early_debug_info (const char *infile, const char *outfile)
 	    {
 	    case R_X86_64_32:
 	    case R_X86_64_32S:
-	      reloc->r_info = R_AMDGPU_ABS32;
+	      reloc->r_info = ELF32_R_INFO(ELF32_R_SYM(reloc->r_info),
+					   R_AMDGPU_ABS32);
 	      break;
 	    case R_X86_64_PC32:
-	      reloc->r_info = R_AMDGPU_REL32;
+	      reloc->r_info = ELF32_R_INFO(ELF32_R_SYM(reloc->r_info),
+					   R_AMDGPU_REL32);
 	      break;
 	    case R_X86_64_PC64:
-	      reloc->r_info = R_AMDGPU_REL64;
+	      reloc->r_info = ELF32_R_INFO(ELF32_R_SYM(reloc->r_info),
+					   R_AMDGPU_REL64);
 	      break;
 	    case R_X86_64_64:
-	      reloc->r_info = R_AMDGPU_ABS64;
+	      reloc->r_info = ELF32_R_INFO(ELF32_R_SYM(reloc->r_info),
+					   R_AMDGPU_ABS64);
 	      break;
 	    case R_X86_64_RELATIVE:
-	      reloc->r_info = R_AMDGPU_RELATIVE64;
+	      reloc->r_info = ELF32_R_INFO(ELF32_R_SYM(reloc->r_info),
+					   R_AMDGPU_RELATIVE64);
 	      break;
 	    default:
 	      gcc_unreachable ();
@@ -432,7 +513,7 @@ process_asm (FILE *in, FILE *out, FILE *cfile)
     int sgpr_count;
     int vgpr_count;
     char *kernel_name;
-  } regcount;
+  } regcount = { -1, -1, NULL };
 
   /* Always add _init_array and _fini_array as kernels.  */
   obstack_ptr_grow (&fns_os, xstrdup ("_init_array"));
@@ -440,7 +521,12 @@ process_asm (FILE *in, FILE *out, FILE *cfile)
   fn_count += 2;
 
   char buf[1000];
-  enum { IN_CODE, IN_AMD_KERNEL_CODE_T, IN_VARS, IN_FUNCS } state = IN_CODE;
+  enum
+    { IN_CODE,
+      IN_METADATA,
+      IN_VARS,
+      IN_FUNCS
+    } state = IN_CODE;
   while (fgets (buf, sizeof (buf), in))
     {
       switch (state)
@@ -453,21 +539,25 @@ process_asm (FILE *in, FILE *out, FILE *cfile)
 		obstack_grow (&dims_os, &dim, sizeof (dim));
 		dims_count++;
 	      }
-	    else if (sscanf (buf, " .amdgpu_hsa_kernel %ms\n",
-			     &regcount.kernel_name) == 1)
-	      break;
 
 	    break;
 	  }
-	case IN_AMD_KERNEL_CODE_T:
+	case IN_METADATA:
 	  {
-	    gcc_assert (regcount.kernel_name);
-	    if (sscanf (buf, " wavefront_sgpr_count = %d\n",
-			&regcount.sgpr_count) == 1)
+	    if (sscanf (buf, " - .name: %ms\n", &regcount.kernel_name) == 1)
 	      break;
-	    else if (sscanf (buf, " workitem_vgpr_count = %d\n",
+	    else if (sscanf (buf, " .sgpr_count: %d\n",
+			     &regcount.sgpr_count) == 1)
+	      {
+		gcc_assert (regcount.kernel_name);
+		break;
+	      }
+	    else if (sscanf (buf, " .vgpr_count: %d\n",
 			     &regcount.vgpr_count) == 1)
-	      break;
+	      {
+		gcc_assert (regcount.kernel_name);
+		break;
+	      }
 
 	    break;
 	  }
@@ -508,9 +598,10 @@ process_asm (FILE *in, FILE *out, FILE *cfile)
 	state = IN_VARS;
       else if (sscanf (buf, " .section .gnu.offload_funcs%c", &dummy) > 0)
 	state = IN_FUNCS;
-      else if (sscanf (buf, " .amd_kernel_code_%c", &dummy) > 0)
+      else if (sscanf (buf, " .amdgpu_metadata%c", &dummy) > 0)
 	{
-	  state = IN_AMD_KERNEL_CODE_T;
+	  state = IN_METADATA;
+	  regcount.kernel_name = NULL;
 	  regcount.sgpr_count = regcount.vgpr_count = -1;
 	}
       else if (sscanf (buf, " .section %c", &dummy) > 0
@@ -519,7 +610,7 @@ process_asm (FILE *in, FILE *out, FILE *cfile)
 	       || sscanf (buf, " .data%c", &dummy) > 0
 	       || sscanf (buf, " .ident %c", &dummy) > 0)
 	state = IN_CODE;
-      else if (sscanf (buf, " .end_amd_kernel_code_%c", &dummy) > 0)
+      else if (sscanf (buf, " .end_amdgpu_metadata%c", &dummy) > 0)
 	{
 	  state = IN_CODE;
 	  gcc_assert (regcount.kernel_name != NULL
@@ -531,7 +622,7 @@ process_asm (FILE *in, FILE *out, FILE *cfile)
 	  regcount.sgpr_count = regcount.vgpr_count = -1;
 	}
 
-      if (state == IN_CODE || state == IN_AMD_KERNEL_CODE_T)
+      if (state == IN_CODE || state == IN_METADATA)
 	fputs (buf, out);
     }
 
@@ -727,7 +818,8 @@ compile_native (const char *infile, const char *outfile, const char *compiler,
   obstack_ptr_grow (&argv_obstack, NULL);
 
   const char **new_argv = XOBFINISH (&argv_obstack, const char **);
-  fork_execute (new_argv[0], CONST_CAST (char **, new_argv), true);
+  fork_execute (new_argv[0], CONST_CAST (char **, new_argv), true,
+		".gccnative_args");
   obstack_free (&argv_obstack, NULL);
 }
 
@@ -738,11 +830,6 @@ main (int argc, char **argv)
   FILE *out = stdout;
   FILE *cfile = stdout;
   const char *outname = 0;
-
-  const char *gcn_s1_name;
-  const char *gcn_s2_name;
-  const char *gcn_o_name;
-  const char *gcn_cfile_name;
 
   progname = "mkoffload";
   diagnostic_initialize (global_dc, 0);
@@ -810,10 +897,11 @@ main (int argc, char **argv)
   bool fopenacc = false;
   bool fPIC = false;
   bool fpic = false;
+  bool sram_seen = false;
   for (int i = 1; i < argc; i++)
     {
 #define STR "-foffload-abi="
-      if (strncmp (argv[i], STR, strlen (STR)) == 0)
+      if (startswith (argv[i], STR))
 	{
 	  if (strcmp (argv[i] + strlen (STR), "lp64") == 0)
 	    offload_abi = OFFLOAD_ABI_LP64;
@@ -832,6 +920,25 @@ main (int argc, char **argv)
 	fPIC = true;
       else if (strcmp (argv[i], "-fpic") == 0)
 	fpic = true;
+      else if (strcmp (argv[i], "-mxnack") == 0)
+	SET_XNACK_ON (elf_flags);
+      else if (strcmp (argv[i], "-mno-xnack") == 0)
+	SET_XNACK_OFF (elf_flags);
+      else if (strcmp (argv[i], "-msram-ecc=on") == 0)
+	{
+	  SET_SRAM_ECC_ON (elf_flags);
+	  sram_seen = true;
+	}
+      else if (strcmp (argv[i], "-msram-ecc=any") == 0)
+	{
+	  SET_SRAM_ECC_ANY (elf_flags);
+	  sram_seen = true;
+	}
+      else if (strcmp (argv[i], "-msram-ecc=off") == 0)
+	{
+	  SET_SRAM_ECC_OFF (elf_flags);
+	  sram_seen = true;
+	}
       else if (strcmp (argv[i], "-save-temps") == 0)
 	save_temps = true;
       else if (strcmp (argv[i], "-v") == 0)
@@ -845,10 +952,34 @@ main (int argc, char **argv)
 	elf_arch = EF_AMDGPU_MACH_AMDGCN_GFX900;
       else if (strcmp (argv[i], "-march=gfx906") == 0)
 	elf_arch = EF_AMDGPU_MACH_AMDGCN_GFX906;
+      else if (strcmp (argv[i], "-march=gfx908") == 0)
+	elf_arch = EF_AMDGPU_MACH_AMDGCN_GFX908;
     }
 
   if (!(fopenacc ^ fopenmp))
     fatal_error (input_location, "either -fopenacc or -fopenmp must be set");
+
+  if (!sram_seen)
+    {
+#ifdef HAVE_GCN_ASM_V3_SYNTAX
+      /* For HSACOv3, the SRAM-ECC feature defaults to "on" on GPUs where the
+	 feature is available.
+	 (HSACOv4 has elf_flags initialsed to "any" in all cases.)  */
+      switch (elf_arch)
+	{
+	case EF_AMDGPU_MACH_AMDGCN_GFX803:
+	case EF_AMDGPU_MACH_AMDGCN_GFX900:
+	case EF_AMDGPU_MACH_AMDGCN_GFX906:
+#ifndef HAVE_GCN_SRAM_ECC_GFX908
+	case EF_AMDGPU_MACH_AMDGCN_GFX908:
+#endif
+	  break;
+	default:
+	  SET_SRAM_ECC_ON (elf_flags);
+	  break;
+	}
+#endif
+    }
 
   const char *abi;
   switch (offload_abi)
@@ -889,144 +1020,166 @@ main (int argc, char **argv)
   if (!dumppfx)
     dumppfx = outname;
 
-  const char *mko_dumpbase = concat (dumppfx, ".mkoffload", NULL);
-  const char *hsaco_dumpbase = concat (dumppfx, ".mkoffload.hsaco", NULL);
   gcn_dumpbase = concat (dumppfx, ".c", NULL);
 
+  const char *gcn_cfile_name;
   if (save_temps)
-    {
-      gcn_s1_name = concat (mko_dumpbase, ".1.s", NULL);
-      gcn_s2_name = concat (mko_dumpbase, ".2.s", NULL);
-      gcn_o_name = hsaco_dumpbase;
-      gcn_cfile_name = gcn_dumpbase;
-    }
+    gcn_cfile_name = gcn_dumpbase;
   else
-    {
-      gcn_s1_name = make_temp_file (".mkoffload.1.s");
-      gcn_s2_name = make_temp_file (".mkoffload.2.s");
-      gcn_o_name = make_temp_file (".mkoffload.hsaco");
-      gcn_cfile_name = make_temp_file (".c");
-    }
-  obstack_ptr_grow (&files_to_cleanup, gcn_s1_name);
-  obstack_ptr_grow (&files_to_cleanup, gcn_s2_name);
-  obstack_ptr_grow (&files_to_cleanup, gcn_o_name);
+    gcn_cfile_name = make_temp_file (".c");
   obstack_ptr_grow (&files_to_cleanup, gcn_cfile_name);
-
-  obstack_ptr_grow (&cc_argv_obstack, "-dumpdir");
-  obstack_ptr_grow (&cc_argv_obstack, "");
-  obstack_ptr_grow (&cc_argv_obstack, "-dumpbase");
-  obstack_ptr_grow (&cc_argv_obstack, mko_dumpbase);
-  obstack_ptr_grow (&cc_argv_obstack, "-dumpbase-ext");
-  obstack_ptr_grow (&cc_argv_obstack, "");
-
-  obstack_ptr_grow (&cc_argv_obstack, "-o");
-  obstack_ptr_grow (&cc_argv_obstack, gcn_s1_name);
-  obstack_ptr_grow (&cc_argv_obstack, NULL);
-  const char **cc_argv = XOBFINISH (&cc_argv_obstack, const char **);
-
-  /* Build arguments for assemble/link pass.  */
-  struct obstack ld_argv_obstack;
-  obstack_init (&ld_argv_obstack);
-  obstack_ptr_grow (&ld_argv_obstack, driver);
-
-  /* Extract early-debug information from the input objects.
-     This loop finds all the inputs that end ".o" and aren't the output.  */
-  int dbgcount = 0;
-  for (int ix = 1; ix != argc; ix++)
-    {
-      if (!strcmp (argv[ix], "-o") && ix + 1 != argc)
-	++ix;
-      else
-	{
-	  if (strcmp (argv[ix] + strlen(argv[ix]) - 2, ".o") == 0)
-	    {
-	      char *dbgobj;
-	      if (save_temps)
-		{
-		  char buf[10];
-		  sprintf (buf, "%d", dbgcount++);
-		  dbgobj = concat (dumppfx, ".mkoffload.dbg", buf, ".o", NULL);
-		}
-	      else
-		dbgobj = make_temp_file (".mkoffload.dbg.o");
-
-	      /* If the copy fails then just ignore it.  */
-	      if (copy_early_debug_info (argv[ix], dbgobj))
-		{
-		  obstack_ptr_grow (&ld_argv_obstack, dbgobj);
-		  obstack_ptr_grow (&files_to_cleanup, dbgobj);
-		}
-	      else
-		free (dbgobj);
-	    }
-	}
-    }
-  obstack_ptr_grow (&ld_argv_obstack, gcn_s2_name);
-  obstack_ptr_grow (&ld_argv_obstack, "-lgomp");
-
-  for (int i = 1; i < argc; i++)
-    if (strncmp (argv[i], "-l", 2) == 0
-	|| strncmp (argv[i], "-Wl", 3) == 0
-	|| strncmp (argv[i], "-march", 6) == 0)
-      obstack_ptr_grow (&ld_argv_obstack, argv[i]);
-
-  obstack_ptr_grow (&cc_argv_obstack, "-dumpdir");
-  obstack_ptr_grow (&cc_argv_obstack, "");
-  obstack_ptr_grow (&cc_argv_obstack, "-dumpbase");
-  obstack_ptr_grow (&cc_argv_obstack, hsaco_dumpbase);
-  obstack_ptr_grow (&cc_argv_obstack, "-dumpbase-ext");
-  obstack_ptr_grow (&cc_argv_obstack, "");
-
-  obstack_ptr_grow (&ld_argv_obstack, "-o");
-  obstack_ptr_grow (&ld_argv_obstack, gcn_o_name);
-  obstack_ptr_grow (&ld_argv_obstack, NULL);
-  const char **ld_argv = XOBFINISH (&ld_argv_obstack, const char **);
-
-  /* Clean up unhelpful environment variables.  */
-  char *execpath = getenv ("GCC_EXEC_PREFIX");
-  char *cpath = getenv ("COMPILER_PATH");
-  char *lpath = getenv ("LIBRARY_PATH");
-  unsetenv ("GCC_EXEC_PREFIX");
-  unsetenv ("COMPILER_PATH");
-  unsetenv ("LIBRARY_PATH");
-
-  /* Run the compiler pass.  */
-  fork_execute (cc_argv[0], CONST_CAST (char **, cc_argv), true);
-  obstack_free (&cc_argv_obstack, NULL);
-
-  in = fopen (gcn_s1_name, "r");
-  if (!in)
-    fatal_error (input_location, "cannot open intermediate gcn asm file");
-
-  out = fopen (gcn_s2_name, "w");
-  if (!out)
-    fatal_error (input_location, "cannot open '%s'", gcn_s2_name);
 
   cfile = fopen (gcn_cfile_name, "w");
   if (!cfile)
     fatal_error (input_location, "cannot open '%s'", gcn_cfile_name);
 
-  process_asm (in, out, cfile);
+  /* Currently, we only support offloading in 64-bit configurations.  */
+  if (offload_abi == OFFLOAD_ABI_LP64)
+    {
+      const char *mko_dumpbase = concat (dumppfx, ".mkoffload", NULL);
+      const char *hsaco_dumpbase = concat (dumppfx, ".mkoffload.hsaco", NULL);
 
-  fclose (in);
-  fclose (out);
+      const char *gcn_s1_name;
+      const char *gcn_s2_name;
+      const char *gcn_o_name;
+      if (save_temps)
+	{
+	  gcn_s1_name = concat (mko_dumpbase, ".1.s", NULL);
+	  gcn_s2_name = concat (mko_dumpbase, ".2.s", NULL);
+	  gcn_o_name = hsaco_dumpbase;
+	}
+      else
+	{
+	  gcn_s1_name = make_temp_file (".mkoffload.1.s");
+	  gcn_s2_name = make_temp_file (".mkoffload.2.s");
+	  gcn_o_name = make_temp_file (".mkoffload.hsaco");
+	}
+      obstack_ptr_grow (&files_to_cleanup, gcn_s1_name);
+      obstack_ptr_grow (&files_to_cleanup, gcn_s2_name);
+      obstack_ptr_grow (&files_to_cleanup, gcn_o_name);
 
-  /* Run the assemble/link pass.  */
-  fork_execute (ld_argv[0], CONST_CAST (char **, ld_argv), true);
-  obstack_free (&ld_argv_obstack, NULL);
+      obstack_ptr_grow (&cc_argv_obstack, "-dumpdir");
+      obstack_ptr_grow (&cc_argv_obstack, "");
+      obstack_ptr_grow (&cc_argv_obstack, "-dumpbase");
+      obstack_ptr_grow (&cc_argv_obstack, mko_dumpbase);
+      obstack_ptr_grow (&cc_argv_obstack, "-dumpbase-ext");
+      obstack_ptr_grow (&cc_argv_obstack, "");
 
-  in = fopen (gcn_o_name, "r");
-  if (!in)
-    fatal_error (input_location, "cannot open intermediate gcn obj file");
+      obstack_ptr_grow (&cc_argv_obstack, "-o");
+      obstack_ptr_grow (&cc_argv_obstack, gcn_s1_name);
+      obstack_ptr_grow (&cc_argv_obstack, NULL);
+      const char **cc_argv = XOBFINISH (&cc_argv_obstack, const char **);
 
-  process_obj (in, cfile);
+      /* Build arguments for assemble/link pass.  */
+      struct obstack ld_argv_obstack;
+      obstack_init (&ld_argv_obstack);
+      obstack_ptr_grow (&ld_argv_obstack, driver);
 
-  fclose (in);
+      /* Extract early-debug information from the input objects.
+	 This loop finds all the inputs that end ".o" and aren't the output.  */
+      int dbgcount = 0;
+      for (int ix = 1; ix != argc; ix++)
+	{
+	  if (!strcmp (argv[ix], "-o") && ix + 1 != argc)
+	    ++ix;
+	  else
+	    {
+	      if (strcmp (argv[ix] + strlen(argv[ix]) - 2, ".o") == 0)
+		{
+		  char *dbgobj;
+		  if (save_temps)
+		    {
+		      char buf[10];
+		      sprintf (buf, "%d", dbgcount++);
+		      dbgobj = concat (dumppfx, ".mkoffload.dbg", buf, ".o", NULL);
+		    }
+		  else
+		    dbgobj = make_temp_file (".mkoffload.dbg.o");
+
+		  /* If the copy fails then just ignore it.  */
+		  if (copy_early_debug_info (argv[ix], dbgobj))
+		    {
+		      obstack_ptr_grow (&ld_argv_obstack, dbgobj);
+		      obstack_ptr_grow (&files_to_cleanup, dbgobj);
+		    }
+		  else
+		    free (dbgobj);
+		}
+	    }
+	}
+      obstack_ptr_grow (&ld_argv_obstack, gcn_s2_name);
+      obstack_ptr_grow (&ld_argv_obstack, "-lgomp");
+      obstack_ptr_grow (&ld_argv_obstack,
+			(TEST_XNACK (elf_flags)
+			 ? "-mxnack" : "-mno-xnack"));
+      obstack_ptr_grow (&ld_argv_obstack,
+			(TEST_SRAM_ECC_ON (elf_flags) ? "-msram-ecc=on"
+			 : TEST_SRAM_ECC_ANY (elf_flags) ? "-msram-ecc=any"
+			 : "-msram-ecc=off"));
+      if (verbose)
+	obstack_ptr_grow (&ld_argv_obstack, "-v");
+
+      for (int i = 1; i < argc; i++)
+	if (startswith (argv[i], "-l")
+	    || startswith (argv[i], "-Wl")
+	    || startswith (argv[i], "-march"))
+	  obstack_ptr_grow (&ld_argv_obstack, argv[i]);
+
+      obstack_ptr_grow (&cc_argv_obstack, "-dumpdir");
+      obstack_ptr_grow (&cc_argv_obstack, "");
+      obstack_ptr_grow (&cc_argv_obstack, "-dumpbase");
+      obstack_ptr_grow (&cc_argv_obstack, hsaco_dumpbase);
+      obstack_ptr_grow (&cc_argv_obstack, "-dumpbase-ext");
+      obstack_ptr_grow (&cc_argv_obstack, "");
+
+      obstack_ptr_grow (&ld_argv_obstack, "-o");
+      obstack_ptr_grow (&ld_argv_obstack, gcn_o_name);
+      obstack_ptr_grow (&ld_argv_obstack, NULL);
+      const char **ld_argv = XOBFINISH (&ld_argv_obstack, const char **);
+
+      /* Clean up unhelpful environment variables.  */
+      char *execpath = getenv ("GCC_EXEC_PREFIX");
+      char *cpath = getenv ("COMPILER_PATH");
+      char *lpath = getenv ("LIBRARY_PATH");
+      unsetenv ("GCC_EXEC_PREFIX");
+      unsetenv ("COMPILER_PATH");
+      unsetenv ("LIBRARY_PATH");
+
+      /* Run the compiler pass.  */
+      fork_execute (cc_argv[0], CONST_CAST (char **, cc_argv), true, ".gcc_args");
+      obstack_free (&cc_argv_obstack, NULL);
+
+      in = fopen (gcn_s1_name, "r");
+      if (!in)
+	fatal_error (input_location, "cannot open intermediate gcn asm file");
+
+      out = fopen (gcn_s2_name, "w");
+      if (!out)
+	fatal_error (input_location, "cannot open '%s'", gcn_s2_name);
+
+      process_asm (in, out, cfile);
+
+      fclose (in);
+      fclose (out);
+
+      /* Run the assemble/link pass.  */
+      fork_execute (ld_argv[0], CONST_CAST (char **, ld_argv), true, ".ld_args");
+      obstack_free (&ld_argv_obstack, NULL);
+
+      in = fopen (gcn_o_name, "r");
+      if (!in)
+	fatal_error (input_location, "cannot open intermediate gcn obj file");
+
+      process_obj (in, cfile);
+
+      fclose (in);
+
+      xputenv (concat ("GCC_EXEC_PREFIX=", execpath, NULL));
+      xputenv (concat ("COMPILER_PATH=", cpath, NULL));
+      xputenv (concat ("LIBRARY_PATH=", lpath, NULL));
+    }
+
   fclose (cfile);
-
-  xputenv (concat ("GCC_EXEC_PREFIX=", execpath, NULL));
-  xputenv (concat ("COMPILER_PATH=", cpath, NULL));
-  xputenv (concat ("LIBRARY_PATH=", lpath, NULL));
 
   compile_native (gcn_cfile_name, outname, collect_gcc, fPIC, fpic);
 

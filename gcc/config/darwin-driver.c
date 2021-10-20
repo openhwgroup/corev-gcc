@@ -1,5 +1,5 @@
 /* Additional functions for the GCC driver on Darwin native.
-   Copyright (C) 2006-2020 Free Software Foundation, Inc.
+   Copyright (C) 2006-2021 Free Software Foundation, Inc.
    Contributed by Apple Computer Inc.
 
 This file is part of GCC.
@@ -43,13 +43,13 @@ static const char *
 validate_macosx_version_min (const char *version_str)
 {
   size_t version_len;
-  unsigned long major, minor, tiny = 0;
+  unsigned long major, minor = 0, tiny = 0;
   char *end;
   const char *old_version = version_str;
   bool need_rewrite = false;
 
   version_len = strlen (version_str);
-  if (version_len < 4) /* The minimum would be 10.x  */
+  if (version_len < 2) /* The minimum would be 11  */
     return NULL;
 
   /* Version string must consist of digits and periods only.  */
@@ -63,18 +63,27 @@ validate_macosx_version_min (const char *version_str)
     need_rewrite = true;
 
   major = strtoul (version_str, &end, 10);
-  version_str = end + ((*end == '.') ? 1 : 0);
 
-  if (major != 10) /* So far .. all MacOS 10 ... */
+  if (major < 10 || major > 11 ) /* MacOS 10 and 11 are known. */
     return NULL;
 
-  /* Version string components must be present and numeric.  */
-  if (!ISDIGIT (version_str[0]))
+  /* Skip a separating period, if there's one.  */
+  version_str = end + ((*end == '.') ? 1 : 0);
+
+  if (major == 11 && *end != '\0' && !ISDIGIT (version_str[0]))
+     /* For MacOS 11, we allow just the major number, but if the minor is
+	there it must be numeric.  */
+    return NULL;
+  else if (major == 11 && *end == '\0')
+    /* We will rewrite 11 =>  11.0.0.  */
+    need_rewrite = true;
+  else if (major == 10 && (*end == '\0' || !ISDIGIT (version_str[0])))
+    /* Otherwise, minor version components must be present and numeric.  */
     return NULL;
 
   /* If we have one or more leading zeros on a component, then rewrite the
      version string.  */
-  if (version_str[0] == '0' && version_str[1] != '\0'
+  if (*end != '\0' && version_str[0] == '0' && version_str[1] != '\0'
       && version_str[1] != '.')
     need_rewrite = true;
 
@@ -104,7 +113,7 @@ validate_macosx_version_min (const char *version_str)
   if (need_rewrite)
     {
       char *new_version;
-      asprintf (&new_version, "10.%lu.%lu", minor, tiny);
+      asprintf (&new_version, "%2lu.%lu.%lu", major, minor, tiny);
       return new_version;
     }
 
@@ -114,6 +123,12 @@ validate_macosx_version_min (const char *version_str)
 #ifndef CROSS_DIRECTORY_STRUCTURE
 #include <sys/sysctl.h>
 #include "xregex.h"
+
+/* Determine the version of the running OS.
+   We only look at the first two components (ignoring the patch one) and
+   report NN.MM.0 where NN is currently either 10 or 11 and MM is the OS
+   minor release number.
+   If we can't parse what the kernel gives us, warn the user, and do nothing.  */
 
 static char *
 darwin_find_version_from_kernel (void)
@@ -125,12 +140,10 @@ darwin_find_version_from_kernel (void)
   char * version_p;
   char * new_flag;
 
-  /* Determine the version of the running OS.  If we can't, warn user,
-     and do nothing.  */
   if (sysctl (osversion_name, ARRAY_SIZE (osversion_name), osversion,
 	      &osversion_len, NULL, 0) == -1)
     {
-      warning (0, "sysctl for kern.osversion failed: %m");
+      warning (0, "%<sysctl%> for %<kern.osversion%> failed: %m");
       return NULL;
     }
 
@@ -144,10 +157,24 @@ darwin_find_version_from_kernel (void)
     major_vers = major_vers * 10 + (*version_p++ - '0');
   if (*version_p++ != '.')
     goto parse_failed;
-  
-  /* The major kernel version number is 4 plus the second OS version
-     component.  */
-  if (major_vers - 4 <= 4)
+
+  /* Darwin20 sees a transition to macOS 11.  In this, it seems that the
+     mapping to macOS minor version is now shifted to the kernel minor
+     version - 1 (at least for the initial releases).  At this stage, we
+     don't know what macOS version will correspond to Darwin21.  */
+  if (major_vers >= 20)
+    {
+      int minor_vers = *version_p++ - '0';
+      if (ISDIGIT (*version_p))
+	minor_vers = minor_vers * 10 + (*version_p++ - '0');
+      if (*version_p++ != '.')
+	goto parse_failed;
+      if (minor_vers > 0)
+	minor_vers -= 1; /* Kernel 20.3 => macOS 11.2.  */
+      /* It's not yet clear whether patch level will be considered.  */
+      asprintf (&new_flag, "11.%02d.00", minor_vers);
+    }
+  else if (major_vers - 4 <= 4)
     /* On 10.4 and earlier, the old linker is used which does not
        support three-component system versions.
        FIXME: we should not assume this - a newer linker could be used.  */
@@ -162,7 +189,7 @@ darwin_find_version_from_kernel (void)
   return new_flag;
 
  parse_failed:
-  warning (0, "couldn%'t understand kern.osversion %q.*s",
+  warning (0, "could not understand %<kern.osversion%> %q.*s",
 	   (int) osversion_len, osversion);
   return NULL;
 }
@@ -202,7 +229,7 @@ darwin_default_min_version (void)
       const char *checked = validate_macosx_version_min (new_flag);
       if (checked == NULL)
 	{
-	  warning (0, "couldn%'t understand version %s", new_flag);
+	  warning (0, "could not understand version %qs", new_flag);
 	  return NULL;
 	}
       new_flag = xstrndup (checked, strlen (checked));
@@ -232,14 +259,11 @@ maybe_get_sysroot_from_sdkroot ()
   return xstrndup (maybe_sysroot, strlen (maybe_sysroot));
 }
 
-/* Translate -filelist and -framework options in *DECODED_OPTIONS
-   (size *DECODED_OPTIONS_COUNT) to use -Xlinker so that they are
-   considered to be linker inputs in the case that no other inputs are
-   specified.  Handling these options in DRIVER_SELF_SPECS does not
-   suffice because specs are too late to add linker inputs, and
-   handling them in LINK_SPEC does not suffice because the linker will
-   not be called if there are no other inputs.  When native, also
-   default the -mmacosx-version-min flag.  */
+/* Handle the deduction of m32/m64 from -arch flags and the interactions
+   between them (i.e. try to warn a user who thinks that they have a driver
+   that can produce multi-slice "FAT" outputs with more than one arch).
+   Default the -mmacosx-version-min flag, which requires a system call on
+   native hosts.  */
 
 void
 darwin_driver_init (unsigned int *decoded_options_count,
@@ -278,7 +302,7 @@ darwin_driver_init (unsigned int *decoded_options_count,
 	  else if (!strcmp ((*decoded_options)[i].arg, "ppc64"))
 	    seenPPC64 = true;
 	  else
-	    error ("this compiler does not support %s",
+	    error ("this compiler does not support %qs",
 		   (*decoded_options)[i].arg);
 	  /* Now we've examined it, drop the -arch arg.  */
 	  if (*decoded_options_count > i) {
@@ -297,23 +321,6 @@ darwin_driver_init (unsigned int *decoded_options_count,
 
 	case OPT_m64:
 	  seenM64 = true;
-	  break;
-
-	case OPT_filelist:
-	case OPT_framework:
-	  ++*decoded_options_count;
-	  *decoded_options = XRESIZEVEC (struct cl_decoded_option,
-					 *decoded_options,
-					 *decoded_options_count);
-	  memmove (*decoded_options + i + 2,
-		   *decoded_options + i + 1,
-		   ((*decoded_options_count - i - 2)
-		    * sizeof (struct cl_decoded_option)));
-	  generate_option (OPT_Xlinker, (*decoded_options)[i].arg, 1,
-			   CL_DRIVER, &(*decoded_options)[i + 1]);
-	  generate_option (OPT_Xlinker,
-			   (*decoded_options)[i].canonical_option[0], 1,
-			   CL_DRIVER, &(*decoded_options)[i]);
 	  break;
 
 	case OPT_mmacosx_version_min_:
@@ -350,45 +357,53 @@ darwin_driver_init (unsigned int *decoded_options_count,
   /* Turn -arch xxxx into the appropriate -m32/-m64 flag.
      If the User tried to specify multiple arch flags (which is possible with
      some Darwin compilers) warn that this mode is not supported by this
-     compiler (and ignore the arch flags, which means that the default multi-
-     lib will be generated).  */
+     compiler.  We take arch specifiers that agree with the default multilib
+     as the first choice and reject others.  */
   /* TODO: determine if these warnings would better be errors.  */
 #if DARWIN_X86
   if (seenPPC || seenPPC64)
-    warning (0, "this compiler does not support PowerPC (arch flags ignored)");
+    warning (0, "this compiler does not support PowerPC"
+		" (%<-arch%> option ignored)");
   if (seenX86)
     {
       if (seenX86_64 || seenM64)
-	warning (0, "%s conflicts with i386 (arch flags ignored)",
-	        (seenX86_64? "x86_64": "m64"));
-      else if (! seenM32) /* Add -m32 if the User didn't. */
+	{
+	  const char *op = (seenX86_64? "-arch x86_64": "-m64");
+	  warning (0, "%qs conflicts with %<-arch i386%> (%qs ignored)",
+		   op, op);
+	}
+      if (! seenM32) /* Add -m32 if the User didn't. */
 	appendM32 = true;
     }
   else if (seenX86_64)
     {
-      if (seenX86 || seenM32)
-	warning (0, "%s conflicts with x86_64 (arch flags ignored)",
-		 (seenX86? "i386": "m32"));
-      else if (! seenM64) /* Add -m64 if the User didn't. */
+      if (seenM32)
+	warning (0, "%<-m32%> conflicts with %<-arch x86_64%>"
+		    " (%<-m32%> ignored)");
+      if (! seenM64) /* Add -m64 if the User didn't. */
 	appendM64 = true;
     }  
 #elif DARWIN_PPC
   if (seenX86 || seenX86_64)
-    warning (0, "this compiler does not support X86 (arch flags ignored)");
+    warning (0, "this compiler does not support x86"
+		" (%<-arch%> option ignored)");
   if (seenPPC)
     {
       if (seenPPC64 || seenM64)
-	warning (0, "%s conflicts with ppc (arch flags ignored)",
-		 (seenPPC64? "ppc64": "m64"));
-      else if (! seenM32) /* Add -m32 if the User didn't. */
+	{
+	  const char *op = (seenPPC64? "-arch ppc64": "-m64");
+	  warning (0, "%qs conflicts with %<-arch ppc%> (%qs ignored)",
+		   op, op);
+	}
+      if (! seenM32) /* Add -m32 if the User didn't. */
 	appendM32 = true;
     }
   else if (seenPPC64)
     {
-      if (seenPPC || seenM32)
-	warning (0, "%s conflicts with ppc64 (arch flags ignored)",
-		 (seenPPC? "ppc": "m32"));
-      else if (! seenM64) /* Add -m64 if the User didn't. */
+      if (seenM32)
+	warning (0, "%<-m32%> conflicts with %<-arch ppc64%>"
+		    " (%<-m32%> ignored)");
+      if (! seenM64) /* Add -m64 if the User didn't. */
 	appendM64 = true;
     }
 #endif

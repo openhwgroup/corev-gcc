@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+//go:build !js
 // +build !js
 
 package net
@@ -11,7 +12,6 @@ import (
 	"fmt"
 	"internal/testenv"
 	"io"
-	"io/ioutil"
 	"net/internal/socktest"
 	"os"
 	"runtime"
@@ -874,7 +874,7 @@ func testVariousDeadlines(t *testing.T) {
 				if err := c.SetDeadline(t0.Add(timeout)); err != nil {
 					t.Error(err)
 				}
-				n, err := io.Copy(ioutil.Discard, c)
+				n, err := io.Copy(io.Discard, c)
 				dt := time.Since(t0)
 				c.Close()
 				ch <- result{n, err, dt}

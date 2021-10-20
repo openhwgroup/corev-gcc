@@ -1,5 +1,5 @@
 /* Implementation of subroutines for the GNU C++ pretty-printer.
-   Copyright (C) 2003-2020 Free Software Foundation, Inc.
+   Copyright (C) 2003-2021 Free Software Foundation, Inc.
    Contributed by Gabriel Dos Reis <gdr@integrable-solutions.net>
 
 This file is part of GCC.
@@ -651,6 +651,15 @@ cxx_pretty_printer::postfix_expression (tree t)
       type_id (TREE_TYPE (t));
       pp_cxx_end_template_argument_list (this);
       pp_left_paren (this);
+      expression (TREE_OPERAND (t, 0));
+      pp_right_paren (this);
+      break;
+
+    case BIT_CAST_EXPR:
+      pp_cxx_ws_string (this, "__builtin_bit_cast");
+      pp_left_paren (this);
+      type_id (TREE_TYPE (t));
+      pp_comma (this);
       expression (TREE_OPERAND (t, 0));
       pp_right_paren (this);
       break;
@@ -1372,6 +1381,10 @@ cxx_pretty_printer::simple_type_specifier (tree t)
       pp_cxx_right_paren (this);
       break;
 
+    case NULLPTR_TYPE:
+      pp_cxx_ws_string (this, "std::nullptr_t");
+      break;
+
     default:
       c_pretty_printer::simple_type_specifier (t);
       break;
@@ -1399,6 +1412,7 @@ pp_cxx_type_specifier_seq (cxx_pretty_printer *pp, tree t)
     case TYPE_DECL:
     case BOUND_TEMPLATE_TEMPLATE_PARM:
     case DECLTYPE_TYPE:
+    case NULLPTR_TYPE:
       pp_cxx_cv_qualifier_seq (pp, t);
       pp->simple_type_specifier (t);
       break;
@@ -1414,6 +1428,16 @@ pp_cxx_type_specifier_seq (cxx_pretty_printer *pp, tree t)
 	{
 	  tree pfm = TYPE_PTRMEMFUNC_FN_TYPE (t);
 	  pp->declaration_specifiers (TREE_TYPE (TREE_TYPE (pfm)));
+	  pp_cxx_whitespace (pp);
+	  pp_cxx_ptr_operator (pp, t);
+	  break;
+	}
+      /* fall through */
+
+    case OFFSET_TYPE:
+      if (TYPE_PTRDATAMEM_P (t))
+	{
+	  pp_cxx_type_specifier_seq (pp, TREE_TYPE (t));
 	  pp_cxx_whitespace (pp);
 	  pp_cxx_ptr_operator (pp, t);
 	  break;
@@ -1513,38 +1537,36 @@ pp_cxx_parameter_declaration (cxx_pretty_printer *pp, tree t)
 static void
 pp_cxx_parameter_declaration_clause (cxx_pretty_printer *pp, tree t)
 {
-  tree args;
-  tree types;
-  bool abstract;
-
-  // For a requires clause or the explicit printing of a parameter list
-  // we expect T to be a chain of PARM_DECLs. Otherwise, the list of
-  // args and types are taken from the function decl T.
-  if (TREE_CODE (t) == PARM_DECL)
+  gcc_assert (FUNC_OR_METHOD_TYPE_P (t) || TREE_CODE (t) == FUNCTION_DECL);
+  tree types, args;
+  if (TYPE_P (t))
     {
-      args = t;
-      types = t;
-      abstract = false;
+      types = TYPE_ARG_TYPES (t);
+      args = NULL_TREE;
     }
   else
     {
-      bool type_p = TYPE_P (t);
-      args = type_p ? NULL : FUNCTION_FIRST_USER_PARM (t);
-      types = type_p ? TYPE_ARG_TYPES (t) : FUNCTION_FIRST_USER_PARMTYPE (t);
-      abstract = args == NULL || pp->flags & pp_c_flag_abstract;
+      types = FUNCTION_FIRST_USER_PARMTYPE (t);
+      args = FUNCTION_FIRST_USER_PARM (t);
     }
-  bool first = true;
+  bool abstract = !args || (pp->flags & pp_c_flag_abstract);
 
   /* Skip artificial parameter for non-static member functions.  */
   if (TREE_CODE (t) == METHOD_TYPE)
     types = TREE_CHAIN (types);
 
+  bool first = true;
   pp_cxx_left_paren (pp);
-  for (; args; args = TREE_CHAIN (args), types = TREE_CHAIN (types))
+  for (; types != void_list_node; types = TREE_CHAIN (types))
     {
       if (!first)
 	pp_cxx_separate_with (pp, ',');
       first = false;
+      if (!types)
+	{
+	  pp_cxx_ws_string (pp, "...");
+	  break;
+	}
       pp_cxx_parameter_declaration (pp, abstract ? TREE_VALUE (types) : args);
       if (!abstract && pp->flags & pp_cxx_flag_default_argument)
 	{
@@ -1553,6 +1575,8 @@ pp_cxx_parameter_declaration_clause (cxx_pretty_printer *pp, tree t)
 	  pp_cxx_whitespace (pp);
 	  pp->assignment_expression (TREE_PURPOSE (types));
 	}
+      if (!abstract)
+	args = TREE_CHAIN (args);
     }
   pp_cxx_right_paren (pp);
 }
@@ -1753,7 +1777,20 @@ pp_cxx_function_definition (cxx_pretty_printer *pp, tree t)
 void
 cxx_pretty_printer::abstract_declarator (tree t)
 {
-  if (TYPE_PTRMEM_P (t))
+  /* pp_cxx_ptr_operator prints '(' for a pointer-to-member function,
+     or a pointer-to-data-member of array type:
+
+       void (X::*)()
+       int (X::*)[5]
+
+     but not for a pointer-to-data-member of non-array type:
+
+       int X::*
+
+     so be mindful of that.  */
+  if (TYPE_PTRMEMFUNC_P (t)
+      || (TYPE_PTRDATAMEM_P (t)
+	  && TREE_CODE (TREE_TYPE (t)) == ARRAY_TYPE))
     pp_cxx_right_paren (this);
   else if (INDIRECT_TYPE_P (t))
     {
@@ -1783,6 +1820,11 @@ cxx_pretty_printer::direct_abstract_declarator (tree t)
     case RECORD_TYPE:
       if (TYPE_PTRMEMFUNC_P (t))
 	direct_abstract_declarator (TYPE_PTRMEMFUNC_FN_TYPE (t));
+      break;
+
+    case OFFSET_TYPE:
+      if (TYPE_PTRDATAMEM_P (t))
+	direct_abstract_declarator (TREE_TYPE (t));
       break;
 
     case METHOD_TYPE:
@@ -1836,8 +1878,12 @@ cxx_pretty_printer::type_id (tree t)
     case TYPEOF_TYPE:
     case UNDERLYING_TYPE:
     case DECLTYPE_TYPE:
+    case NULLPTR_TYPE:
     case TEMPLATE_ID_EXPR:
+    case OFFSET_TYPE:
       pp_cxx_type_specifier_seq (this, t);
+      if (TYPE_PTRMEM_P (t))
+	abstract_declarator (t);
       break;
 
     case TYPE_PACK_EXPANSION:
@@ -1910,6 +1956,8 @@ pp_cxx_template_argument_list (cxx_pretty_printer *pp, tree t)
 	  if (TYPE_P (arg) || (TREE_CODE (arg) == TEMPLATE_DECL
 			       && TYPE_P (DECL_TEMPLATE_RESULT (arg))))
 	    pp->type_id (arg);
+	  else if (template_parm_object_p (arg))
+	    pp->expression (DECL_INITIAL (arg));
 	  else
 	    pp->expression (arg);
 	}
@@ -2019,73 +2067,6 @@ cxx_pretty_printer::statement (tree t)
 	}
       break;
 
-    case SWITCH_STMT:
-      pp_cxx_ws_string (this, "switch");
-      pp_space (this);
-      pp_cxx_left_paren (this);
-      expression (SWITCH_STMT_COND (t));
-      pp_cxx_right_paren (this);
-      pp_indentation (this) += 3;
-      pp_needs_newline (this) = true;
-      statement (SWITCH_STMT_BODY (t));
-      pp_newline_and_indent (this, -3);
-      break;
-
-      /* iteration-statement:
-	    while ( expression ) statement
-	    do statement while ( expression ) ;
-	    for ( expression(opt) ; expression(opt) ; expression(opt) ) statement
-	    for ( declaration expression(opt) ; expression(opt) ) statement  */
-    case WHILE_STMT:
-      pp_cxx_ws_string (this, "while");
-      pp_space (this);
-      pp_cxx_left_paren (this);
-      expression (WHILE_COND (t));
-      pp_cxx_right_paren (this);
-      pp_newline_and_indent (this, 3);
-      statement (WHILE_BODY (t));
-      pp_indentation (this) -= 3;
-      pp_needs_newline (this) = true;
-      break;
-
-    case DO_STMT:
-      pp_cxx_ws_string (this, "do");
-      pp_newline_and_indent (this, 3);
-      statement (DO_BODY (t));
-      pp_newline_and_indent (this, -3);
-      pp_cxx_ws_string (this, "while");
-      pp_space (this);
-      pp_cxx_left_paren (this);
-      expression (DO_COND (t));
-      pp_cxx_right_paren (this);
-      pp_cxx_semicolon (this);
-      pp_needs_newline (this) = true;
-      break;
-
-    case FOR_STMT:
-      pp_cxx_ws_string (this, "for");
-      pp_space (this);
-      pp_cxx_left_paren (this);
-      if (FOR_INIT_STMT (t))
-	statement (FOR_INIT_STMT (t));
-      else
-	pp_cxx_semicolon (this);
-      pp_needs_newline (this) = false;
-      pp_cxx_whitespace (this);
-      if (FOR_COND (t))
-	expression (FOR_COND (t));
-      pp_cxx_semicolon (this);
-      pp_needs_newline (this) = false;
-      pp_cxx_whitespace (this);
-      if (FOR_EXPR (t))
-	expression (FOR_EXPR (t));
-      pp_cxx_right_paren (this);
-      pp_newline_and_indent (this, 3);
-      statement (FOR_BODY (t));
-      pp_indentation (this) -= 3;
-      pp_needs_newline (this) = true;
-      break;
-
     case RANGE_FOR_STMT:
       pp_cxx_ws_string (this, "for");
       pp_space (this);
@@ -2106,17 +2087,6 @@ cxx_pretty_printer::statement (tree t)
       pp_newline_and_indent (this, 3);
       statement (FOR_BODY (t));
       pp_indentation (this) -= 3;
-      pp_needs_newline (this) = true;
-      break;
-
-      /* jump-statement:
-	    goto identifier;
-	    continue ;
-	    return expression(opt) ;  */
-    case BREAK_STMT:
-    case CONTINUE_STMT:
-      pp_string (this, TREE_CODE (t) == BREAK_STMT ? "break" : "continue");
-      pp_cxx_semicolon (this);
       pp_needs_newline (this) = true;
       break;
 
@@ -2675,6 +2645,12 @@ pp_cxx_trait_expression (cxx_pretty_printer *pp, tree t)
     case CPTK_IS_FINAL:
       pp_cxx_ws_string (pp, "__is_final");
       break;
+    case CPTK_IS_LAYOUT_COMPATIBLE:
+      pp_cxx_ws_string (pp, "__is_layout_compatible");
+      break;
+    case CPTK_IS_POINTER_INTERCONVERTIBLE_BASE_OF:
+      pp_cxx_ws_string (pp, "__is_pointer_interconvertible_base_of");
+      break;
     case CPTK_IS_POD:
       pp_cxx_ws_string (pp, "__is_pod");
       break;
@@ -2711,6 +2687,12 @@ pp_cxx_trait_expression (cxx_pretty_printer *pp, tree t)
     case CPTK_IS_CONSTRUCTIBLE:
       pp_cxx_ws_string (pp, "__is_constructible");
       break;
+    case CPTK_IS_NOTHROW_ASSIGNABLE:
+      pp_cxx_ws_string (pp, "__is_nothrow_assignable");
+      break;
+    case CPTK_IS_NOTHROW_CONSTRUCTIBLE:
+      pp_cxx_ws_string (pp, "__is_nothrow_constructible");
+      break;
 
     default:
       gcc_unreachable ();
@@ -2719,7 +2701,10 @@ pp_cxx_trait_expression (cxx_pretty_printer *pp, tree t)
   pp_cxx_left_paren (pp);
   pp->type_id (TRAIT_EXPR_TYPE1 (t));
 
-  if (kind == CPTK_IS_BASE_OF || kind == CPTK_IS_SAME_AS)
+  if (kind == CPTK_IS_BASE_OF
+      || kind == CPTK_IS_SAME_AS
+      || kind == CPTK_IS_LAYOUT_COMPATIBLE
+      || kind == CPTK_IS_POINTER_INTERCONVERTIBLE_BASE_OF)
     {
       pp_cxx_separate_with (pp, ',');
       pp->type_id (TRAIT_EXPR_TYPE2 (t));
@@ -2799,9 +2784,18 @@ void
 pp_cxx_requires_expr (cxx_pretty_printer *pp, tree t)
 {
   pp_string (pp, "requires");
-  if (tree parms = TREE_OPERAND (t, 0))
+  if (tree parms = REQUIRES_EXPR_PARMS (t))
     {
-      pp_cxx_parameter_declaration_clause (pp, parms);
+      bool first = true;
+      pp_cxx_left_paren (pp);
+      for (; parms; parms = TREE_CHAIN (parms))
+	{
+	  if (!first)
+	    pp_cxx_separate_with (pp, ',' );
+	  first = false;
+	  pp_cxx_parameter_declaration (pp, parms);
+	}
+      pp_cxx_right_paren (pp);
       pp_cxx_whitespace (pp);
     }
   pp_cxx_requirement_body (pp, TREE_OPERAND (t, 1));

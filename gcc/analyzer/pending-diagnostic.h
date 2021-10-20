@@ -1,5 +1,5 @@
 /* Classes for analyzer diagnostics.
-   Copyright (C) 2019-2020 Free Software Foundation, Inc.
+   Copyright (C) 2019-2021 Free Software Foundation, Inc.
    Contributed by David Malcolm <dmalcolm@redhat.com>.
 
 This file is part of GCC.
@@ -154,10 +154,13 @@ class pending_diagnostic
   /* Hand-coded RTTI: get an ID for the subclass.  */
   virtual const char *get_kind () const = 0;
 
+  /* A vfunc for identifying "use of uninitialized value".  */
+  virtual bool use_of_uninit_p () const { return false; }
+
   /* Compare for equality with OTHER, which might be of a different
      subclass.  */
 
-  bool equal_p (const pending_diagnostic &other)
+  bool equal_p (const pending_diagnostic &other) const
   {
     /* Check for pointer equality on the IDs from get_kind.  */
     if (get_kind () != other.get_kind ())
@@ -174,6 +177,14 @@ class pending_diagnostic
   /* Return true if T1 and T2 are "the same" for the purposes of
      diagnostic deduplication.  */
   static bool same_tree_p (tree t1, tree t2);
+
+  /* A vfunc for fixing up locations (both the primary location for the
+     diagnostic, and for events in their paths), e.g. to avoid unwinding
+     inside specific macros.  */
+  virtual location_t fixup_location (location_t loc) const
+  {
+    return loc;
+  }
 
   /* For greatest precision-of-wording, the various following "describe_*"
      virtual functions give the pending diagnostic a way to describe events
@@ -246,6 +257,31 @@ class pending_diagnostic
   }
 
   /* End of precision-of-wording vfuncs.  */
+
+  /* Vfunc for extending/overriding creation of the events for an
+     exploded_edge that corresponds to a superedge, allowing for custom
+     events to be created that are pertinent to a particular
+     pending_diagnostic subclass.
+
+     For example, the -Wanalyzer-stale-setjmp-buffer diagnostic adds a
+     custom event showing when the pertinent stack frame is popped
+     (and thus the point at which the jmp_buf becomes invalid).  */
+
+  virtual bool maybe_add_custom_events_for_superedge (const exploded_edge &,
+						      checker_path *)
+  {
+    return false;
+  }
+
+  /* Vfunc for determining that this pending_diagnostic supercedes OTHER,
+     and that OTHER should therefore not be emitted.
+     They have already been tested for being at the same stmt.  */
+
+  virtual bool
+  supercedes_p (const pending_diagnostic &other ATTRIBUTE_UNUSED) const
+  {
+    return false;
+  }
 };
 
 /* A template to make it easier to make subclasses of pending_diagnostic.

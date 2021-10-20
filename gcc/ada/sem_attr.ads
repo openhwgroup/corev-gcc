@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---          Copyright (C) 1992-2020, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2021, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -310,6 +310,16 @@ package Sem_Attr is
       Attribute_Machine_Size => True,
       --  This attribute is identical to the Object_Size attribute. It is
       --  provided for compatibility with the DEC attribute of this name.
+
+      ----------------------
+      -- Max_Integer_Size --
+      ----------------------
+
+      Attribute_Max_Integer_Size => True,
+      --  Standard'Max_Integer_Size (Standard is the only permissible prefix)
+      --  provides values System.Min_Int and System.Max_Int, and is intended
+      --  primarily for constructing these definitions in package System. This
+      --  is a static attribute.
 
       -----------------------
       -- Maximum_Alignment --

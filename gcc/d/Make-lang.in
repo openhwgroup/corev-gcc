@@ -1,5 +1,5 @@
 # Make-lang.in -- Top level -*- makefile -*- fragment for the D frontend.
-# Copyright (C) 2006-2020 Free Software Foundation, Inc.
+# Copyright (C) 2006-2021 Free Software Foundation, Inc.
 
 # GCC is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -27,6 +27,7 @@ D_LIBPHOBOS = -DLIBPHOBOS=\"gphobos\"
 
 # The name for selecting d in LANGUAGES.
 d: d21$(exeext)
+d.serial = d21$(exeext)
 
 # Tell GNU make to ignore these if they exist.
 .PHONY: d
@@ -51,7 +52,6 @@ d-warn = $(filter-out -pedantic -Woverloaded-virtual, $(STRICT_WARN))
 # Also filter out warnings for missing format attributes in the D Frontend.
 DMD_WARN_CXXFLAGS = $(filter-out -Wmissing-format-attribute, $(WARN_CXXFLAGS))
 DMD_COMPILE = $(subst $(WARN_CXXFLAGS), $(DMD_WARN_CXXFLAGS), $(COMPILE))
-DMDGEN_COMPILE = $(subst $(COMPILER), $(COMPILER_FOR_BUILD), $(DMD_COMPILE))
 
 # D Frontend object files.
 D_FRONTEND_OBJS = \
@@ -64,6 +64,7 @@ D_FRONTEND_OBJS = \
 	d/blockexit.o \
 	d/canthrow.o \
 	d/checkedint.o \
+	d/chkformat.o \
 	d/clone.o \
 	d/cond.o \
 	d/constfold.o \
@@ -83,6 +84,7 @@ D_FRONTEND_OBJS = \
 	d/dscope.o \
 	d/dstruct.o \
 	d/dsymbol.o \
+	d/dsymbolsem.o \
 	d/dtemplate.o \
 	d/dversion.o \
 	d/entity.o \
@@ -114,6 +116,8 @@ D_FRONTEND_OBJS = \
 	d/rootobject.o \
 	d/safe.o \
 	d/sapply.o \
+	d/semantic2.o \
+	d/semantic3.o \
 	d/sideeffect.o \
 	d/speller.o \
 	d/statement.o \
@@ -121,6 +125,7 @@ D_FRONTEND_OBJS = \
 	d/staticassert.o \
 	d/staticcond.o \
 	d/stringtable.o \
+	d/templateparamsem.o \
 	d/tokens.o \
 	d/traits.o \
 	d/typesem.o \
@@ -141,6 +146,7 @@ D_OBJS = \
 	d/d-ctfloat.o \
 	d/d-diagnostic.o \
 	d/d-frontend.o \
+	d/d-gimplify.o \
 	d/d-incpath.o \
 	d/d-lang.o \
 	d/d-longdouble.o \
@@ -161,9 +167,11 @@ D_ALL_OBJS = $(D_FRONTEND_OBJS) $(D_GENERATED_OBJS) $(D_OBJS) $(D_TARGET_OBJS)
 
 d_OBJS = $(D_ALL_OBJS) d/d-spec.o
 
-d21$(exeext): $(D_ALL_OBJS) attribs.o $(BACKEND) $(LIBDEPS)
+d21$(exeext): $(D_ALL_OBJS) attribs.o $(BACKEND) $(LIBDEPS) $(d.prev)
+	@$(call LINK_PROGRESS,$(INDEX.d),start)
 	+$(LLINKER) $(ALL_LINKERFLAGS) $(LDFLAGS) -o $@ \
 		$(D_ALL_OBJS) attribs.o $(BACKEND) $(LIBS) $(BACKENDLIBS)
+	@$(call LINK_PROGRESS,$(INDEX.d),end)
 
 # Documentation.
 
@@ -352,6 +360,15 @@ d/id.h: d/id.c
 d/impcnvtab.c: d/impcnvgen$(build_exeext)
 	cd d && ./impcnvgen$(build_exeext)
 
+# Compile the generator programs.
 d/%.dmdgen.o: $(srcdir)/d/dmd/%.c
-	$(DMDGEN_COMPILE) $(D_INCLUDES) $<
-	$(POSTCOMPILE)
+	$(COMPILER_FOR_BUILD) -c $(BUILD_COMPILERFLAGS) $(D_INCLUDES) \
+		$(BUILD_CPPFLAGS) -o $@ $<
+
+# Header dependencies for the generator programs.
+D_SYSTEM_H = d/dmd/root/dsystem.h d/d-system.h
+
+d/idgen.dmdgen.o: d/dmd/idgen.c $(D_SYSTEM_H) $(BCONFIG_H) $(SYSTEM_H)
+
+d/impcnvgen.dmdgen.o: d/dmd/impcnvgen.c d/dmd/mtype.h $(D_SYSTEM_H) \
+	$(BCONFIG_H) $(SYSTEM_H)

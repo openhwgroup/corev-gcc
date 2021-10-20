@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2020, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2021, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -33,7 +33,6 @@ with Osint;    use Osint;
 with Osint.B;  use Osint.B;
 with Output;   use Output;
 with Rident;   use Rident;
-with Stringt;  use Stringt;
 with Table;
 with Targparm; use Targparm;
 with Types;    use Types;
@@ -589,6 +588,27 @@ package body Bindgen is
             WBI ("");
          end if;
 
+         --  Import the default stack object if a size has been provided to the
+         --  binder.
+
+         if Opt.Default_Stack_Size /= Opt.No_Stack_Size then
+            WBI ("      Default_Stack_Size : Integer;");
+            WBI ("      pragma Import (C, Default_Stack_Size, " &
+                 """__gl_default_stack_size"");");
+         end if;
+
+         --  Initialize stack limit variable of the environment task if the
+         --  stack check method is stack limit and stack check is enabled.
+
+         if Stack_Check_Limits_On_Target
+           and then (Stack_Check_Default_On_Target or Stack_Check_Switch_Set)
+         then
+            WBI ("");
+            WBI ("      procedure Initialize_Stack_Limit;");
+            WBI ("      pragma Import (C, Initialize_Stack_Limit, " &
+                 """__gnat_initialize_stack_limit"");");
+         end if;
+
          if System_Secondary_Stack_Package_In_Closure then
             --  System.Secondary_Stack is in the closure of the program
             --  because the program uses the secondary stack or the restricted
@@ -620,6 +640,15 @@ package body Bindgen is
 
          WBI ("   begin");
 
+         --  Set the default stack size if provided to the binder
+
+         if Opt.Default_Stack_Size /= Opt.No_Stack_Size then
+            Set_String ("      Default_Stack_Size := ");
+            Set_Int (Default_Stack_Size);
+            Set_String (";");
+            Write_Statement_Buffer;
+         end if;
+
          if Main_Priority /= No_Main_Priority then
             Set_String ("      Main_Priority := ");
             Set_Int    (Main_Priority);
@@ -644,6 +673,7 @@ package body Bindgen is
          end if;
 
          if Main_Priority = No_Main_Priority
+           and then Opt.Default_Stack_Size = Opt.No_Stack_Size
            and then Main_CPU = No_Main_CPU
            and then not System_Tasking_Restricted_Stages_Used
          then
@@ -1161,19 +1191,18 @@ package body Bindgen is
       procedure Write_Name_With_Len (Nam : Name_Id) is
       begin
          Get_Name_String (Nam);
-
-         Start_String;
-         Store_String_Char (Character'Val (Name_Len));
-         Store_String_Chars (Name_Buffer (1 .. Name_Len));
-
-         Write_String_Table_Entry (End_String);
+         Write_Str ("Character'Val (");
+         Write_Int (Int (Name_Len));
+         Write_Str (") & """);
+         Write_Str (Name_Buffer (1 .. Name_Len));
+         Write_Char ('"');
       end Write_Name_With_Len;
 
       --  Local variables
 
-      Amp : Character;
-      KN  : Name_Id := No_Name;
-      VN  : Name_Id := No_Name;
+      First : Boolean := True;
+      KN    : Name_Id := No_Name;
+      VN    : Name_Id := No_Name;
 
    --  Start of processing for Gen_Bind_Env_String
 
@@ -1187,21 +1216,26 @@ package body Bindgen is
       Set_Special_Output (Write_Bind_Line'Access);
 
       WBI ("   Bind_Env : aliased constant String :=");
-      Amp := ' ';
+
       while VN /= No_Name loop
-         Write_Str ("     " & Amp & ' ');
+         if First then
+            Write_Str ("     ");
+         else
+            Write_Str ("     & ");
+         end if;
+
          Write_Name_With_Len (KN);
          Write_Str (" & ");
          Write_Name_With_Len (VN);
          Write_Eol;
 
          Bind_Environment.Get_Next (KN, VN);
-         Amp := '&';
+         First := False;
       end loop;
+
       WBI ("     & ASCII.NUL;");
 
       Cancel_Special_Output;
-
       Bind_Env_String_Built := True;
    end Gen_Bind_Env_String;
 
@@ -2385,7 +2419,11 @@ package body Bindgen is
                                       Gnat_Version_String &
                                       """ & ASCII.NUL;");
             WBI ("   pragma Export (C, GNAT_Version, ""__gnat_version"");");
-
+            WBI ("");
+            WBI ("   GNAT_Version_Address : constant System.Address := " &
+                 "GNAT_Version'Address;");
+            WBI ("   pragma Export (C, GNAT_Version_Address, " &
+                 """__gnat_version_address"");");
             WBI ("");
             Set_String ("   Ada_Main_Program_Name : constant String := """);
             Get_Name_String (Units.Table (First_Unit_Entry).Uname);

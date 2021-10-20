@@ -1,6 +1,6 @@
 // Versatile string -*- C++ -*-
 
-// Copyright (C) 2005-2020 Free Software Foundation, Inc.
+// Copyright (C) 2005-2021 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -2921,7 +2921,6 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       { return std::_Hash_impl::hash(__s.data(), __s.length()); }
     };
 
-#ifdef _GLIBCXX_USE_WCHAR_T
   /// std::hash specialization for __wvstring.
   template<>
     struct hash<__gnu_cxx::__wvstring>
@@ -2932,7 +2931,6 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       { return std::_Hash_impl::hash(__s.data(),
                                      __s.length() * sizeof(wchar_t)); }
     };
-#endif
 
   /// std::hash specialization for __u16vstring.
   template<>

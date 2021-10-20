@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"internal/testenv"
-	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
@@ -33,7 +32,7 @@ func TestMain(m *testing.M) {
 }
 
 func testMain(m *testing.M) int {
-	dir, err := ioutil.TempDir("", "vet_test")
+	dir, err := os.MkdirTemp("", "vet_test")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
@@ -339,8 +338,8 @@ type wantedError struct {
 }
 
 var (
-	errRx       = regexp.MustCompile(`// (?:GC_)?ERROR (.*)`)
-	errAutoRx   = regexp.MustCompile(`// (?:GC_)?ERRORAUTO (.*)`)
+	errRx       = regexp.MustCompile(`// (?:GC_)?ERROR(NEXT)? (.*)`)
+	errAutoRx   = regexp.MustCompile(`// (?:GC_)?ERRORAUTO(NEXT)? (.*)`)
 	errQuotesRx = regexp.MustCompile(`"([^"]*)"`)
 	lineRx      = regexp.MustCompile(`LINE(([+-])([0-9]+))?`)
 )
@@ -349,7 +348,7 @@ var (
 func wantedErrors(file, short string) (errs []wantedError) {
 	cache := make(map[string]*regexp.Regexp)
 
-	src, err := ioutil.ReadFile(file)
+	src, err := os.ReadFile(file)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -369,7 +368,10 @@ func wantedErrors(file, short string) (errs []wantedError) {
 		if m == nil {
 			continue
 		}
-		all := m[1]
+		if m[1] == "NEXT" {
+			lineNum++
+		}
+		all := m[2]
 		mm := errQuotesRx.FindAllStringSubmatch(all, -1)
 		if mm == nil {
 			log.Fatalf("%s:%d: invalid errchk line: %s", file, lineNum, line)

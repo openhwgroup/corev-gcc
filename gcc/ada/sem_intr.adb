@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2020, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2021, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -25,20 +25,25 @@
 
 --  Processing for intrinsic subprogram declarations
 
-with Atree;    use Atree;
-with Einfo;    use Einfo;
-with Errout;   use Errout;
-with Lib;      use Lib;
-with Namet;    use Namet;
-with Opt;      use Opt;
-with Sem_Aux;  use Sem_Aux;
-with Sem_Eval; use Sem_Eval;
-with Sem_Util; use Sem_Util;
-with Sinfo;    use Sinfo;
-with Snames;   use Snames;
-with Stand;    use Stand;
-with Stringt;  use Stringt;
-with Uintp;    use Uintp;
+with Atree;          use Atree;
+with Einfo;          use Einfo;
+with Einfo.Entities; use Einfo.Entities;
+with Einfo.Utils;    use Einfo.Utils;
+with Errout;         use Errout;
+with Lib;            use Lib;
+with Namet;          use Namet;
+with Opt;            use Opt;
+with Sem_Aux;        use Sem_Aux;
+with Sem_Eval;       use Sem_Eval;
+with Sem_Util;       use Sem_Util;
+with Sinfo;          use Sinfo;
+with Sinfo.Nodes;    use Sinfo.Nodes;
+with Sinfo.Utils;    use Sinfo.Utils;
+with Snames;         use Snames;
+with Stand;          use Stand;
+with Stringt;        use Stringt;
+with Ttypes;         use Ttypes;
+with Uintp;          use Uintp;
 
 package body Sem_Intr is
 
@@ -430,11 +435,18 @@ package body Sem_Intr is
       if Size /= 8  and then
          Size /= 16 and then
          Size /= 32 and then
-         Size /= 64
+         Size /= 64 and then
+         Size /= System_Max_Integer_Size
       then
-         Errint
-           ("first argument for shift must have size 8, 16, 32 or 64",
-            Ptyp1, N, Relaxed => True);
+         if System_Max_Integer_Size > 64 then
+            Errint
+              ("first argument for shift must have size 8, 16, 32, 64 or 128",
+               Ptyp1, N, Relaxed => True);
+         else
+            Errint
+              ("first argument for shift must have size 8, 16, 32 or 64",
+               Ptyp1, N, Relaxed => True);
+         end if;
          return;
 
       elsif Non_Binary_Modulus (Typ1) then
@@ -449,10 +461,19 @@ package body Sem_Intr is
         and then Modulus (Typ1) /= Uint_2 ** 16
         and then Modulus (Typ1) /= Uint_2 ** 32
         and then Modulus (Typ1) /= Uint_2 ** 64
+        and then Modulus (Typ1) /= Uint_2 ** System_Max_Binary_Modulus_Power
       then
-         Errint
-           ("modular type for shift must have modulus of 2'*'*8, "
-            & "2'*'*16, 2'*'*32, or 2'*'*64", Ptyp1, N, Relaxed => True);
+         if System_Max_Binary_Modulus_Power > 64 then
+            Errint
+              ("modular type for shift must have modulus of 2'*'*8, "
+               & "2'*'*16, 2'*'*32, 2'*'*64 or 2'*'*128", Ptyp1, N,
+               Relaxed => True);
+         else
+            Errint
+              ("modular type for shift must have modulus of 2'*'*8, "
+               & "2'*'*16, 2'*'*32, or 2'*'*64", Ptyp1, N,
+               Relaxed => True);
+         end if;
 
       elsif Etype (Arg1) /= Etype (E) then
          Errint

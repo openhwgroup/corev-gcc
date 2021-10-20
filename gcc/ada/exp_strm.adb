@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2020, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2021, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -23,22 +23,26 @@
 --                                                                          --
 ------------------------------------------------------------------------------
 
-with Atree;    use Atree;
-with Einfo;    use Einfo;
-with Elists;   use Elists;
-with Exp_Util; use Exp_Util;
-with Namet;    use Namet;
-with Nlists;   use Nlists;
-with Nmake;    use Nmake;
-with Rtsfind;  use Rtsfind;
-with Sem_Aux;  use Sem_Aux;
-with Sem_Util; use Sem_Util;
-with Sinfo;    use Sinfo;
-with Snames;   use Snames;
-with Stand;    use Stand;
-with Tbuild;   use Tbuild;
-with Ttypes;   use Ttypes;
-with Uintp;    use Uintp;
+with Atree;          use Atree;
+with Einfo;          use Einfo;
+with Einfo.Entities; use Einfo.Entities;
+with Einfo.Utils;    use Einfo.Utils;
+with Elists;         use Elists;
+with Exp_Util;       use Exp_Util;
+with Namet;          use Namet;
+with Nlists;         use Nlists;
+with Nmake;          use Nmake;
+with Rtsfind;        use Rtsfind;
+with Sem_Aux;        use Sem_Aux;
+with Sem_Util;       use Sem_Util;
+with Sinfo;          use Sinfo;
+with Sinfo.Nodes;    use Sinfo.Nodes;
+with Sinfo.Utils;    use Sinfo.Utils;
+with Snames;         use Snames;
+with Stand;          use Stand;
+with Tbuild;         use Tbuild;
+with Ttypes;         use Ttypes;
+with Uintp;          use Uintp;
 
 package body Exp_Strm is
 
@@ -578,8 +582,11 @@ package body Exp_Strm is
          elsif P_Size <= Standard_Long_Integer_Size then
             Lib_RE := RE_I_LI;
 
-         else
+         elsif P_Size <= Standard_Long_Long_Integer_Size then
             Lib_RE := RE_I_LLI;
+
+         else
+            Lib_RE := RE_I_LLLI;
          end if;
 
       --  Unsigned integer types, also includes unsigned fixed-point types
@@ -609,12 +616,15 @@ package body Exp_Strm is
          elsif P_Size <= Standard_Long_Integer_Size then
             Lib_RE := RE_I_LU;
 
-         else
+         elsif P_Size <= Standard_Long_Long_Integer_Size then
             Lib_RE := RE_I_LLU;
+
+         else
+            Lib_RE := RE_I_LLLU;
          end if;
 
       else pragma Assert (Is_Access_Type (U_Type));
-         if P_Size > System_Address_Size then
+         if Present (P_Size) and then P_Size > System_Address_Size then
             Lib_RE := RE_I_AD;
          else
             Lib_RE := RE_I_AS;
@@ -802,16 +812,24 @@ package body Exp_Strm is
       then
          if P_Size <= Standard_Short_Short_Integer_Size then
             Lib_RE := RE_W_SSI;
+
          elsif P_Size <= Standard_Short_Integer_Size then
             Lib_RE := RE_W_SI;
+
          elsif P_Size = 24 then
             Lib_RE := RE_W_I24;
+
          elsif P_Size <= Standard_Integer_Size then
             Lib_RE := RE_W_I;
+
          elsif P_Size <= Standard_Long_Integer_Size then
             Lib_RE := RE_W_LI;
-         else
+
+         elsif P_Size <= Standard_Long_Long_Integer_Size then
             Lib_RE := RE_W_LLI;
+
+         else
+            Lib_RE := RE_W_LLLI;
          end if;
 
       --  Unsigned integer types, also includes unsigned fixed-point types
@@ -828,21 +846,29 @@ package body Exp_Strm is
       then
          if P_Size <= Standard_Short_Short_Integer_Size then
             Lib_RE := RE_W_SSU;
+
          elsif P_Size <= Standard_Short_Integer_Size then
             Lib_RE := RE_W_SU;
+
          elsif P_Size = 24 then
             Lib_RE := RE_W_U24;
+
          elsif P_Size <= Standard_Integer_Size then
             Lib_RE := RE_W_U;
+
          elsif P_Size <= Standard_Long_Integer_Size then
             Lib_RE := RE_W_LU;
-         else
+
+         elsif P_Size <= Standard_Long_Long_Integer_Size then
             Lib_RE := RE_W_LLU;
+
+         else
+            Lib_RE := RE_W_LLLU;
          end if;
 
       else pragma Assert (Is_Access_Type (U_Type));
 
-         if P_Size > System_Address_Size then
+         if Present (P_Size) and then P_Size > System_Address_Size then
             Lib_RE := RE_W_AD;
          else
             Lib_RE := RE_W_AS;

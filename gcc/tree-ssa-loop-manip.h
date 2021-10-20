@@ -1,5 +1,5 @@
 /* Header file for High-level loop manipulation functions.
-   Copyright (C) 2013-2020 Free Software Foundation, Inc.
+   Copyright (C) 2013-2021 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -50,12 +50,11 @@ extern bool can_unroll_loop_p (class loop *loop, unsigned factor,
 			       class tree_niter_desc *niter);
 extern gcov_type niter_for_unrolled_loop (class loop *, unsigned);
 extern void tree_transform_and_unroll_loop (class loop *, unsigned,
-					    edge, class tree_niter_desc *,
+					    tree_niter_desc *,
 					    transform_callback, void *);
-extern void tree_unroll_loop (class loop *, unsigned,
-			      edge, class tree_niter_desc *);
+extern void tree_unroll_loop (class loop *, unsigned, tree_niter_desc *);
 extern tree canonicalize_loop_ivs (class loop *, tree *, bool);
-
+extern unsigned int loop_invariant_motion_in_fun (function *, bool);
 
 
 #endif /* GCC_TREE_SSA_LOOP_MANIP_H */

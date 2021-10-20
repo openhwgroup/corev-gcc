@@ -1,6 +1,6 @@
 // nonstandard construct and destroy functions -*- C++ -*-
 
-// Copyright (C) 2001-2020 Free Software Foundation, Inc.
+// Copyright (C) 2001-2021 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -88,7 +88,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	__location->~_Tp();
     }
 
-#if __cplusplus > 201703L
+#if __cplusplus >= 202002L
   template<typename _Tp, typename... _Args>
     constexpr auto
     construct_at(_Tp* __location, _Args&&... __args)
@@ -104,9 +104,20 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
    */
 #if __cplusplus >= 201103L
   template<typename _Tp, typename... _Args>
+    _GLIBCXX20_CONSTEXPR
     inline void
     _Construct(_Tp* __p, _Args&&... __args)
-    { ::new(static_cast<void*>(__p)) _Tp(std::forward<_Args>(__args)...); }
+    {
+#if __cplusplus >= 202002L && __has_builtin(__builtin_is_constant_evaluated)
+      if (__builtin_is_constant_evaluated())
+	{
+	  // Allow std::_Construct to be used in constant expressions.
+	  std::construct_at(__p, std::forward<_Args>(__args)...);
+	  return;
+	}
+#endif
+      ::new(static_cast<void*>(__p)) _Tp(std::forward<_Args>(__args)...);
+    }
 #else
   template<typename _T1, typename _T2>
     inline void

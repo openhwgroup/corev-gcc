@@ -1,5 +1,5 @@
 /* Language hooks common to C and ObjC front ends.
-   Copyright (C) 2004-2020 Free Software Foundation, Inc.
+   Copyright (C) 2004-2021 Free Software Foundation, Inc.
    Contributed by Ziemowit Laski  <zlaski@apple.com>
 
 This file is part of GCC.
@@ -56,6 +56,8 @@ along with GCC; see the file COPYING3.  If not see
 #define LANG_HOOKS_TYPES_COMPATIBLE_P c_types_compatible_p
 #undef LANG_HOOKS_MISSING_NORETURN_OK_P
 #define LANG_HOOKS_MISSING_NORETURN_OK_P c_missing_noreturn_ok_p
+#undef LANG_HOOKS_BLOCK_MAY_FALLTHRU
+#define LANG_HOOKS_BLOCK_MAY_FALLTHRU c_block_may_fallthru
 #undef  LANG_HOOKS_BUILTIN_FUNCTION
 #define LANG_HOOKS_BUILTIN_FUNCTION c_builtin_function
 #undef  LANG_HOOKS_BUILTIN_FUNCTION_EXT_SCOPE

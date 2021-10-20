@@ -1,5 +1,5 @@
 /* Common VxWorks target definitions for GNU compiler.
-   Copyright (C) 1999-2020 Free Software Foundation, Inc.
+   Copyright (C) 1999-2021 Free Software Foundation, Inc.
    Contributed by Wind River Systems.
    Rewritten by CodeSourcery, LLC.
 
@@ -36,11 +36,16 @@ along with GCC; see the file COPYING3.  If not see
 
 /* Since we provide a default -isystem, expand -isystem on the command
    line early.  */
+
+/* Self-tests may be run in contexts where the VxWorks environment isn't
+   available.  Prevent attempts at designating the location of runtime header
+   files, libraries or startfiles, which would fail on unset environment
+   variables and aren't needed for such tests.  */
 #if TARGET_VXWORKS7
 
 #undef VXWORKS_ADDITIONAL_CPP_SPEC
 #define VXWORKS_ADDITIONAL_CPP_SPEC                     \
- "%{!nostdinc:                                          \
+ "%{!nostdinc:%{!fself-test=*:                          \
     %{isystem*}                                         \
     %{mrtp: -idirafter %:getenv(VSB_DIR /h)             \
             -idirafter %:getenv(VSB_DIR /share/h)       \
@@ -49,21 +54,27 @@ along with GCC; see the file COPYING3.  If not see
       ;:    -idirafter %:getenv(VSB_DIR /h)             \
             -idirafter %:getenv(VSB_DIR /share/h)       \
             -idirafter %:getenv(VSB_DIR /krnl/h/system) \
-            -idirafter %:getenv(VSB_DIR /krnl/h/public)}}"
+            -idirafter %:getenv(VSB_DIR /krnl/h/public)}}}"
 
 #else /* TARGET_VXWORKS7 */
 
 #undef VXWORKS_ADDITIONAL_CPP_SPEC
 #define VXWORKS_ADDITIONAL_CPP_SPEC		\
- "%{!nostdinc:					\
+ "%{!nostdinc:%{!fself-test=*:			\
     %{isystem*}					\
     %{mrtp: -idirafter %:getenv(WIND_USR /h)	\
 	    -idirafter %:getenv(WIND_USR /h/wrn/coreip) \
       ;:    -idirafter %:getenv(WIND_BASE /target/h) \
 	    -idirafter %:getenv(WIND_BASE /target/h/wrn/coreip) \
-}}"
+}}}"
 
 #endif
+
+/* Our ports rely on gnu-user.h, which #defines _POSIX_SOURCE for
+   C++ by default.  VxWorks doesn't provide 100% of what this implies
+   (e.g. ::mkstemp), so, arrange to prevent that by falling back to
+   the default CPP spec for C++ as well.  */
+#undef CPLUSPLUS_CPP_SPEC
 
 /* For VxWorks static rtps, the system provides libc_internal.a, a superset of
    libgcc.a that we need to use e.g. to satisfy references to __init and
@@ -79,7 +90,7 @@ along with GCC; see the file COPYING3.  If not see
 #define VXWORKS_SYSCALL_LIBS_RTP
 
 #if TARGET_VXWORKS7
-#define VXWORKS_NET_LIBS_RTP "-lnet"
+#define VXWORKS_NET_LIBS_RTP "-l%:if-exists-then-else(%:getenv(VSB_DIR /usr/h/public/rtnetStackLib.h) rtnet net)"
 #else
 #define VXWORKS_NET_LIBS_RTP "-lnet -ldsi"
 #endif
@@ -108,7 +119,8 @@ along with GCC; see the file COPYING3.  If not see
 
 #if TARGET_VXWORKS7
 #undef  STARTFILE_PREFIX_SPEC
-#define STARTFILE_PREFIX_SPEC "%:getenv(VSB_DIR /usr/lib/common)"
+#define STARTFILE_PREFIX_SPEC \
+  "%{!fself-test=*:%:getenv(VSB_DIR /usr/lib/common)}"
 #define TLS_SYM "-u __tls__"
 #else
 #define TLS_SYM ""
@@ -146,8 +158,7 @@ along with GCC; see the file COPYING3.  If not see
 /* Setup the crtstuff begin/end we might need for dwarf EH registration.  */
 
 #if !defined(CONFIG_SJLJ_EXCEPTIONS) && DWARF2_UNWIND_INFO
-#define VX_CRTBEGIN_SPEC \
- "%{!mrtp:vx_crtbegin-kernel.o%s} %{mrtp:vx_crtbegin-rtp.o%s}"
+#define VX_CRTBEGIN_SPEC "vx_crtbegin.o%s"
 #define VX_CRTEND_SPEC "-l:vx_crtend.o"
 #else
 #define VX_CRTBEGIN_SPEC ""
@@ -254,15 +265,30 @@ extern void vxworks_asm_out_destructor (rtx symbol, int priority);
     }									\
   while (0)
 
+/* For specific CPU macro definitions expected by the system headers,
+   different versions of VxWorks expect different forms of macros,
+   such as "_VX_CPU=..." on Vx7 and some variants of Vx6, or "CPU=..."
+   on all Vx6 and earlier.  Setup a common prefix macro here, that
+   arch specific ports can reuse.  */
+
+#if TARGET_VXWORKS7
+#define VX_CPU_PREFIX "_VX_"
+#else
+#define VX_CPU_PREFIX ""
+#endif
+
 #define VXWORKS_KIND VXWORKS_KIND_NORMAL
 
 /* The diab linker does not handle .gnu_attribute sections.  */
 #undef HAVE_AS_GNU_ATTRIBUTE
 
-/* We provide our own version of __clear_cache in libgcc, using a separate C
-   file to facilitate #inclusion of VxWorks header files.  */
-#undef CLEAR_INSN_CACHE
-#define CLEAR_INSN_CACHE 1
+/* We call vxworks's cacheTextUpdate instead of CLEAR_INSN_CACHE if
+   needed.  We don't want to force a call on targets that don't define
+   cache-clearing insns nor CLEAR_INSN_CACHE.  */
+#undef TARGET_EMIT_CALL_BUILTIN___CLEAR_CACHE
+#define TARGET_EMIT_CALL_BUILTIN___CLEAR_CACHE \
+  vxworks_emit_call_builtin___clear_cache
+extern void vxworks_emit_call_builtin___clear_cache (rtx begin, rtx end);
 
 /* Default dwarf control values, for non-gdb debuggers that come with
    VxWorks.  */

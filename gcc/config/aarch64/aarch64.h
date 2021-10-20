@@ -1,5 +1,5 @@
 /* Machine description for AArch64 architecture.
-   Copyright (C) 2009-2020 Free Software Foundation, Inc.
+   Copyright (C) 2009-2021 Free Software Foundation, Inc.
    Contributed by ARM Ltd.
 
    This file is part of GCC.
@@ -26,8 +26,9 @@
 #define TARGET_CPU_CPP_BUILTINS()	\
   aarch64_cpu_cpp_builtins (pfile)
 
-/* Target CPU versions for D.  */
+/* Target hooks for D language.  */
 #define TARGET_D_CPU_VERSIONS aarch64_d_target_versions
+#define TARGET_D_REGISTER_CPU_TARGET_INFO aarch64_d_register_target_info
 
 
 
@@ -161,6 +162,8 @@ extern unsigned aarch64_architecture_version;
 #define AARCH64_FL_LSE	      (1 << 4)  /* Has Large System Extensions.  */
 #define AARCH64_FL_RDMA       (1 << 5)  /* Has Round Double Multiply Add.  */
 #define AARCH64_FL_V8_1       (1 << 6)  /* Has ARMv8.1-A extensions.  */
+/* Armv8-R.  */
+#define AARCH64_FL_V8_R       (1 << 7)  /* Armv8-R AArch64.  */
 /* ARMv8.2-A architecture extensions.  */
 #define AARCH64_FL_V8_2       (1 << 8)  /* Has ARMv8.2-A features.  */
 #define AARCH64_FL_F16	      (1 << 9)  /* Has ARMv8.2-A FP16 extensions.  */
@@ -222,6 +225,21 @@ extern unsigned aarch64_architecture_version;
 /* 64-bit Floating-point Matrix Multiply (F64MM) extensions.  */
 #define AARCH64_FL_F64MM      (1ULL << 38)
 
+/* Flag Manipulation Instructions (FLAGM) extension.  */
+#define AARCH64_FL_FLAGM      (1ULL << 39)
+
+/* Pointer Authentication (PAUTH) extension.  */
+#define AARCH64_FL_PAUTH      (1ULL << 40)
+
+/* 64-byte atomic load/store extensions.  */
+#define AARCH64_FL_LS64      (1ULL << 41)
+
+/* Armv8.7-a architecture extensions.  */
+#define AARCH64_FL_V8_7       (1ULL << 42)
+
+/* Armv9.0-A.  */
+#define AARCH64_FL_V9         (1ULL << 43)  /* Armv9.0-A Architecture.  */
+
 /* Has FP and SIMD.  */
 #define AARCH64_FL_FPSIMD     (AARCH64_FL_FP | AARCH64_FL_SIMD)
 
@@ -236,16 +254,23 @@ extern unsigned aarch64_architecture_version;
 #define AARCH64_FL_FOR_ARCH8_2			\
   (AARCH64_FL_FOR_ARCH8_1 | AARCH64_FL_V8_2)
 #define AARCH64_FL_FOR_ARCH8_3			\
-  (AARCH64_FL_FOR_ARCH8_2 | AARCH64_FL_V8_3)
+  (AARCH64_FL_FOR_ARCH8_2 | AARCH64_FL_V8_3 | AARCH64_FL_PAUTH)
 #define AARCH64_FL_FOR_ARCH8_4			\
   (AARCH64_FL_FOR_ARCH8_3 | AARCH64_FL_V8_4 | AARCH64_FL_F16FML \
-   | AARCH64_FL_DOTPROD | AARCH64_FL_RCPC8_4)
+   | AARCH64_FL_DOTPROD | AARCH64_FL_RCPC8_4 | AARCH64_FL_FLAGM)
 #define AARCH64_FL_FOR_ARCH8_5			\
   (AARCH64_FL_FOR_ARCH8_4 | AARCH64_FL_V8_5	\
    | AARCH64_FL_SB | AARCH64_FL_SSBS | AARCH64_FL_PREDRES)
 #define AARCH64_FL_FOR_ARCH8_6			\
   (AARCH64_FL_FOR_ARCH8_5 | AARCH64_FL_V8_6 | AARCH64_FL_FPSIMD \
    | AARCH64_FL_I8MM | AARCH64_FL_BF16)
+#define AARCH64_FL_FOR_ARCH8_7			\
+  (AARCH64_FL_FOR_ARCH8_6 | AARCH64_FL_V8_7 | AARCH64_FL_LS64)
+
+#define AARCH64_FL_FOR_ARCH8_R     \
+  (AARCH64_FL_FOR_ARCH8_4 | AARCH64_FL_V8_R)
+#define AARCH64_FL_FOR_ARCH9       \
+  (AARCH64_FL_FOR_ARCH8_5 | AARCH64_FL_SVE | AARCH64_FL_SVE2 | AARCH64_FL_V9)
 
 /* Macros to test ISA flags.  */
 
@@ -282,6 +307,9 @@ extern unsigned aarch64_architecture_version;
 #define AARCH64_ISA_F64MM	   (aarch64_isa_flags & AARCH64_FL_F64MM)
 #define AARCH64_ISA_BF16	   (aarch64_isa_flags & AARCH64_FL_BF16)
 #define AARCH64_ISA_SB		   (aarch64_isa_flags & AARCH64_FL_SB)
+#define AARCH64_ISA_V8_R	   (aarch64_isa_flags & AARCH64_FL_V8_R)
+#define AARCH64_ISA_PAUTH	   (aarch64_isa_flags & AARCH64_FL_PAUTH)
+#define AARCH64_ISA_V9		   (aarch64_isa_flags & AARCH64_FL_V9)
 
 /* Crypto is an optional extension to AdvSIMD.  */
 #define TARGET_CRYPTO (TARGET_SIMD && AARCH64_ISA_CRYPTO)
@@ -369,6 +397,9 @@ extern unsigned aarch64_architecture_version;
 #define TARGET_BF16_FP (AARCH64_ISA_BF16)
 #define TARGET_BF16_SIMD (AARCH64_ISA_BF16 && TARGET_SIMD)
 #define TARGET_SVE_BF16 (TARGET_SVE && AARCH64_ISA_BF16)
+
+/* PAUTH instructions are enabled through +pauth.  */
+#define TARGET_PAUTH (AARCH64_ISA_PAUTH)
 
 /* Make sure this is always defined so we don't have to check for ifdefs
    but rather use normal ifs.  */
@@ -1019,16 +1050,19 @@ typedef struct
 #define MOVE_RATIO(speed) \
   (!STRICT_ALIGNMENT ? 2 : (((speed) ? 15 : AARCH64_CALL_RATIO) / 2))
 
-/* For CLEAR_RATIO, when optimizing for size, give a better estimate
-   of the length of a memset call, but use the default otherwise.  */
+/* Like MOVE_RATIO, without -mstrict-align, make decisions in "setmem" when
+   we would use more than 3 scalar instructions.
+   Otherwise follow a sensible default: when optimizing for size, give a better
+   estimate of the length of a memset call, but use the default otherwise.  */
 #define CLEAR_RATIO(speed) \
-  ((speed) ? 15 : AARCH64_CALL_RATIO)
+  (!STRICT_ALIGNMENT ? 4 : (speed) ? 15 : AARCH64_CALL_RATIO)
 
-/* SET_RATIO is similar to CLEAR_RATIO, but for a non-zero constant, so when
-   optimizing for size adjust the ratio to account for the overhead of loading
-   the constant.  */
+/* SET_RATIO is similar to CLEAR_RATIO, but for a non-zero constant.  Without
+   -mstrict-align, make decisions in "setmem".  Otherwise follow a sensible
+   default: when optimizing for size adjust the ratio to account for the
+   overhead of loading the constant.  */
 #define SET_RATIO(speed) \
-  ((speed) ? 15 : AARCH64_CALL_RATIO - 2)
+  (!STRICT_ALIGNMENT ? 0 : (speed) ? 15 : AARCH64_CALL_RATIO - 2)
 
 /* Disable auto-increment in move_by_pieces et al.  Use of auto-increment is
    rarely a good idea in straight-line code since it adds an extra address
@@ -1201,12 +1235,14 @@ extern enum aarch64_code_model aarch64_cmodel;
 #define ENDIAN_LANE_N(NUNITS, N) \
   (BYTES_BIG_ENDIAN ? NUNITS - 1 - N : N)
 
-/* Support for a configure-time default CPU, etc.  We currently support
-   --with-arch and --with-cpu.  Both are ignored if either is specified
-   explicitly on the command line at run time.  */
+/* Support for configure-time --with-arch, --with-cpu and --with-tune.
+   --with-arch and --with-cpu are ignored if either -mcpu or -march is used.
+   --with-tune is ignored if either -mtune or -mcpu is used (but is not
+   affected by -march).  */
 #define OPTION_DEFAULT_SPECS				\
   {"arch", "%{!march=*:%{!mcpu=*:-march=%(VALUE)}}" },	\
-  {"cpu",  "%{!march=*:%{!mcpu=*:-mcpu=%(VALUE)}}" },
+  {"cpu",  "%{!march=*:%{!mcpu=*:-mcpu=%(VALUE)}}" },   \
+  {"tune", "%{!mcpu=*:%{!mtune=*:-mtune=%(VALUE)}}"},
 
 #define MCPU_TO_MARCH_SPEC \
    " %{mcpu=*:-march=%:rewrite_mcpu(%{mcpu=*:%*})}"
@@ -1241,13 +1277,13 @@ extern const char *host_detect_local_cpu (int argc, const char **argv);
 
 /* This type is the user-visible __fp16, and a pointer to that type.  We
    need it in many places in the backend.  Defined in aarch64-builtins.c.  */
-extern tree aarch64_fp16_type_node;
-extern tree aarch64_fp16_ptr_type_node;
+extern GTY(()) tree aarch64_fp16_type_node;
+extern GTY(()) tree aarch64_fp16_ptr_type_node;
 
 /* This type is the user-visible __bf16, and a pointer to that type.  Defined
    in aarch64-builtins.c.  */
-extern tree aarch64_bf16_type_node;
-extern tree aarch64_bf16_ptr_type_node;
+extern GTY(()) tree aarch64_bf16_type_node;
+extern GTY(()) tree aarch64_bf16_ptr_type_node;
 
 /* The generic unwind code in libgcc does not initialize the frame pointer.
    So in order to unwind a function using a frame pointer, the very first

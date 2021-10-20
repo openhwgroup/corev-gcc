@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -61,15 +62,16 @@ func init() {
 	cf.String("memprofilerate", "", "")
 	cf.StringVar(&testMutexProfile, "mutexprofile", "", "")
 	cf.String("mutexprofilefraction", "", "")
-	cf.Var(outputdirFlag{&testOutputDir}, "outputdir", "")
+	cf.Var(&testOutputDir, "outputdir", "")
 	cf.Int("parallel", 0, "")
 	cf.String("run", "", "")
 	cf.Bool("short", false, "")
 	cf.DurationVar(&testTimeout, "timeout", 10*time.Minute, "")
 	cf.StringVar(&testTrace, "trace", "", "")
 	cf.BoolVar(&testV, "v", false, "")
+	cf.Var(&testShuffle, "shuffle", "")
 
-	for name, _ := range passFlagToTest {
+	for name := range passFlagToTest {
 		cf.Var(cf.Lookup(name).Value, "test."+name, "")
 	}
 }
@@ -126,18 +128,25 @@ func (f stringFlag) Set(value string) error {
 // outputdirFlag implements the -outputdir flag.
 // It interprets an empty value as the working directory of the 'go' command.
 type outputdirFlag struct {
-	resolved *string
+	abs string
 }
 
-func (f outputdirFlag) String() string { return *f.resolved }
-func (f outputdirFlag) Set(value string) (err error) {
+func (f *outputdirFlag) String() string {
+	return f.abs
+}
+func (f *outputdirFlag) Set(value string) (err error) {
 	if value == "" {
-		// The empty string implies the working directory of the 'go' command.
-		*f.resolved = base.Cwd
+		f.abs = ""
 	} else {
-		*f.resolved, err = filepath.Abs(value)
+		f.abs, err = filepath.Abs(value)
 	}
 	return err
+}
+func (f *outputdirFlag) getAbs() string {
+	if f.abs == "" {
+		return base.Cwd()
+	}
+	return f.abs
 }
 
 // vetFlag implements the special parsing logic for the -vet flag:
@@ -194,6 +203,41 @@ func (f *vetFlag) Set(value string) error {
 	return nil
 }
 
+type shuffleFlag struct {
+	on   bool
+	seed *int64
+}
+
+func (f *shuffleFlag) String() string {
+	if !f.on {
+		return "off"
+	}
+	if f.seed == nil {
+		return "on"
+	}
+	return fmt.Sprintf("%d", *f.seed)
+}
+
+func (f *shuffleFlag) Set(value string) error {
+	if value == "off" {
+		*f = shuffleFlag{on: false}
+		return nil
+	}
+
+	if value == "on" {
+		*f = shuffleFlag{on: true}
+		return nil
+	}
+
+	seed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return fmt.Errorf(`-shuffle argument must be "on", "off", or an int64: %v`, err)
+	}
+
+	*f = shuffleFlag{on: true, seed: &seed}
+	return nil
+}
+
 // testFlags processes the command line, grabbing -x and -c, rewriting known flags
 // to have "test" before them, and reading the command line for the test binary.
 // Unfortunately for us, we need to do our own flag processing because go test
@@ -212,10 +256,18 @@ func testFlags(args []string) (packageNames, passToTest []string) {
 		}
 	})
 
+	// firstUnknownFlag helps us report an error when flags not known to 'go
+	// test' are used along with -i or -c.
+	firstUnknownFlag := ""
+
 	explicitArgs := make([]string, 0, len(args))
 	inPkgList := false
+	afterFlagWithoutValue := false
 	for len(args) > 0 {
 		f, remainingArgs, err := cmdflag.ParseOne(&CmdTest.Flag, args)
+
+		wasAfterFlagWithoutValue := afterFlagWithoutValue
+		afterFlagWithoutValue = false // provisionally
 
 		if errors.Is(err, flag.ErrHelp) {
 			exitWithUsage()
@@ -233,10 +285,24 @@ func testFlags(args []string) (packageNames, passToTest []string) {
 		if nf := (cmdflag.NonFlagError{}); errors.As(err, &nf) {
 			if !inPkgList && packageNames != nil {
 				// We already saw the package list previously, and this argument is not
-				// a flag, so it — and everything after it — must be a literal argument
-				// to the test binary.
-				explicitArgs = append(explicitArgs, args...)
-				break
+				// a flag, so it — and everything after it — must be either a value for
+				// a preceding flag or a literal argument to the test binary.
+				if wasAfterFlagWithoutValue {
+					// This argument could syntactically be a flag value, so
+					// optimistically assume that it is and keep looking for go command
+					// flags after it.
+					//
+					// (If we're wrong, we'll at least be consistent with historical
+					// behavior; see https://golang.org/issue/40763.)
+					explicitArgs = append(explicitArgs, nf.RawArg)
+					args = remainingArgs
+					continue
+				} else {
+					// This argument syntactically cannot be a flag value, so it must be a
+					// positional argument, and so must everything after it.
+					explicitArgs = append(explicitArgs, args...)
+					break
+				}
 			}
 
 			inPkgList = true
@@ -270,8 +336,15 @@ func testFlags(args []string) (packageNames, passToTest []string) {
 				break
 			}
 
+			if firstUnknownFlag == "" {
+				firstUnknownFlag = nd.RawArg
+			}
+
 			explicitArgs = append(explicitArgs, nd.RawArg)
 			args = remainingArgs
+			if !nd.HasValue {
+				afterFlagWithoutValue = true
+			}
 			continue
 		}
 
@@ -290,6 +363,14 @@ func testFlags(args []string) (packageNames, passToTest []string) {
 		}
 
 		args = remainingArgs
+	}
+	if firstUnknownFlag != "" && (testC || cfg.BuildI) {
+		buildFlag := "-c"
+		if !testC {
+			buildFlag = "-i"
+		}
+		fmt.Fprintf(os.Stderr, "go test: unknown flag %s cannot be used with %s\n", firstUnknownFlag, buildFlag)
+		exitWithUsage()
 	}
 
 	var injectedFlags []string
@@ -330,7 +411,7 @@ func testFlags(args []string) (packageNames, passToTest []string) {
 	// command. Set it explicitly if it is needed due to some other flag that
 	// requests output.
 	if testProfile() != "" && !outputDirSet {
-		injectedFlags = append(injectedFlags, "-test.outputdir="+testOutputDir)
+		injectedFlags = append(injectedFlags, "-test.outputdir="+testOutputDir.getAbs())
 	}
 
 	// If the user is explicitly passing -help or -h, show output

@@ -8,6 +8,7 @@ AM_CXXFLAGS = -Wall -W -Wno-unused-parameter -Wwrite-strings -pedantic -Wno-long
 AM_CXXFLAGS += $(LIBSTDCXX_RAW_CXX_CXXFLAGS)
 AM_CXXFLAGS += -std=gnu++14
 AM_CXXFLAGS += $(EXTRA_CXXFLAGS)
+AM_CCASFLAGS = $(EXTRA_ASFLAGS)
 ACLOCAL_AMFLAGS = -I m4
 
 noinst_LTLIBRARIES = libsanitizer_lsan.la
@@ -29,7 +30,8 @@ lsan_files = \
 	lsan_malloc_mac.cpp \
 	lsan_allocator.cpp \
 	lsan_interceptors.cpp \
-	lsan_thread.cpp
+	lsan_thread.cpp \
+	lsan_posix.cpp
 
 libsanitizer_lsan_la_SOURCES = $(sanitizer_lsan_files)
 

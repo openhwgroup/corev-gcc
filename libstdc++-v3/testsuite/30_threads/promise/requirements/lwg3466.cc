@@ -1,4 +1,4 @@
-// Copyright (C) 2020 Free Software Foundation, Inc.
+// Copyright (C) 2020-2021 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -26,9 +26,14 @@ std::promise<int(&)[1]> good;
 std::promise<int(&)()> good2;
 
 std::promise<int[1]> bad; // { dg-error "here" }
-// { dg-error "result type is not an array" "" { target *-*-* } 0 }
-// { dg-prune-output {request for member '~int \[1\]'} }
+// { dg-error "result type must not be an array" "" { target *-*-* } 0 }
 
 std::promise<int()> bad2; // { dg-error "here" }
-// { dg-error "result type is not a function" "" { target *-*-* } 0 }
-// { dg-prune-output {'sizeof \(int\(\)\)'} }
+// { dg-error "result type must not be a function" "" { target *-*-* } 0 }
+
+struct Indestructible { ~Indestructible() = delete; };
+std::promise<Indestructible> bad3; // { dg-error "here" }
+// { dg-error "result type must be destructible" "" { target *-*-* } 0 }
+
+class PrivateDtor { public: PrivateDtor(); private: ~PrivateDtor(); };
+std::promise<PrivateDtor> bad4; // { dg-error "here" }

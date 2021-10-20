@@ -1,6 +1,6 @@
 /* Handle the hair of processing (but not expanding) inline functions.
    Also manage function and variable name overloading.
-   Copyright (C) 1987-2020 Free Software Foundation, Inc.
+   Copyright (C) 1987-2021 Free Software Foundation, Inc.
    Contributed by Michael Tiemann (tiemann@cygnus.com)
 
 This file is part of GCC.
@@ -351,7 +351,7 @@ use_thunk (tree thunk_fndecl, bool emit_p)
 	  resolve_unique_section (thunk_fndecl, 0, flag_function_sections);
 
 	  /* Output the thunk into the same section as function.  */
-	  set_decl_section_name (thunk_fndecl, DECL_SECTION_NAME (fn));
+	  set_decl_section_name (thunk_fndecl, fn);
 	  symtab_node::get (thunk_fndecl)->implicit_section
 	    = symtab_node::get (fn)->implicit_section;
 	}
@@ -551,29 +551,49 @@ inherited_ctor_binfo (tree fndecl)
   return inherited_ctor_binfo (binfo, fndecl);
 }
 
+
+/* True if we should omit all user-declared parameters from a base
+   construtor built from complete constructor FN.
+   That's when the ctor is inherited from a virtual base.  */
+
+bool
+base_ctor_omit_inherited_parms (tree comp_ctor)
+{
+  gcc_checking_assert (DECL_MAYBE_IN_CHARGE_CONSTRUCTOR_P (comp_ctor));
+
+  if (!flag_new_inheriting_ctors)
+    /* We only optimize away the parameters in the new model.  */
+    return false;
+
+  if (!CLASSTYPE_VBASECLASSES (DECL_CONTEXT (comp_ctor)))
+    return false;
+
+  if (FUNCTION_FIRST_USER_PARMTYPE (comp_ctor) == void_list_node)
+    /* No user-declared parameters to omit.  */
+    return false;
+
+  for (tree binfo = inherited_ctor_binfo (comp_ctor);
+       binfo;
+       binfo = BINFO_INHERITANCE_CHAIN (binfo))
+    if (BINFO_VIRTUAL_P (binfo))
+      return true;
+
+  return false;
+}
+
+
 /* True if we should omit all user-declared parameters from constructor FN,
    because it is a base clone of a ctor inherited from a virtual base.  */
 
 bool
 ctor_omit_inherited_parms (tree fn)
 {
-  if (!flag_new_inheriting_ctors)
-    /* We only optimize away the parameters in the new model.  */
-    return false;
-  if (!DECL_BASE_CONSTRUCTOR_P (fn)
-      || !CLASSTYPE_VBASECLASSES (DECL_CONTEXT (fn)))
+  gcc_checking_assert (TREE_CODE (fn) == FUNCTION_DECL);
+
+  if (!DECL_BASE_CONSTRUCTOR_P (fn))
     return false;
 
-  if (FUNCTION_FIRST_USER_PARMTYPE (DECL_ORIGIN (fn)) == void_list_node)
-    /* No user-declared parameters to omit.  */
-    return false;
-
-  tree binfo = inherited_ctor_binfo (fn);
-  for (; binfo; binfo = BINFO_INHERITANCE_CHAIN (binfo))
-    if (BINFO_VIRTUAL_P (binfo))
-      return true;
-
-  return false;
+  return base_ctor_omit_inherited_parms (DECL_CLONED_FUNCTION (fn));
 }
 
 /* True iff constructor(s) INH inherited into BINFO initializes INIT_BINFO.
@@ -1009,6 +1029,8 @@ is_cat (tree type, comp_cat_tag tag)
 static comp_cat_tag
 cat_tag_for (tree type)
 {
+  if (!CLASS_TYPE_P (type) || !decl_in_std_namespace_p (TYPE_MAIN_DECL (type)))
+    return cc_last;
   for (int i = 0; i < cc_last; ++i)
     {
       comp_cat_tag tag = (comp_cat_tag)i;
@@ -1043,43 +1065,88 @@ spaceship_type (tree optype, tsubst_flags_t complain)
   return lookup_comparison_category (tag, complain);
 }
 
-/* Turn <=> with type TYPE and operands OP0 and OP1 into GENERIC.  */
+/* Turn <=> with type TYPE and operands OP0 and OP1 into GENERIC.
+   This is also used by build_comparison_op for fallback to op< and op==
+   in a defaulted op<=>.  */
 
 tree
-genericize_spaceship (tree type, tree op0, tree op1)
+genericize_spaceship (location_t loc, tree type, tree op0, tree op1)
 {
   /* ??? maybe optimize based on knowledge of representation? */
   comp_cat_tag tag = cat_tag_for (type);
+
+  if (tag == cc_last && is_auto (type))
+    {
+      /* build_comparison_op is checking to see if we want to suggest changing
+	 the op<=> return type from auto to a specific comparison category; any
+	 category will do for now.  */
+      tag = cc_strong_ordering;
+      type = lookup_comparison_category (tag, tf_none);
+      if (type == error_mark_node)
+	return error_mark_node;
+    }
+
   gcc_checking_assert (tag < cc_last);
 
   tree r;
-  op0 = save_expr (op0);
-  op1 = save_expr (op1);
+  bool scalar = SCALAR_TYPE_P (TREE_TYPE (op0));
+  if (scalar)
+    {
+      op0 = save_expr (op0);
+      op1 = save_expr (op1);
+    }
 
   tree gt = lookup_comparison_result (tag, type, 1);
+
+  int flags = LOOKUP_NORMAL;
+  tsubst_flags_t complain = tf_none;
+  tree comp;
 
   if (tag == cc_partial_ordering)
     {
       /* op0 == op1 ? equivalent : op0 < op1 ? less :
-	 op0 > op1 ? greater : unordered */
+	 op1 < op0 ? greater : unordered */
       tree uo = lookup_comparison_result (tag, type, 3);
-      tree comp = fold_build2 (GT_EXPR, boolean_type_node, op0, op1);
-      r = fold_build3 (COND_EXPR, type, comp, gt, uo);
+      if (scalar)
+	{
+	  /* For scalars use the low level operations; using build_new_op causes
+	     trouble with constexpr eval in the middle of genericize (100367).  */
+	  comp = fold_build2 (LT_EXPR, boolean_type_node, op1, op0);
+	  r = fold_build3 (COND_EXPR, type, comp, gt, uo);
+	}
+      else
+	{
+	  comp = build_new_op (loc, LT_EXPR, flags, op1, op0, complain);
+	  r = build_conditional_expr (loc, comp, gt, uo, complain);
+	}
     }
   else
     /* op0 == op1 ? equal : op0 < op1 ? less : greater */
     r = gt;
 
   tree lt = lookup_comparison_result (tag, type, 2);
-  tree comp = fold_build2 (LT_EXPR, boolean_type_node, op0, op1);
-  r = fold_build3 (COND_EXPR, type, comp, lt, r);
+  if (scalar)
+    {
+      comp = fold_build2 (LT_EXPR, boolean_type_node, op0, op1);
+      r = fold_build3 (COND_EXPR, type, comp, lt, r);
+    }
+  else
+    {
+      comp = build_new_op (loc, LT_EXPR, flags, op0, op1, complain);
+      r = build_conditional_expr (loc, comp, lt, r, complain);
+    }
 
   tree eq = lookup_comparison_result (tag, type, 0);
-  comp = fold_build2 (EQ_EXPR, boolean_type_node, op0, op1);
-  r = fold_build3 (COND_EXPR, type, comp, eq, r);
-
-  /* Wrap the whole thing in a TARGET_EXPR like build_conditional_expr_1.  */
-  r = get_target_expr (r);
+  if (scalar)
+    {
+      comp = fold_build2 (EQ_EXPR, boolean_type_node, op0, op1);
+      r = fold_build3 (COND_EXPR, type, comp, eq, r);
+    }
+  else
+    {
+      comp = build_new_op (loc, EQ_EXPR, flags, op0, op1, complain);
+      r = build_conditional_expr (loc, comp, eq, r, complain);
+    }
 
   return r;
 }
@@ -1193,6 +1260,8 @@ common_comparison_type (vec<tree> &comps)
   for (unsigned i = 0; i < comps.length(); ++i)
     {
       tree comp = comps[i];
+      if (TREE_CODE (comp) == TREE_LIST)
+	comp = TREE_VALUE (comp);
       tree ctype = TREE_TYPE (comp);
       comp_cat_tag tag = cat_tag_for (ctype);
       /* build_comparison_op already checked this.  */
@@ -1219,20 +1288,18 @@ struct comp_info
 {
   tree fndecl;
   location_t loc;
-  bool defining;
+  tsubst_flags_t complain;
+  tree_code code;
+  comp_cat_tag retcat;
   bool first_time;
   bool constexp;
   bool was_constexp;
   bool noex;
 
-  comp_info (tree fndecl, tsubst_flags_t &complain)
-    : fndecl (fndecl)
+  comp_info (tree fndecl, tsubst_flags_t complain)
+    : fndecl (fndecl), complain (complain)
   {
     loc = DECL_SOURCE_LOCATION (fndecl);
-
-    /* We only have tf_error set when we're called from
-       explain_invalid_constexpr_fn or maybe_explain_implicit_delete.  */
-    defining = !(complain & tf_error);
 
     first_time = DECL_MAYBE_DELETED (fndecl);
     DECL_MAYBE_DELETED (fndecl) = false;
@@ -1289,23 +1356,99 @@ struct comp_info
   }
 };
 
+/* Subroutine of build_comparison_op, to compare a single subobject.  */
+
+static tree
+do_one_comp (location_t loc, const comp_info &info, tree sub, tree lhs, tree rhs)
+{
+  const tree_code code = info.code;
+  const tree fndecl = info.fndecl;
+  const comp_cat_tag retcat = info.retcat;
+  const tsubst_flags_t complain = info.complain;
+
+  tree overload = NULL_TREE;
+  int flags = LOOKUP_NORMAL | LOOKUP_NONVIRTUAL | LOOKUP_DEFAULTED;
+  /* If we have an explicit comparison category return type we can fall back
+     to </=, so don't give an error yet if <=> lookup fails.  */
+  bool tentative = retcat != cc_last;
+  tree comp = build_new_op (loc, code, flags, lhs, rhs,
+			    NULL_TREE, &overload,
+			    tentative ? tf_none : complain);
+
+  if (code != SPACESHIP_EXPR)
+    return comp;
+
+  tree rettype = TREE_TYPE (TREE_TYPE (fndecl));
+
+  if (comp == error_mark_node)
+    {
+      if (overload == NULL_TREE && (tentative || complain))
+	{
+	  /* No viable <=>, try using op< and op==.  */
+	  tree lteq = genericize_spaceship (loc, rettype, lhs, rhs);
+	  if (lteq != error_mark_node)
+	    {
+	      /* We found usable < and ==.  */
+	      if (retcat != cc_last)
+		/* Return type is a comparison category, use them.  */
+		comp = lteq;
+	      else if (complain & tf_error)
+		/* Return type is auto, suggest changing it.  */
+		inform (info.loc, "changing the return type from %qs "
+			"to a comparison category type will allow the "
+			"comparison to use %qs and %qs", "auto",
+			"operator<", "operator==");
+	    }
+	  else if (tentative && complain)
+	    /* No usable < and ==, give an error for op<=>.  */
+	    build_new_op (loc, code, flags, lhs, rhs, complain);
+	}
+      if (comp == error_mark_node)
+	return error_mark_node;
+    }
+
+  if (FNDECL_USED_AUTO (fndecl)
+      && cat_tag_for (TREE_TYPE (comp)) == cc_last)
+    {
+      /* The operator function is defined as deleted if ... Ri is not a
+	 comparison category type.  */
+      if (complain & tf_error)
+	inform (loc,
+		"three-way comparison of %qD has type %qT, not a "
+		"comparison category type", sub, TREE_TYPE (comp));
+      return error_mark_node;
+    }
+  else if (!FNDECL_USED_AUTO (fndecl)
+	   && !can_convert (rettype, TREE_TYPE (comp), complain))
+    {
+      if (complain & tf_error)
+	error_at (loc,
+		  "three-way comparison of %qD has type %qT, which "
+		  "does not convert to %qT",
+		  sub, TREE_TYPE (comp), rettype);
+      return error_mark_node;
+    }
+
+  return comp;
+}
+
 /* Build up the definition of a defaulted comparison operator.  Unlike other
    defaulted functions that use synthesized_method_walk to determine whether
    the function is e.g. deleted, for comparisons we use the same code.  We try
    to use synthesize_method at the earliest opportunity and bail out if the
    function ends up being deleted.  */
 
-static void
-build_comparison_op (tree fndecl, tsubst_flags_t complain)
+void
+build_comparison_op (tree fndecl, bool defining, tsubst_flags_t complain)
 {
   comp_info info (fndecl, complain);
 
-  if (!info.defining && !(complain & tf_error) && !DECL_MAYBE_DELETED (fndecl))
+  if (!defining && !(complain & tf_error) && !DECL_MAYBE_DELETED (fndecl))
     return;
 
-  int flags = LOOKUP_NORMAL | LOOKUP_NONVIRTUAL | LOOKUP_DEFAULTED;
+  int flags = LOOKUP_NORMAL;
   const ovl_op_info_t *op = IDENTIFIER_OVL_OP_INFO (DECL_NAME (fndecl));
-  tree_code code = op->tree_code;
+  tree_code code = info.code = op->tree_code;
 
   tree lhs = DECL_ARGUMENTS (fndecl);
   tree rhs = DECL_CHAIN (lhs);
@@ -1315,6 +1458,7 @@ build_comparison_op (tree fndecl, tsubst_flags_t complain)
     lhs = convert_from_reference (lhs);
   rhs = convert_from_reference (rhs);
   tree ctype = TYPE_MAIN_VARIANT (TREE_TYPE (lhs));
+  gcc_assert (!defining || COMPLETE_TYPE_P (ctype));
 
   iloc_sentinel ils (info.loc);
 
@@ -1330,7 +1474,7 @@ build_comparison_op (tree fndecl, tsubst_flags_t complain)
     }
 
   tree compound_stmt = NULL_TREE;
-  if (info.defining)
+  if (defining)
     compound_stmt = begin_compound_stmt (0);
   else
     ++cp_unevaluated_operand;
@@ -1344,16 +1488,47 @@ build_comparison_op (tree fndecl, tsubst_flags_t complain)
 
   if (code == EQ_EXPR || code == SPACESHIP_EXPR)
     {
+      comp_cat_tag &retcat = (info.retcat = cc_last);
+      if (code == SPACESHIP_EXPR && !FNDECL_USED_AUTO (fndecl))
+	retcat = cat_tag_for (rettype);
+
       bool bad = false;
       auto_vec<tree> comps;
 
-      /* Compare each of the subobjects.  Note that we get bases from
-	 next_initializable_field because we're past C++17.  */
+      /* Compare the base subobjects.  We handle them this way, rather than in
+	 the field loop below, because maybe_instantiate_noexcept might bring
+	 us here before we've built the base fields.  */
+      for (tree base_binfo : BINFO_BASE_BINFOS (TYPE_BINFO (ctype)))
+	{
+	  tree lhs_base
+	    = build_base_path (PLUS_EXPR, lhs, base_binfo, 0, complain);
+	  tree rhs_base
+	    = build_base_path (PLUS_EXPR, rhs, base_binfo, 0, complain);
+
+	  location_t loc = DECL_SOURCE_LOCATION (TYPE_MAIN_DECL (ctype));
+	  tree comp = do_one_comp (loc, info, BINFO_TYPE (base_binfo),
+				   lhs_base, rhs_base);
+	  if (comp == error_mark_node)
+	    {
+	      bad = true;
+	      continue;
+	    }
+
+	  comps.safe_push (comp);
+	}
+
+      /* Now compare the field subobjects.  */
       for (tree field = next_initializable_field (TYPE_FIELDS (ctype));
 	   field;
 	   field = next_initializable_field (DECL_CHAIN (field)))
 	{
+	  if (DECL_VIRTUAL_P (field) || DECL_FIELD_IS_BASE (field))
+	    /* We ignore the vptr, and we already handled bases.  */
+	    continue;
+
 	  tree expr_type = TREE_TYPE (field);
+
+	  location_t field_loc = DECL_SOURCE_LOCATION (field);
 
 	  /* A defaulted comparison operator function for class C is defined as
 	     deleted if any non-static data member of C is of reference type or
@@ -1361,7 +1536,7 @@ build_comparison_op (tree fndecl, tsubst_flags_t complain)
 	  if (TREE_CODE (expr_type) == REFERENCE_TYPE)
 	    {
 	      if (complain & tf_error)
-		inform (DECL_SOURCE_LOCATION (field), "cannot default compare "
+		inform (field_loc, "cannot default compare "
 			"reference member %qD", field);
 	      bad = true;
 	      continue;
@@ -1370,34 +1545,71 @@ build_comparison_op (tree fndecl, tsubst_flags_t complain)
 		   && next_initializable_field (TYPE_FIELDS (expr_type)))
 	    {
 	      if (complain & tf_error)
-		inform (DECL_SOURCE_LOCATION (field), "cannot default compare "
+		inform (field_loc, "cannot default compare "
 			"anonymous union member");
 	      bad = true;
 	      continue;
 	    }
 
-	  tree lhs_mem = build3 (COMPONENT_REF, expr_type, lhs, field,
-				 NULL_TREE);
-	  tree rhs_mem = build3 (COMPONENT_REF, expr_type, rhs, field,
-				 NULL_TREE);
-	  tree comp = build_new_op (info.loc, code, flags, lhs_mem, rhs_mem,
-				    NULL_TREE, NULL, complain);
+	  tree lhs_mem = build3_loc (field_loc, COMPONENT_REF, expr_type, lhs,
+				     field, NULL_TREE);
+	  tree rhs_mem = build3_loc (field_loc, COMPONENT_REF, expr_type, rhs,
+				     field, NULL_TREE);
+	  tree loop_indexes = NULL_TREE;
+	  while (TREE_CODE (expr_type) == ARRAY_TYPE)
+	    {
+	      /* Flexible array member.  */
+	      if (TYPE_DOMAIN (expr_type) == NULL_TREE
+		  || TYPE_MAX_VALUE (TYPE_DOMAIN (expr_type)) == NULL_TREE)
+		{
+		  if (complain & tf_error)
+		    inform (field_loc, "cannot default compare "
+				       "flexible array member");
+		  bad = true;
+		  break;
+		}
+	      tree maxval = TYPE_MAX_VALUE (TYPE_DOMAIN (expr_type));
+	      /* [0] array.  No subobjects to compare, just skip it.  */
+	      if (integer_all_onesp (maxval))
+		break;
+	      tree idx;
+	      /* [1] array, no loop needed, just add [0] ARRAY_REF.
+		 Similarly if !defining.  */
+	      if (integer_zerop (maxval) || !defining)
+		idx = size_zero_node;
+	      /* Some other array, will need runtime loop.  */
+	      else
+		{
+		  idx = force_target_expr (sizetype, maxval, complain);
+		  loop_indexes = tree_cons (idx, NULL_TREE, loop_indexes);
+		}
+	      expr_type = TREE_TYPE (expr_type);
+	      lhs_mem = build4_loc (field_loc, ARRAY_REF, expr_type, lhs_mem,
+				    idx, NULL_TREE, NULL_TREE);
+	      rhs_mem = build4_loc (field_loc, ARRAY_REF, expr_type, rhs_mem,
+				    idx, NULL_TREE, NULL_TREE);
+	    }
+	  if (TREE_CODE (expr_type) == ARRAY_TYPE)
+	    continue;
+
+	  tree comp = do_one_comp (field_loc, info, field, lhs_mem, rhs_mem);
 	  if (comp == error_mark_node)
 	    {
 	      bad = true;
 	      continue;
 	    }
-	  if (code == SPACESHIP_EXPR
-	      && cat_tag_for (TREE_TYPE (comp)) == cc_last)
+
+	  /* Most of the time, comp is the expression that should be evaluated
+	     to compare the two members.  If the expression needs to be
+	     evaluated more than once in a loop, it will be a TREE_LIST
+	     instead, whose TREE_VALUE is the expression for one array element,
+	     TREE_PURPOSE is innermost iterator temporary and if the array
+	     is multidimensional, TREE_CHAIN will contain another TREE_LIST
+	     with second innermost iterator in its TREE_PURPOSE and so on.  */
+	  if (loop_indexes)
 	    {
-	      /* The operator function is defined as deleted if ... Ri is not a
-		 comparison category type.  */
-	      if (complain & tf_error)
-		inform (DECL_SOURCE_LOCATION (field),
-			"three-way comparison of %qD has type %qT, not a "
-			"comparison category type", field, TREE_TYPE (comp));
-	      bad = true;
-	      continue;
+	      TREE_VALUE (loop_indexes) = comp;
+	      comp = loop_indexes;
 	    }
 	  comps.safe_push (comp);
 	}
@@ -1415,8 +1627,38 @@ build_comparison_op (tree fndecl, tsubst_flags_t complain)
 	{
 	  tree comp = comps[i];
 	  tree eq, retval = NULL_TREE, if_ = NULL_TREE;
-	  if (info.defining)
-	    if_ = begin_if_stmt ();
+	  tree loop_indexes = NULL_TREE;
+	  if (defining)
+	    {
+	      if (TREE_CODE (comp) == TREE_LIST)
+		{
+		  loop_indexes = comp;
+		  comp = TREE_VALUE (comp);
+		  loop_indexes = nreverse (loop_indexes);
+		  for (tree loop_index = loop_indexes; loop_index;
+		       loop_index = TREE_CHAIN (loop_index))
+		    {
+		      tree for_stmt = begin_for_stmt (NULL_TREE, NULL_TREE);
+		      tree idx = TREE_PURPOSE (loop_index);
+		      tree maxval = TARGET_EXPR_INITIAL (idx);
+		      TARGET_EXPR_INITIAL (idx) = size_zero_node;
+		      add_stmt (idx);
+		      finish_init_stmt (for_stmt);
+		      finish_for_cond (build2 (LE_EXPR, boolean_type_node, idx,
+					       maxval), for_stmt, false, 0);
+		      finish_for_expr (cp_build_unary_op (PREINCREMENT_EXPR,
+							  TARGET_EXPR_SLOT (idx),
+							  false, complain),
+							  for_stmt);
+		      /* Store in TREE_VALUE the for_stmt tree, so that we can
+			 later on call finish_for_stmt on it (in the reverse
+			 order).  */
+		      TREE_VALUE (loop_index) = for_stmt;
+		    }
+		  loop_indexes = nreverse (loop_indexes);
+		}
+	      if_ = begin_if_stmt ();
+	    }
 	  /* Spaceship is specified to use !=, but for the comparison category
 	     types, != is equivalent to !(==), so let's use == directly.  */
 	  if (code == EQ_EXPR)
@@ -1434,7 +1676,7 @@ build_comparison_op (tree fndecl, tsubst_flags_t complain)
 		comp = build_static_cast (input_location, rettype, comp,
 					  complain);
 	      info.check (comp);
-	      if (info.defining)
+	      if (defining)
 		{
 		  tree var = create_temporary_var (rettype);
 		  pushdecl (var);
@@ -1447,7 +1689,7 @@ build_comparison_op (tree fndecl, tsubst_flags_t complain)
 	    }
 	  tree ceq = contextual_conv_bool (eq, complain);
 	  info.check (ceq);
-	  if (info.defining)
+	  if (defining)
 	    {
 	      finish_if_stmt_cond (ceq, if_);
 	      finish_then_clause (if_);
@@ -1455,9 +1697,12 @@ build_comparison_op (tree fndecl, tsubst_flags_t complain)
 	      finish_return_stmt (retval);
 	      finish_else_clause (if_);
 	      finish_if_stmt (if_);
+	      for (tree loop_index = loop_indexes; loop_index;
+		   loop_index = TREE_CHAIN (loop_index))
+		finish_for_stmt (TREE_VALUE (loop_index));
 	    }
 	}
-      if (info.defining)
+      if (defining)
 	{
 	  tree val;
 	  if (code == EQ_EXPR)
@@ -1478,7 +1723,7 @@ build_comparison_op (tree fndecl, tsubst_flags_t complain)
 				NULL_TREE, NULL, complain);
       comp = contextual_conv_bool (comp, complain);
       info.check (comp);
-      if (info.defining)
+      if (defining)
 	{
 	  tree neg = build1 (TRUTH_NOT_EXPR, boolean_type_node, comp);
 	  finish_return_stmt (neg);
@@ -1491,12 +1736,12 @@ build_comparison_op (tree fndecl, tsubst_flags_t complain)
       tree comp2 = build_new_op (info.loc, code, flags, comp, integer_zero_node,
 				 NULL_TREE, NULL, complain);
       info.check (comp2);
-      if (info.defining)
+      if (defining)
 	finish_return_stmt (comp2);
     }
 
  out:
-  if (info.defining)
+  if (defining)
     finish_compound_stmt (compound_stmt);
   else
     --cp_unevaluated_operand;
@@ -1575,7 +1820,7 @@ synthesize_method (tree fndecl)
   else if (sfk == sfk_comparison)
     {
       /* Pass tf_none so the function is just deleted if there's a problem.  */
-      build_comparison_op (fndecl, tf_none);
+      build_comparison_op (fndecl, true, tf_none);
       need_body = false;
     }
 
@@ -1609,6 +1854,32 @@ synthesize_method (tree fndecl)
 	      fndecl);
 }
 
+/* Like synthesize_method, but don't actually synthesize defaulted comparison
+   methods if their class is still incomplete.  Just deduce the return
+   type in that case.  */
+
+void
+maybe_synthesize_method (tree fndecl)
+{
+  if (special_function_p (fndecl) == sfk_comparison)
+    {
+      tree lhs = DECL_ARGUMENTS (fndecl);
+      if (is_this_parameter (lhs))
+	lhs = cp_build_fold_indirect_ref (lhs);
+      else
+	lhs = convert_from_reference (lhs);
+      tree ctype = TYPE_MAIN_VARIANT (TREE_TYPE (lhs));
+      if (!COMPLETE_TYPE_P (ctype))
+	{
+	  push_deferring_access_checks (dk_no_deferred);
+	  build_comparison_op (fndecl, false, tf_none);
+	  pop_deferring_access_checks ();
+	  return;
+	}
+    }
+  return synthesize_method (fndecl);
+}
+
 /* Build a reference to type TYPE with cv-quals QUALS, which is an
    rvalue if RVALUE is true.  */
 
@@ -1622,7 +1893,7 @@ build_stub_type (tree type, int quals, bool rvalue)
 /* Build a dummy glvalue from dereferencing a dummy reference of type
    REFTYPE.  */
 
-static tree
+tree
 build_stub_object (tree reftype)
 {
   if (!TYPE_REF_P (reftype))
@@ -1880,6 +2151,7 @@ constructible_expr (tree to, tree from)
 static tree
 is_xible_helper (enum tree_code code, tree to, tree from, bool trivial)
 {
+  to = complete_type (to);
   deferring_access_check_sentinel acs (dk_no_deferred);
   if (VOID_TYPE_P (to) || ABSTRACT_CLASS_TYPE_P (to)
       || (from && FUNC_OR_METHOD_TYPE_P (from)
@@ -1888,8 +2160,10 @@ is_xible_helper (enum tree_code code, tree to, tree from, bool trivial)
   tree expr;
   if (code == MODIFY_EXPR)
     expr = assignable_expr (to, from);
-  else if (trivial && from && TREE_CHAIN (from))
+  else if (trivial && from && TREE_CHAIN (from)
+	   && cxx_dialect < cxx20)
     return error_mark_node; // only 0- and 1-argument ctors can be trivial
+			    // before C++20 aggregate paren init
   else if (TREE_CODE (to) == ARRAY_TYPE && !TYPE_DOMAIN (to))
     return error_mark_node; // can't construct an array of unknown bound
   else
@@ -1904,13 +2178,24 @@ is_xible_helper (enum tree_code code, tree to, tree from, bool trivial)
 bool
 is_trivially_xible (enum tree_code code, tree to, tree from)
 {
-  tree expr;
-  expr = is_xible_helper (code, to, from, /*trivial*/true);
-
+  tree expr = is_xible_helper (code, to, from, /*trivial*/true);
   if (expr == NULL_TREE || expr == error_mark_node)
     return false;
   tree nt = cp_walk_tree_without_duplicates (&expr, check_nontriv, NULL);
   return !nt;
+}
+
+/* Returns true iff TO is nothrow assignable (if CODE is MODIFY_EXPR) or
+   constructible (otherwise) from FROM, which is a single type for
+   assignment or a list of types for construction.  */
+
+bool
+is_nothrow_xible (enum tree_code code, tree to, tree from)
+{
+  tree expr = is_xible_helper (code, to, from, /*trivial*/false);
+  if (expr == NULL_TREE || expr == error_mark_node)
+    return false;
+  return expr_noexcept_p (expr, tf_none);
 }
 
 /* Returns true iff TO is assignable (if CODE is MODIFY_EXPR) or
@@ -2534,7 +2819,7 @@ maybe_explain_implicit_delete (tree decl)
 	  inform (DECL_SOURCE_LOCATION (decl),
 		  "%q#D is implicitly deleted because the default "
 		  "definition would be ill-formed:", decl);
-	  build_comparison_op (decl, tf_warning_or_error);
+	  build_comparison_op (decl, false, tf_warning_or_error);
 	}
       else if (!informed)
 	{
@@ -2595,7 +2880,7 @@ explain_implicit_non_constexpr (tree decl)
   if (sfk == sfk_comparison)
     {
       DECL_DECLARED_CONSTEXPR_P (decl) = true;
-      build_comparison_op (decl, tf_warning_or_error);
+      build_comparison_op (decl, false, tf_warning_or_error);
       DECL_DECLARED_CONSTEXPR_P (decl) = false;
     }
   else
@@ -2607,9 +2892,9 @@ explain_implicit_non_constexpr (tree decl)
 
 /* DECL is an instantiation of an inheriting constructor template.  Deduce
    the correct exception-specification and deletedness for this particular
-   specialization.  */
+   specialization.  Return true if the deduction succeeds; false otherwise.  */
 
-void
+bool
 deduce_inheriting_ctor (tree decl)
 {
   decl = DECL_ORIGIN (decl);
@@ -2622,6 +2907,8 @@ deduce_inheriting_ctor (tree decl)
 			   /*diag*/false,
 			   &inh,
 			   FUNCTION_FIRST_USER_PARMTYPE (decl));
+  if (spec == error_mark_node)
+    return false;
   if (TREE_CODE (inherited_ctor_binfo (decl)) != TREE_BINFO)
     /* Inherited the same constructor from different base subobjects.  */
     deleted = true;
@@ -2636,6 +2923,8 @@ deduce_inheriting_ctor (tree decl)
       TREE_TYPE (clone) = build_exception_variant (TREE_TYPE (clone), spec);
       SET_DECL_INHERITED_CTOR (clone, inh);
     }
+
+  return true;
 }
 
 /* Implicitly declare the special function indicated by KIND, as a
@@ -2811,9 +3100,17 @@ implicitly_declare_fn (special_function_kind kind, tree type,
       if (raises != error_mark_node)
 	fn_type = build_exception_variant (fn_type, raises);
       else
-	/* Can happen, eg, in C++98 mode for an ill-formed non-static data
-	   member initializer (c++/89914).  */
-	gcc_assert (seen_error ());
+	{
+	  /* Can happen, e.g., in C++98 mode for an ill-formed non-static data
+	     member initializer (c++/89914).  Also, in C++98, we might have
+	     failed to deduce RAISES, so try again but complain this time.  */
+	  if (cxx_dialect < cxx11)
+	    synthesized_method_walk (type, kind, const_p, &raises, nullptr,
+				     nullptr, nullptr, /*diag=*/true,
+				     &inherited_ctor, inherited_parms);
+	  /* We should have seen an error at this point.  */
+	  gcc_assert (seen_error ());
+	}
     }
   fn = build_lang_decl (FUNCTION_DECL, name, fn_type);
   if (kind != sfk_inheriting_constructor)
@@ -2937,7 +3234,12 @@ defaulted_late_check (tree fn)
       /* If the function was declared constexpr, check that the definition
 	 qualifies.  Otherwise we can define the function lazily.  */
       if (DECL_DECLARED_CONSTEXPR_P (fn) && !DECL_INITIAL (fn))
-	synthesize_method (fn);
+	{
+	  /* Prevent GC.  */
+	  function_depth++;
+	  synthesize_method (fn);
+	  function_depth--;
+	}
       return;
     }
 
@@ -3057,7 +3359,7 @@ defaultable_fn_check (tree fn)
       /* Avoid do_warn_unused_parameter warnings.  */
       for (tree p = FUNCTION_FIRST_USER_PARM (fn); p; p = DECL_CHAIN (p))
 	if (DECL_NAME (p))
-	  TREE_NO_WARNING (p) = 1;
+	  suppress_warning (p, OPT_Wunused_parameter);
 
       if (current_class_type && TYPE_BEING_DEFINED (current_class_type))
 	/* Defer checking.  */;

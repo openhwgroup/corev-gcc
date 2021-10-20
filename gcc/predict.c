@@ -1,5 +1,5 @@
 /* Branch prediction routines for the GNU compiler.
-   Copyright (C) 2000-2020 Free Software Foundation, Inc.
+   Copyright (C) 2000-2021 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -243,7 +243,7 @@ probably_never_executed_bb_p (struct function *fun, const_basic_block bb)
 static bool
 unlikely_executed_edge_p (edge e)
 {
-  return (e->count () == profile_count::zero ()
+  return (e->src->count == profile_count::zero ()
 	  || e->probability == profile_probability::never ())
 	 || (e->flags & (EDGE_EH | EDGE_FAKE));
 }
@@ -260,13 +260,15 @@ probably_never_executed_edge_p (struct function *fun, edge e)
 
 /* Return true if function FUN should always be optimized for size.  */
 
-bool
+optimize_size_level
 optimize_function_for_size_p (struct function *fun)
 {
   if (!fun || !fun->decl)
-    return optimize_size;
+    return optimize_size ? OPTIMIZE_SIZE_MAX : OPTIMIZE_SIZE_NO;
   cgraph_node *n = cgraph_node::get (fun->decl);
-  return n && n->optimize_for_size_p ();
+  if (n)
+    return n->optimize_for_size_p ();
+  return OPTIMIZE_SIZE_NO;
 }
 
 /* Return true if function FUN should always be optimized for speed.  */
@@ -289,11 +291,16 @@ function_optimization_type (struct function *fun)
 
 /* Return TRUE if basic block BB should be optimized for size.  */
 
-bool
+optimize_size_level
 optimize_bb_for_size_p (const_basic_block bb)
 {
-  return (optimize_function_for_size_p (cfun)
-	  || (bb && !maybe_hot_bb_p (cfun, bb)));
+  enum optimize_size_level ret = optimize_function_for_size_p (cfun);
+
+  if (bb && ret < OPTIMIZE_SIZE_MAX && bb->count == profile_count::zero ())
+    ret = OPTIMIZE_SIZE_MAX;
+  if (bb && ret < OPTIMIZE_SIZE_BALANCED && !maybe_hot_bb_p (cfun, bb))
+    ret = OPTIMIZE_SIZE_BALANCED;
+  return ret;
 }
 
 /* Return TRUE if basic block BB should be optimized for speed.  */
@@ -316,10 +323,16 @@ bb_optimization_type (const_basic_block bb)
 
 /* Return TRUE if edge E should be optimized for size.  */
 
-bool
+optimize_size_level
 optimize_edge_for_size_p (edge e)
 {
-  return optimize_function_for_size_p (cfun) || !maybe_hot_edge_p (e);
+  enum optimize_size_level ret = optimize_function_for_size_p (cfun);
+
+  if (ret < OPTIMIZE_SIZE_MAX && unlikely_executed_edge_p (e))
+    ret = OPTIMIZE_SIZE_MAX;
+  if (ret < OPTIMIZE_SIZE_BALANCED && !maybe_hot_edge_p (e))
+    ret = OPTIMIZE_SIZE_BALANCED;
+  return ret;
 }
 
 /* Return TRUE if edge E should be optimized for speed.  */
@@ -332,10 +345,13 @@ optimize_edge_for_speed_p (edge e)
 
 /* Return TRUE if the current function is optimized for size.  */
 
-bool
+optimize_size_level
 optimize_insn_for_size_p (void)
 {
-  return optimize_function_for_size_p (cfun) || !crtl->maybe_hot_insn_p;
+  enum optimize_size_level ret = optimize_function_for_size_p (cfun);
+  if (ret < OPTIMIZE_SIZE_BALANCED && !crtl->maybe_hot_insn_p)
+    ret = OPTIMIZE_SIZE_BALANCED;
+  return ret;
 }
 
 /* Return TRUE if the current function is optimized for speed.  */
@@ -348,7 +364,7 @@ optimize_insn_for_speed_p (void)
 
 /* Return TRUE if LOOP should be optimized for size.  */
 
-bool
+optimize_size_level
 optimize_loop_for_size_p (class loop *loop)
 {
   return optimize_bb_for_size_p (loop->header);
@@ -392,10 +408,31 @@ optimize_loop_nest_for_speed_p (class loop *loop)
 
 /* Return TRUE if nest rooted at LOOP should be optimized for size.  */
 
-bool
+optimize_size_level
 optimize_loop_nest_for_size_p (class loop *loop)
 {
-  return !optimize_loop_nest_for_speed_p (loop);
+  enum optimize_size_level ret = optimize_loop_for_size_p (loop);
+  class loop *l = loop;
+
+  l = loop->inner;
+  while (l && l != loop)
+    {
+      if (ret == OPTIMIZE_SIZE_NO)
+	break;
+      ret = MIN (optimize_loop_for_size_p (l), ret);
+      if (l->inner)
+        l = l->inner;
+      else if (l->next)
+        l = l->next;
+      else
+        {
+	  while (l != loop && !l->next)
+	    l = loop_outer (l);
+	  if (l != loop)
+	    l = l->next;
+	}
+    }
+  return ret;
 }
 
 /* Return true if edge E is likely to be well predictable by branch
@@ -1912,11 +1949,10 @@ predict_loops (void)
 
   /* Try to predict out blocks in a loop that are not part of a
      natural loop.  */
-  FOR_EACH_LOOP (loop, LI_FROM_INNERMOST)
+  for (auto loop : loops_list (cfun, LI_FROM_INNERMOST))
     {
       basic_block bb, *bbs;
       unsigned j, n_exits = 0;
-      vec<edge> exits;
       class tree_niter_desc niter_desc;
       edge ex;
       class nb_iter_bound *nb_iter;
@@ -1927,15 +1963,12 @@ predict_loops (void)
       gcond *stmt = NULL;
       bool recursion = with_recursion.contains (loop);
 
-      exits = get_loop_exit_edges (loop);
+      auto_vec<edge> exits = get_loop_exit_edges (loop);
       FOR_EACH_VEC_ELT (exits, j, ex)
 	if (!unlikely_executed_edge_p (ex) && !(ex->flags & EDGE_ABNORMAL_CALL))
 	  n_exits ++;
       if (!n_exits)
-	{
-          exits.release ();
-	  continue;
-	}
+	continue;
 
       if (dump_file && (dump_flags & TDF_DETAILS))
 	fprintf (dump_file, "Predicting loop %i%s with %i exits.\n",
@@ -2049,7 +2082,6 @@ predict_loops (void)
 	  probability = RDIV (REG_BR_PROB_BASE, nitercst);
 	  predict_edge (ex, predictor, probability);
 	}
-      exits.release ();
 
       /* Find information about loop bound variables.  */
       for (nb_iter = loop->bounds; nb_iter;
@@ -2172,7 +2204,7 @@ predict_loops (void)
 	     {
 	       gimple *call_stmt = SSA_NAME_DEF_STMT (gimple_cond_lhs (stmt));
 	       if (gimple_code (call_stmt) == GIMPLE_ASSIGN
-		   && gimple_expr_code (call_stmt) == NOP_EXPR
+		   && CONVERT_EXPR_CODE_P (gimple_assign_rhs_code (call_stmt))
 		   && TREE_CODE (gimple_assign_rhs1 (call_stmt)) == SSA_NAME)
 		 call_stmt = SSA_NAME_DEF_STMT (gimple_assign_rhs1 (call_stmt));
 	       if (gimple_call_internal_p (call_stmt, IFN_BUILTIN_EXPECT)
@@ -3074,7 +3106,6 @@ tree_estimate_probability (bool dry_run)
 {
   basic_block bb;
 
-  add_noreturn_fake_exit_edges ();
   connect_infinite_loops_to_exit ();
   /* We use loop_niter_by_eval, which requires that the loops have
      preheaders.  */
@@ -3764,7 +3795,7 @@ determine_unlikely_bbs ()
   propagate_unlikely_bbs_forward ();
 
   auto_vec<int, 64> nsuccs;
-  nsuccs.safe_grow_cleared (last_basic_block_for_fn (cfun));
+  nsuccs.safe_grow_cleared (last_basic_block_for_fn (cfun), true);
   FOR_ALL_BB_FN (bb, cfun)
     if (!(bb->count == profile_count::zero ())
 	&& bb != EXIT_BLOCK_PTR_FOR_FN (cfun))
@@ -4064,8 +4095,6 @@ pass_profile::execute (function *fun)
   if (dump_file && (dump_flags & TDF_DETAILS))
     flow_loops_dump (dump_file, NULL, 0);
 
-  mark_irreducible_loops ();
-
   nb_loops = number_of_loops (fun);
   if (nb_loops > 1)
     scev_initialize ();
@@ -4082,8 +4111,7 @@ pass_profile::execute (function *fun)
     profile_status_for_fn (fun) = PROFILE_GUESSED;
  if (dump_file && (dump_flags & TDF_DETAILS))
    {
-     class loop *loop;
-     FOR_EACH_LOOP (loop, LI_FROM_INNERMOST)
+     for (auto loop : loops_list (cfun, LI_FROM_INNERMOST))
        if (loop->header->count.initialized_p ())
          fprintf (dump_file, "Loop got predicted %d to iterate %i times.\n",
        	   loop->num,
@@ -4258,9 +4286,7 @@ rebuild_frequencies (void)
 
   if (profile_status_for_fn (cfun) == PROFILE_GUESSED)
     {
-      loop_optimizer_init (0);
-      add_noreturn_fake_exit_edges ();
-      mark_irreducible_loops ();
+      loop_optimizer_init (LOOPS_HAVE_MARKED_IRREDUCIBLE_REGIONS);
       connect_infinite_loops_to_exit ();
       estimate_bb_frequencies (true);
       remove_fake_exit_edges ();
@@ -4287,8 +4313,6 @@ report_predictor_hitrates (void)
   loop_optimizer_init (LOOPS_NORMAL);
   if (dump_file && (dump_flags & TDF_DETAILS))
     flow_loops_dump (dump_file, NULL, 0);
-
-  mark_irreducible_loops ();
 
   nb_loops = number_of_loops (cfun);
   if (nb_loops > 1)
@@ -4455,6 +4479,43 @@ force_edge_cold (edge e, bool impossible)
 	fprintf (dump_file, "Giving up on making bb %i %s.\n", e->src->index,
 		 impossible ? "impossible" : "cold");
     }
+}
+
+/* Change E's probability to NEW_E_PROB, redistributing the probabilities
+   of other outgoing edges proportionally.
+
+   Note that this function does not change the profile counts of any
+   basic blocks.  The caller must do that instead, using whatever
+   information it has about the region that needs updating.  */
+
+void
+change_edge_frequency (edge e, profile_probability new_e_prob)
+{
+  profile_probability old_e_prob = e->probability;
+  profile_probability old_other_prob = old_e_prob.invert ();
+  profile_probability new_other_prob = new_e_prob.invert ();
+
+  e->probability = new_e_prob;
+  profile_probability cumulative_prob = new_e_prob;
+
+  unsigned int num_other = EDGE_COUNT (e->src->succs) - 1;
+  edge other_e;
+  edge_iterator ei;
+  FOR_EACH_EDGE (other_e, ei, e->src->succs)
+    if (other_e != e)
+      {
+	num_other -= 1;
+	if (num_other == 0)
+	  /* Ensure that the probabilities add up to 1 without
+	     rounding error.  */
+	  other_e->probability = cumulative_prob.invert ();
+	else
+	  {
+	    other_e->probability /= old_other_prob;
+	    other_e->probability *= new_other_prob;
+	    cumulative_prob += other_e->probability;
+	  }
+      }
 }
 
 #if CHECKING_P

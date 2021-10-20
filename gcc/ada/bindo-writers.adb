@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---             Copyright (C) 2019-2020, Free Software Foundation, Inc.      --
+--             Copyright (C) 2019-2021, Free Software Foundation, Inc.      --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -222,7 +222,7 @@ package body Bindo.Writers is
          Write_Eol;
 
          Write_Str  ("      Scope = ");
-         Write_Name (Scope (IS_Id));
+         Write_Name (IS_Scope (IS_Id));
          Write_Eol;
       end Write_Invocation_Signature;
 
@@ -1561,7 +1561,7 @@ package body Bindo.Writers is
       begin
          pragma Assert (Present (Nam));
 
-         return Bucket_Range_Type (Nam);
+         return Bucket_Range_Type (abs Nam);
       end Hash_File_Name;
 
       ---------------------
@@ -1689,8 +1689,8 @@ package body Bindo.Writers is
          if Contains (Set, Source) then
             return;
 
-         --  Nothing to do for internal source files unless switch -Ra (???) is
-         --  in effect.
+         --  Nothing to do for internal source files unless switch -Ra is in
+         --  effect.
 
          elsif Is_Internal_File_Name (Source)
            and then not List_Closure_All

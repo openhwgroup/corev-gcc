@@ -10,7 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
+	"io/fs"
 	"os"
 	"path"
 	"sort"
@@ -159,7 +159,7 @@ func (r *codeRepo) Versions(prefix string) ([]string, error) {
 		if r.codeDir != "" {
 			v = v[len(r.codeDir)+1:]
 		}
-		if v == "" || v != module.CanonicalVersion(v) || IsPseudoVersion(v) {
+		if v == "" || v != module.CanonicalVersion(v) || module.IsPseudoVersion(v) {
 			continue
 		}
 
@@ -172,8 +172,8 @@ func (r *codeRepo) Versions(prefix string) ([]string, error) {
 
 		list = append(list, v)
 	}
-	SortVersions(list)
-	SortVersions(incompatible)
+	semver.Sort(list)
+	semver.Sort(incompatible)
 
 	return r.appendIncompatibleVersions(list, incompatible)
 }
@@ -385,7 +385,7 @@ func (r *codeRepo) convert(info *codehost.RevInfo, statVers string) (*RevInfo, e
 	if statVers != "" && statVers == module.CanonicalVersion(statVers) {
 		info2.Version = statVers
 
-		if IsPseudoVersion(info2.Version) {
+		if module.IsPseudoVersion(info2.Version) {
 			if err := r.validatePseudoVersion(info, info2.Version); err != nil {
 				return nil, err
 			}
@@ -419,22 +419,30 @@ func (r *codeRepo) convert(info *codehost.RevInfo, statVers string) (*RevInfo, e
 		tagPrefix = r.codeDir + "/"
 	}
 
+	isRetracted, err := r.retractedVersions()
+	if err != nil {
+		isRetracted = func(string) bool { return false }
+	}
+
 	// tagToVersion returns the version obtained by trimming tagPrefix from tag.
-	// If the tag is invalid or a pseudo-version, tagToVersion returns an empty
-	// version.
+	// If the tag is invalid, retracted, or a pseudo-version, tagToVersion returns
+	// an empty version.
 	tagToVersion := func(tag string) (v string, tagIsCanonical bool) {
 		if !strings.HasPrefix(tag, tagPrefix) {
 			return "", false
 		}
 		trimmed := tag[len(tagPrefix):]
 		// Tags that look like pseudo-versions would be confusing. Ignore them.
-		if IsPseudoVersion(tag) {
+		if module.IsPseudoVersion(tag) {
 			return "", false
 		}
 
 		v = semver.Canonical(trimmed) // Not module.Canonical: we don't want to pick up an explicit "+incompatible" suffix from the tag.
 		if v == "" || !strings.HasPrefix(trimmed, v) {
 			return "", false // Invalid or incomplete version (just vX or vX.Y).
+		}
+		if isRetracted(v) {
+			return "", false
 		}
 		if v == trimmed {
 			tagIsCanonical = true
@@ -500,21 +508,30 @@ func (r *codeRepo) convert(info *codehost.RevInfo, statVers string) (*RevInfo, e
 		return checkGoMod()
 	}
 
+	// Find the highest tagged version in the revision's history, subject to
+	// major version and +incompatible constraints. Use that version as the
+	// pseudo-version base so that the pseudo-version sorts higher. Ignore
+	// retracted versions.
+	allowedMajor := func(major string) func(v string) bool {
+		return func(v string) bool {
+			return (major == "" || semver.Major(v) == major) && !isRetracted(v)
+		}
+	}
 	if pseudoBase == "" {
 		var tag string
 		if r.pseudoMajor != "" || canUseIncompatible() {
-			tag, _ = r.code.RecentTag(info.Name, tagPrefix, r.pseudoMajor)
+			tag, _ = r.code.RecentTag(info.Name, tagPrefix, allowedMajor(r.pseudoMajor))
 		} else {
 			// Allow either v1 or v0, but not incompatible higher versions.
-			tag, _ = r.code.RecentTag(info.Name, tagPrefix, "v1")
+			tag, _ = r.code.RecentTag(info.Name, tagPrefix, allowedMajor("v1"))
 			if tag == "" {
-				tag, _ = r.code.RecentTag(info.Name, tagPrefix, "v0")
+				tag, _ = r.code.RecentTag(info.Name, tagPrefix, allowedMajor("v0"))
 			}
 		}
 		pseudoBase, _ = tagToVersion(tag) // empty if the tag is invalid
 	}
 
-	info2.Version = PseudoVersion(r.pseudoMajor, pseudoBase, info.Time, info.Short)
+	info2.Version = module.PseudoVersion(r.pseudoMajor, pseudoBase, info.Time, info.Short)
 	return checkGoMod()
 }
 
@@ -543,7 +560,7 @@ func (r *codeRepo) validatePseudoVersion(info *codehost.RevInfo, version string)
 		return err
 	}
 
-	rev, err := PseudoVersionRev(version)
+	rev, err := module.PseudoVersionRev(version)
 	if err != nil {
 		return err
 	}
@@ -558,12 +575,12 @@ func (r *codeRepo) validatePseudoVersion(info *codehost.RevInfo, version string)
 		}
 	}
 
-	t, err := PseudoVersionTime(version)
+	t, err := module.PseudoVersionTime(version)
 	if err != nil {
 		return err
 	}
 	if !t.Equal(info.Time.Truncate(time.Second)) {
-		return fmt.Errorf("does not match version-control timestamp (expected %s)", info.Time.UTC().Format(pseudoVersionTimestampFormat))
+		return fmt.Errorf("does not match version-control timestamp (expected %s)", info.Time.UTC().Format(module.PseudoVersionTimestampFormat))
 	}
 
 	tagPrefix := ""
@@ -587,7 +604,7 @@ func (r *codeRepo) validatePseudoVersion(info *codehost.RevInfo, version string)
 	// not enforce that property when resolving existing pseudo-versions: we don't
 	// know when the parent tags were added, and the highest-tagged parent may not
 	// have existed when the pseudo-version was first resolved.
-	base, err := PseudoVersionBase(strings.TrimSuffix(version, "+incompatible"))
+	base, err := module.PseudoVersionBase(strings.TrimSuffix(version, "+incompatible"))
 	if err != nil {
 		return err
 	}
@@ -644,7 +661,7 @@ func (r *codeRepo) validatePseudoVersion(info *codehost.RevInfo, version string)
 		if err != nil {
 			return err
 		}
-		rev, err := PseudoVersionRev(version)
+		rev, err := module.PseudoVersionRev(version)
 		if err != nil {
 			return fmt.Errorf("not a descendent of preceding tag (%s)", lastTag)
 		}
@@ -655,8 +672,8 @@ func (r *codeRepo) validatePseudoVersion(info *codehost.RevInfo, version string)
 
 func (r *codeRepo) revToRev(rev string) string {
 	if semver.IsValid(rev) {
-		if IsPseudoVersion(rev) {
-			r, _ := PseudoVersionRev(rev)
+		if module.IsPseudoVersion(rev) {
+			r, _ := module.PseudoVersionRev(rev)
 			return r
 		}
 		if semver.Build(rev) == "+incompatible" {
@@ -826,7 +843,7 @@ func (r *codeRepo) GoMod(version string) (data []byte, err error) {
 		return nil, fmt.Errorf("version %s is not canonical", version)
 	}
 
-	if IsPseudoVersion(version) {
+	if module.IsPseudoVersion(version) {
 		// findDir ignores the metadata encoded in a pseudo-version,
 		// only using the revision at the end.
 		// Invoke Stat to verify the metadata explicitly so we don't return
@@ -847,26 +864,80 @@ func (r *codeRepo) GoMod(version string) (data []byte, err error) {
 	data, err = r.code.ReadFile(rev, path.Join(dir, "go.mod"), codehost.MaxGoMod)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return r.legacyGoMod(rev, dir), nil
+			return LegacyGoMod(r.modPath), nil
 		}
 		return nil, err
 	}
 	return data, nil
 }
 
-func (r *codeRepo) legacyGoMod(rev, dir string) []byte {
-	// We used to try to build a go.mod reflecting pre-existing
-	// package management metadata files, but the conversion
-	// was inherently imperfect (because those files don't have
-	// exactly the same semantics as go.mod) and, when done
-	// for dependencies in the middle of a build, impossible to
-	// correct. So we stopped.
-	// Return a fake go.mod that simply declares the module path.
-	return []byte(fmt.Sprintf("module %s\n", modfile.AutoQuote(r.modPath)))
+// LegacyGoMod generates a fake go.mod file for a module that doesn't have one.
+// The go.mod file contains a module directive and nothing else: no go version,
+// no requirements.
+//
+// We used to try to build a go.mod reflecting pre-existing
+// package management metadata files, but the conversion
+// was inherently imperfect (because those files don't have
+// exactly the same semantics as go.mod) and, when done
+// for dependencies in the middle of a build, impossible to
+// correct. So we stopped.
+func LegacyGoMod(modPath string) []byte {
+	return []byte(fmt.Sprintf("module %s\n", modfile.AutoQuote(modPath)))
 }
 
 func (r *codeRepo) modPrefix(rev string) string {
 	return r.modPath + "@" + rev
+}
+
+func (r *codeRepo) retractedVersions() (func(string) bool, error) {
+	versions, err := r.Versions("")
+	if err != nil {
+		return nil, err
+	}
+
+	for i, v := range versions {
+		if strings.HasSuffix(v, "+incompatible") {
+			versions = versions[:i]
+			break
+		}
+	}
+	if len(versions) == 0 {
+		return func(string) bool { return false }, nil
+	}
+
+	var highest string
+	for i := len(versions) - 1; i >= 0; i-- {
+		v := versions[i]
+		if semver.Prerelease(v) == "" {
+			highest = v
+			break
+		}
+	}
+	if highest == "" {
+		highest = versions[len(versions)-1]
+	}
+
+	data, err := r.GoMod(highest)
+	if err != nil {
+		return nil, err
+	}
+	f, err := modfile.ParseLax("go.mod", data, nil)
+	if err != nil {
+		return nil, err
+	}
+	retractions := make([]modfile.VersionInterval, len(f.Retract))
+	for _, r := range f.Retract {
+		retractions = append(retractions, r.VersionInterval)
+	}
+
+	return func(v string) bool {
+		for _, r := range retractions {
+			if semver.Compare(r.Low, v) <= 0 && semver.Compare(v, r.High) <= 0 {
+				return true
+			}
+		}
+		return false
+	}, nil
 }
 
 func (r *codeRepo) Zip(dst io.Writer, version string) error {
@@ -874,7 +945,7 @@ func (r *codeRepo) Zip(dst io.Writer, version string) error {
 		return fmt.Errorf("version %s is not canonical", version)
 	}
 
-	if IsPseudoVersion(version) {
+	if module.IsPseudoVersion(version) {
 		// findDir ignores the metadata encoded in a pseudo-version,
 		// only using the revision at the end.
 		// Invoke Stat to verify the metadata explicitly so we don't return
@@ -897,7 +968,7 @@ func (r *codeRepo) Zip(dst io.Writer, version string) error {
 	subdir = strings.Trim(subdir, "/")
 
 	// Spool to local file.
-	f, err := ioutil.TempFile("", "go-codehost-")
+	f, err := os.CreateTemp("", "go-codehost-")
 	if err != nil {
 		dl.Close()
 		return err
@@ -972,7 +1043,7 @@ type zipFile struct {
 }
 
 func (f zipFile) Path() string                 { return f.name }
-func (f zipFile) Lstat() (os.FileInfo, error)  { return f.f.FileInfo(), nil }
+func (f zipFile) Lstat() (fs.FileInfo, error)  { return f.f.FileInfo(), nil }
 func (f zipFile) Open() (io.ReadCloser, error) { return f.f.Open() }
 
 type dataFile struct {
@@ -981,9 +1052,9 @@ type dataFile struct {
 }
 
 func (f dataFile) Path() string                { return f.name }
-func (f dataFile) Lstat() (os.FileInfo, error) { return dataFileInfo{f}, nil }
+func (f dataFile) Lstat() (fs.FileInfo, error) { return dataFileInfo{f}, nil }
 func (f dataFile) Open() (io.ReadCloser, error) {
-	return ioutil.NopCloser(bytes.NewReader(f.data)), nil
+	return io.NopCloser(bytes.NewReader(f.data)), nil
 }
 
 type dataFileInfo struct {
@@ -992,7 +1063,7 @@ type dataFileInfo struct {
 
 func (fi dataFileInfo) Name() string       { return path.Base(fi.f.name) }
 func (fi dataFileInfo) Size() int64        { return int64(len(fi.f.data)) }
-func (fi dataFileInfo) Mode() os.FileMode  { return 0644 }
+func (fi dataFileInfo) Mode() fs.FileMode  { return 0644 }
 func (fi dataFileInfo) ModTime() time.Time { return time.Time{} }
 func (fi dataFileInfo) IsDir() bool        { return false }
 func (fi dataFileInfo) Sys() interface{}   { return nil }

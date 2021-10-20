@@ -5,6 +5,7 @@
 package maphash
 
 import (
+	"bytes"
 	"hash"
 	"testing"
 )
@@ -34,19 +35,57 @@ func TestSeededHash(t *testing.T) {
 }
 
 func TestHashGrouping(t *testing.T) {
-	b := []byte("foo")
-	h1 := new(Hash)
-	h2 := new(Hash)
-	h2.SetSeed(h1.Seed())
-	h1.Write(b)
-	for _, x := range b {
-		err := h2.WriteByte(x)
+	b := bytes.Repeat([]byte("foo"), 100)
+	hh := make([]*Hash, 7)
+	for i := range hh {
+		hh[i] = new(Hash)
+	}
+	for _, h := range hh[1:] {
+		h.SetSeed(hh[0].Seed())
+	}
+	hh[0].Write(b)
+	hh[1].WriteString(string(b))
+
+	writeByte := func(h *Hash, b byte) {
+		err := h.WriteByte(b)
 		if err != nil {
 			t.Fatalf("WriteByte: %v", err)
 		}
 	}
-	if h1.Sum64() != h2.Sum64() {
-		t.Errorf("hash of \"foo\" and \"f\",\"o\",\"o\" not identical")
+	writeSingleByte := func(h *Hash, b byte) {
+		_, err := h.Write([]byte{b})
+		if err != nil {
+			t.Fatalf("Write single byte: %v", err)
+		}
+	}
+	writeStringSingleByte := func(h *Hash, b byte) {
+		_, err := h.WriteString(string([]byte{b}))
+		if err != nil {
+			t.Fatalf("WriteString single byte: %v", err)
+		}
+	}
+
+	for i, x := range b {
+		writeByte(hh[2], x)
+		writeSingleByte(hh[3], x)
+		if i == 0 {
+			writeByte(hh[4], x)
+		} else {
+			writeSingleByte(hh[4], x)
+		}
+		writeStringSingleByte(hh[5], x)
+		if i == 0 {
+			writeByte(hh[6], x)
+		} else {
+			writeStringSingleByte(hh[6], x)
+		}
+	}
+
+	sum := hh[0].Sum64()
+	for i, h := range hh {
+		if sum != h.Sum64() {
+			t.Errorf("hash %d not identical to a single Write", i)
+		}
 	}
 }
 
@@ -165,3 +204,32 @@ func TestSeedFromReset(t *testing.T) {
 // Make sure a Hash implements the hash.Hash and hash.Hash64 interfaces.
 var _ hash.Hash = &Hash{}
 var _ hash.Hash64 = &Hash{}
+
+func benchmarkSize(b *testing.B, size int) {
+	h := &Hash{}
+	buf := make([]byte, size)
+	b.SetBytes(int64(size))
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		h.Reset()
+		h.Write(buf)
+		h.Sum64()
+	}
+}
+
+func BenchmarkHash8Bytes(b *testing.B) {
+	benchmarkSize(b, 8)
+}
+
+func BenchmarkHash320Bytes(b *testing.B) {
+	benchmarkSize(b, 320)
+}
+
+func BenchmarkHash1K(b *testing.B) {
+	benchmarkSize(b, 1024)
+}
+
+func BenchmarkHash8K(b *testing.B) {
+	benchmarkSize(b, 8192)
+}

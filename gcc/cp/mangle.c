@@ -1,5 +1,5 @@
 /* Name mangling for the 3.0 -*- C++ -*- ABI.
-   Copyright (C) 2000-2020 Free Software Foundation, Inc.
+   Copyright (C) 2000-2021 Free Software Foundation, Inc.
    Written by Alex Samuel <samuel@codesourcery.com>
 
    This file is part of GCC.
@@ -117,6 +117,9 @@ struct GTY(()) globals {
 
   /* True if the mangling will be different in C++17 mode.  */
   bool need_cxx17_warning;
+
+  /* True if we mangled a module name.  */
+  bool mod;
 };
 
 static GTY (()) globals G;
@@ -829,7 +832,75 @@ write_encoding (const tree decl)
       write_bare_function_type (fn_type,
 				mangle_return_type_p (decl),
 				d);
+
+      /* If this is a coroutine helper, then append an appropriate string to
+	 identify which.  */
+      if (tree ramp = DECL_RAMP_FN (decl))
+	{
+	  if (DECL_ACTOR_FN (ramp) == decl)
+	    write_string (JOIN_STR "actor");
+	  else if (DECL_DESTROY_FN (ramp) == decl)
+	    write_string (JOIN_STR "destroy");
+	  else
+	    gcc_unreachable ();
+	}
     }
+}
+
+/* Interface to substitution and identifier mangling, used by the
+   module name mangler.  */
+
+void
+mangle_module_substitution (int v)
+{
+  if (v < 10)
+    {
+      write_char ('_');
+      write_char ('0' + v);
+    }
+  else
+    {
+      write_char ('W');
+      write_unsigned_number (v - 10);
+      write_char ('_');
+    }
+}
+
+void
+mangle_identifier (char c, tree id)
+{
+  if (c)
+    write_char (c);
+  write_source_name (id);
+}
+
+/* If the outermost non-namespace context (including DECL itself) is
+   a module-linkage decl, mangle the module information.  For module
+   global initializers we need to include the partition part.
+
+   <module-name> ::= W <module-id>+ E
+   <module-id> :: <unqualified-name>
+               || _ <digit>  ;; short backref
+	       || W <number> _  ;; long backref
+               || P <module-id> ;; partition introducer
+*/
+
+static void
+write_module (int m, bool include_partition)
+{
+  G.mod = true;
+
+  write_char ('W');
+  mangle_module (m, include_partition);
+  write_char ('E');
+}
+
+static void
+maybe_write_module (tree decl)
+{
+  int m = get_originating_module (decl, true);
+  if (m >= 0)
+    write_module (m, false);
 }
 
 /* Lambdas can have a bit more context for mangling, specifically VAR_DECL
@@ -893,6 +964,9 @@ write_name (tree decl, const int ignore_local_scope)
 	 TYPE_DECL for the main variant.  */
       decl = TYPE_NAME (TYPE_MAIN_VARIANT (TREE_TYPE (decl)));
     }
+
+  if (modules_p ())
+    maybe_write_module (decl);
 
   context = decl_mangling_context (decl);
 
@@ -1246,10 +1320,10 @@ find_decomp_unqualified_name (tree decl, size_t *len)
   const char *p = IDENTIFIER_POINTER (DECL_ASSEMBLER_NAME (decl));
   const char *end = p + IDENTIFIER_LENGTH (DECL_ASSEMBLER_NAME (decl));
   bool nested = false;
-  if (strncmp (p, "_Z", 2))
+  if (!startswith (p, "_Z"))
     return NULL;
   p += 2;
-  if (!strncmp (p, "St", 2))
+  if (startswith (p, "St"))
     p += 2;
   else if (*p == 'N')
     {
@@ -1265,7 +1339,7 @@ find_decomp_unqualified_name (tree decl, size_t *len)
 	    break;
 	}
     }
-  if (strncmp (p, "DC", 2))
+  if (!startswith (p, "DC"))
     return NULL;
   if (nested)
     {
@@ -1361,9 +1435,12 @@ write_unqualified_name (tree decl)
 	}
       else if (DECL_OVERLOADED_OPERATOR_P (decl))
 	{
+	  tree t;
+	  if (!(t = DECL_RAMP_FN (decl)))
+	    t = decl;
 	  const char *mangled_name
-	    = (ovl_op_info[DECL_ASSIGNMENT_OPERATOR_P (decl)]
-	       [DECL_OVERLOADED_OPERATOR_CODE_RAW (decl)].mangled_name);
+	    = (ovl_op_info[DECL_ASSIGNMENT_OPERATOR_P (t)]
+	       [DECL_OVERLOADED_OPERATOR_CODE_RAW (t)].mangled_name);
 	  write_string (mangled_name);
 	}
       else if (UDLIT_OPER_P (DECL_NAME (decl)))
@@ -1566,6 +1643,7 @@ write_literal_operator_name (tree identifier)
 static void
 write_compact_number (int num)
 {
+  gcc_checking_assert (num >= 0);
   if (num > 0)
     write_unsigned_number (num - 1);
   write_char ('_');
@@ -1965,15 +2043,7 @@ write_local_name (tree function, const tree local_entity,
   /* For this purpose, parameters are numbered from right-to-left.  */
   if (parm)
     {
-      tree t;
-      int i = 0;
-      for (t = DECL_ARGUMENTS (function); t; t = DECL_CHAIN (t))
-	{
-	  if (t == parm)
-	    i = 1;
-	  else if (i)
-	    ++i;
-	}
+      int i = list_length (parm);
       write_char ('d');
       write_compact_number (i - 1);
     }
@@ -2806,16 +2876,20 @@ write_member_name (tree member)
 {
   if (identifier_p (member))
     {
-      if (abi_version_at_least (11) && IDENTIFIER_ANY_OP_P (member))
+      if (IDENTIFIER_ANY_OP_P (member))
 	{
-	  write_string ("on");
+	  if (abi_version_at_least (11))
+	    write_string ("on");
 	  if (abi_warn_or_compat_version_crosses (11))
 	    G.need_abi_warning = 1;
 	}
       write_unqualified_id (member);
     }
   else if (DECL_P (member))
-    write_unqualified_name (member);
+    {
+      gcc_assert (!DECL_OVERLOADED_OPERATOR_P (member));
+      write_unqualified_name (member);
+    }
   else if (TREE_CODE (member) == TEMPLATE_ID_EXPR)
     {
       tree name = TREE_OPERAND (member, 0);
@@ -2879,6 +2953,16 @@ write_base_ref (tree expr, tree base = NULL_TREE)
     write_expression (object);
 
   return true;
+}
+
+/* The number of elements spanned by a RANGE_EXPR.  */
+
+unsigned HOST_WIDE_INT
+range_expr_nelts (tree expr)
+{
+  tree lo = TREE_OPERAND (expr, 0);
+  tree hi = TREE_OPERAND (expr, 1);
+  return tree_to_uhwi (hi) - tree_to_uhwi (lo) + 1;
 }
 
 /* <expression> ::= <unary operator-name> <expression>
@@ -3049,11 +3133,28 @@ write_expression (tree expr)
       else
 	goto normal_expr;
     }
-  else if (TREE_CODE (expr) == ALIGNOF_EXPR
-	   && TYPE_P (TREE_OPERAND (expr, 0)))
+  else if (TREE_CODE (expr) == ALIGNOF_EXPR)
     {
-      write_string ("at");
-      write_type (TREE_OPERAND (expr, 0));
+      if (!ALIGNOF_EXPR_STD_P (expr))
+	{
+	  if (abi_warn_or_compat_version_crosses (16))
+	    G.need_abi_warning = true;
+	  if (abi_version_at_least (16))
+	    {
+	      /* We used to mangle __alignof__ like alignof.  */
+	      write_string ("u11__alignof__");
+	      write_template_arg (TREE_OPERAND (expr, 0));
+	      write_char ('E');
+	      return;
+	    }
+	}
+      if (TYPE_P (TREE_OPERAND (expr, 0)))
+	{
+	  write_string ("at");
+	  write_type (TREE_OPERAND (expr, 0));
+	}
+      else
+	goto normal_expr;
     }
   else if (code == SCOPE_REF
 	   || code == BASELINK)
@@ -3081,6 +3182,7 @@ write_expression (tree expr)
 	write_expression (member);
       else
 	{
+	  gcc_assert (code != BASELINK || BASELINK_QUALIFIED_P (expr));
 	  write_string ("sr");
 	  write_type (scope);
 	  write_member_name (member);
@@ -3207,8 +3309,14 @@ write_expression (tree expr)
 	  write_type (etype);
 	}
 
-      bool nontriv = !trivial_type_p (etype);
-      if (nontriv || !zero_init_expr_p (expr))
+      /* If this is an undigested initializer, mangle it as written.
+	 COMPOUND_LITERAL_P doesn't actually distinguish between digested and
+	 undigested braced casts, but it should work to use it to distinguish
+	 between braced casts in a template signature (undigested) and template
+	 parm object values (digested), and all CONSTRUCTORS that get here
+	 should be one of those two cases.  */
+      bool undigested = braced_init || COMPOUND_LITERAL_P (expr);
+      if (undigested || !zero_init_expr_p (expr))
 	{
 	  /* Convert braced initializer lists to STRING_CSTs so that
 	     A<"Foo"> mangles the same as A<{'F', 'o', 'o', 0}> while
@@ -3219,28 +3327,32 @@ write_expression (tree expr)
 	  if (TREE_CODE (expr) == CONSTRUCTOR)
 	    {
 	      vec<constructor_elt, va_gc> *elts = CONSTRUCTOR_ELTS (expr);
-	      unsigned last_nonzero = UINT_MAX, i;
+	      unsigned last_nonzero = UINT_MAX;
 	      constructor_elt *ce;
-	      tree val;
 
-	      if (!nontriv)
-		FOR_EACH_CONSTRUCTOR_VALUE (elts, i, val)
-		  if (!zero_init_expr_p (val))
+	      if (!undigested)
+		for (HOST_WIDE_INT i = 0; vec_safe_iterate (elts, i, &ce); ++i)
+		  if ((TREE_CODE (etype) == UNION_TYPE
+		       && ce->index != first_field (etype))
+		      || !zero_init_expr_p (ce->value))
 		    last_nonzero = i;
 
-	      if (nontriv || last_nonzero != UINT_MAX)
+	      if (undigested || last_nonzero != UINT_MAX)
 		for (HOST_WIDE_INT i = 0; vec_safe_iterate (elts, i, &ce); ++i)
 		  {
 		    if (i > last_nonzero)
 		      break;
-		    /* FIXME handle RANGE_EXPR */
 		    if (TREE_CODE (etype) == UNION_TYPE)
 		      {
 			/* Express the active member as a designator.  */
 			write_string ("di");
 			write_unqualified_name (ce->index);
 		      }
-		    write_expression (ce->value);
+		    unsigned reps = 1;
+		    if (ce->index && TREE_CODE (ce->index) == RANGE_EXPR)
+		      reps = range_expr_nelts (ce->index);
+		    for (unsigned j = 0; j < reps; ++j)
+		      write_expression (ce->value);
 		  }
 	    }
 	  else
@@ -3263,7 +3375,15 @@ write_expression (tree expr)
     }
   else if (dependent_name (expr))
     {
-      write_unqualified_id (dependent_name (expr));
+      tree name = dependent_name (expr);
+      if (IDENTIFIER_ANY_OP_P (name))
+	{
+	  if (abi_version_at_least (16))
+	    write_string ("on");
+	  if (abi_warn_or_compat_version_crosses (16))
+	    G.need_abi_warning = 1;
+	}
+      write_unqualified_id (name);
     }
   else
     {
@@ -3806,20 +3926,22 @@ start_mangling (const tree entity)
   G.entity = entity;
   G.need_abi_warning = false;
   G.need_cxx17_warning = false;
+  G.mod = false;
   obstack_free (&name_obstack, name_base);
   mangle_obstack = &name_obstack;
   name_base = obstack_alloc (&name_obstack, 0);
 }
 
-/* Done with mangling. If WARN is true, and the name of G.entity will
-   be mangled differently in a future version of the ABI, issue a
-   warning.  */
+/* Done with mangling.  Release the data.  */
 
 static void
 finish_mangling_internal (void)
 {
   /* Clear all the substitutions.  */
   vec_safe_truncate (G.substitutions, 0);
+
+  if (G.mod)
+    mangle_module_fini ();
 
   /* Null-terminate the string.  */
   write_char ('\0');
@@ -3863,6 +3985,20 @@ init_mangle (void)
   subst_identifiers[SUBID_BASIC_ISTREAM] = get_identifier ("basic_istream");
   subst_identifiers[SUBID_BASIC_OSTREAM] = get_identifier ("basic_ostream");
   subst_identifiers[SUBID_BASIC_IOSTREAM] = get_identifier ("basic_iostream");
+}
+
+/* Generate a mangling for MODULE's global initializer fn.  */
+
+tree
+mangle_module_global_init (int module)
+{
+  start_mangling (NULL_TREE);
+
+  write_string ("_ZGI");
+  write_module (module, true);
+  write_char ('v');
+
+  return finish_mangling_get_identifier ();
 }
 
 /* Generate the mangled name of DECL.  */
@@ -4309,7 +4445,7 @@ static void
 write_guarded_var_name (const tree variable)
 {
   if (DECL_NAME (variable)
-      && strncmp (IDENTIFIER_POINTER (DECL_NAME (variable)), "_ZGR", 4) == 0)
+      && startswith (IDENTIFIER_POINTER (DECL_NAME (variable)), "_ZGR"))
     /* The name of a guard variable for a reference temporary should refer
        to the reference, not the temporary.  */
     write_string (IDENTIFIER_POINTER (DECL_NAME (variable)) + 4);
@@ -4367,8 +4503,7 @@ decl_tls_wrapper_p (const tree fn)
   if (TREE_CODE (fn) != FUNCTION_DECL)
     return false;
   tree name = DECL_NAME (fn);
-  return strncmp (IDENTIFIER_POINTER (name), TLS_WRAPPER_PREFIX,
-		  strlen (TLS_WRAPPER_PREFIX)) == 0;
+  return startswith (IDENTIFIER_POINTER (name), TLS_WRAPPER_PREFIX);
 }
 
 /* Return an identifier for the name of a temporary variable used to

@@ -25,7 +25,7 @@ void test_memcpy_array_cst_range_off (const void *s)
   T (d + UR (1, 2), 5);
 
   T (d + UR (0, 1), 6);
-  T (d + UR (0, 1), 7);       /* { dg-warning ".memcpy. writing 6 bytes into a region of size 5 overflows the destination" "pr89428" { xfail *-*-* } } */
+  T (d + UR (0, 1), 7);       /* { dg-warning ".memcpy. writing 7 bytes into a region of size 6 overflows the destination" "pr89428" } */
   T (d + UR (1, 2), 6);       /* { dg-warning ".memcpy. writing 6 bytes into a region of size 5 overflows the destination" } */
   T (d + UR (1, 2), 7);       /* { dg-warning "writing 7 bytes into a region of size 5 " } */
 
@@ -48,7 +48,8 @@ void test_memcpy_array_range_range_off (const void *s)
   char *d = ga7 + UR (0, 1);
   T (d + SR (-1, 0), 1);
   T (d + SR (-1, 0), 7);
-  T (d + SR (-1, 0), 9);       /* { dg-warning "writing 1 byte into a region of size 0 " "pr89350" { xfail *-*-* } } */
+  T (d + SR (-1, 0), 8);       /* { dg-warning "writing 8 bytes into a region of size 7 " } */
+  T (d + SR (-1, 0), 9);       /* { dg-warning "writing 9 bytes into a region of size 7 " "pr89350" } */
 }
 
 
@@ -63,7 +64,7 @@ void test_memset_array_unsigned_off (void)
   T (d + UR (1, 2), 5);
 
   T (d + UR (0, 1), 6);
-  T (d + UR (0, 1), 7);       /* { dg-warning ".memset. writing 6 bytes into a region of size 5 overflows the destination" "pr89428" { xfail *-*-* } } */
+  T (d + UR (0, 1), 7);       /* { dg-warning ".memset. writing 7 bytes into a region of size 6 overflows the destination" "pr89428" } */
   T (d + UR (1, 2), 6);       /* { dg-warning ".memset. writing 6 bytes into a region of size 5 overflows the destination" } */
   T (d + UR (1, 2), 7);       /* { dg-warning "writing 7 bytes into a region of size 5 " } */
 

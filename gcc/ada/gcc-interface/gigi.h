@@ -6,7 +6,7 @@
  *                                                                          *
  *                              C Header File                               *
  *                                                                          *
- *          Copyright (C) 1992-2020, Free Software Foundation, Inc.         *
+ *          Copyright (C) 1992-2021, Free Software Foundation, Inc.         *
  *                                                                          *
  * GNAT is free software;  you can  redistribute it  and/or modify it under *
  * terms of the  GNU General Public License as published  by the Free Soft- *
@@ -233,24 +233,24 @@ extern "C" {
    structures and then generates code.  */
 extern void gigi (Node_Id gnat_root,
 	          int max_gnat_node,
-                  int number_name,
-		  struct Node *nodes_ptr,
-		  struct Flags *Flags_Ptr,
+		  int number_name,
+		  Node_Header *node_offsets_ptr,
+		  any_slot *slots_ptr,
 		  Node_Id *next_node_ptr,
 		  Node_Id *prev_node_ptr,
 		  struct Elist_Header *elists_ptr,
-                  struct Elmt_Item *elmts_ptr,
-                  struct String_Entry *strings_ptr,
-                  Char_Code *strings_chars_ptr,
-                  struct List_Header *list_headers_ptr,
-                  Nat number_file,
-                  struct File_Info_Type *file_info_ptr,
-                  Entity_Id standard_boolean,
-                  Entity_Id standard_integer,
-                  Entity_Id standard_character,
-                  Entity_Id standard_long_long_float,
-                  Entity_Id standard_exception_type,
-                  Int gigi_operating_mode);
+		  struct Elmt_Item *elmts_ptr,
+		  struct String_Entry *strings_ptr,
+		  Char_Code *strings_chars_ptr,
+		  struct List_Header *list_headers_ptr,
+		  Nat number_file,
+		  struct File_Info_Type *file_info_ptr,
+		  Entity_Id standard_boolean,
+		  Entity_Id standard_integer,
+		  Entity_Id standard_character,
+		  Entity_Id standard_long_long_float,
+		  Entity_Id standard_exception_type,
+		  Int gigi_operating_mode);
 
 #ifdef __cplusplus
 }
@@ -325,7 +325,7 @@ extern int double_scalar_alignment;
 
 /* True if floating-point arithmetics may use wider intermediate results.  */
 extern bool fp_arith_may_widen;
-
+
 /* Data structures used to represent attributes.  */
 
 enum attrib_type
@@ -390,11 +390,14 @@ enum standard_datatypes
   /* Function decl node for 64-bit multiplication with overflow checking.  */
   ADT_mulv64_decl,
 
+  /* Function decl node for 128-bit multiplication with overflow checking.  */
+  ADT_mulv128_decl,
+
   /* Identifier for the name of the _Parent field in tagged record types.  */
   ADT_parent_name_id,
 
-  /* Identifier for the name of the Exception_Data type.  */
-  ADT_exception_data_name_id,
+  /* Identifier for the name of the Not_Handled_By_Others field.  */
+  ADT_not_handled_by_others_name_id,
 
   /* Types and decls used by the SJLJ exception mechanism.  */
   ADT_jmpbuf_type,
@@ -462,8 +465,10 @@ extern GTY(()) tree gnat_raise_decls_ext[(int) LAST_REASON_CODE + 1];
 #define free_decl gnat_std_decls[(int) ADT_free_decl]
 #define realloc_decl gnat_std_decls[(int) ADT_realloc_decl]
 #define mulv64_decl gnat_std_decls[(int) ADT_mulv64_decl]
+#define mulv128_decl gnat_std_decls[(int) ADT_mulv128_decl]
 #define parent_name_id gnat_std_decls[(int) ADT_parent_name_id]
-#define exception_data_name_id gnat_std_decls[(int) ADT_exception_data_name_id]
+#define not_handled_by_others_name_id \
+	  gnat_std_decls[(int) ADT_not_handled_by_others_name_id]
 #define jmpbuf_type gnat_std_decls[(int) ADT_jmpbuf_type]
 #define jmpbuf_ptr_type gnat_std_decls[(int) ADT_jmpbuf_ptr_type]
 #define get_jmpbuf_decl gnat_std_decls[(int) ADT_get_jmpbuf_decl]
@@ -1021,6 +1026,9 @@ extern Entity_Id get_debug_scope (Node_Id gnat_node, bool *is_subprogram);
    should be synchronized with Exp_Dbug.Debug_Renaming_Declaration.  */
 extern bool can_materialize_object_renaming_p (Node_Id expr);
 
+/* Return the size of TYPE, which must be a positive power of 2.  */
+extern unsigned int resolve_atomic_size (tree type);
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -1035,6 +1043,7 @@ extern Pos get_target_short_size (void);
 extern Pos get_target_int_size (void);
 extern Pos get_target_long_size (void);
 extern Pos get_target_long_long_size (void);
+extern Pos get_target_long_long_long_size (void);
 extern Pos get_target_pointer_size (void);
 extern Pos get_target_maximum_default_alignment (void);
 extern Pos get_target_system_allocator_alignment (void);
@@ -1216,4 +1225,12 @@ static inline tree
 operand_type (tree expr)
 {
   return TREE_TYPE (TREE_OPERAND (expr, 0));
+}
+
+/* Return the third value of a list.  */
+
+static inline tree
+list_third (tree list)
+{
+  return TREE_VALUE (TREE_CHAIN (TREE_CHAIN (list)));
 }

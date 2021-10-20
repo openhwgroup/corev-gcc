@@ -1,5 +1,5 @@
 /* Expands front end tree to back end RTL for GCC.
-   Copyright (C) 1987-2020 Free Software Foundation, Inc.
+   Copyright (C) 1987-2021 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -46,10 +46,12 @@ along with GCC; see the file COPYING3.  If not see
 #include "stringpool.h"
 #include "expmed.h"
 #include "optabs.h"
+#include "opts.h"
 #include "regs.h"
 #include "emit-rtl.h"
 #include "recog.h"
 #include "rtl-error.h"
+#include "hard-reg-set.h"
 #include "alias.h"
 #include "fold-const.h"
 #include "stor-layout.h"
@@ -80,6 +82,8 @@ along with GCC; see the file COPYING3.  If not see
 #include "gimple.h"
 #include "options.h"
 #include "function-abi.h"
+#include "value-range.h"
+#include "gimple-range.h"
 
 /* So we can assign to cfun in this file.  */
 #undef cfun
@@ -637,7 +641,7 @@ static class temp_slot **
 temp_slots_at_level (int level)
 {
   if (level >= (int) vec_safe_length (used_temp_slots))
-    vec_safe_grow_cleared (used_temp_slots, level + 1);
+    vec_safe_grow_cleared (used_temp_slots, level + 1, true);
 
   return &(*used_temp_slots)[level];
 }
@@ -1783,12 +1787,16 @@ instantiate_virtual_regs_in_insn (rtx_insn *insn)
 	{
 	  error_for_asm (insn, "impossible constraint in %<asm%>");
 	  /* For asm goto, instead of fixing up all the edges
-	     just clear the template and clear input operands
-	     (asm goto doesn't have any output operands).  */
+	     just clear the template and clear input and output operands
+	     and strip away clobbers.  */
 	  if (JUMP_P (insn))
 	    {
 	      rtx asm_op = extract_asm_operands (PATTERN (insn));
+	      PATTERN (insn) = asm_op;
+	      PUT_MODE (asm_op, VOIDmode);
 	      ASM_OPERANDS_TEMPLATE (asm_op) = ggc_strdup ("");
+	      ASM_OPERANDS_OUTPUT_CONSTRAINT (asm_op) = "";
+	      ASM_OPERANDS_OUTPUT_IDX (asm_op) = 0;
 	      ASM_OPERANDS_INPUT_VEC (asm_op) = rtvec_alloc (0);
 	      ASM_OPERANDS_INPUT_CONSTRAINT_VEC (asm_op) = rtvec_alloc (0);
 	    }
@@ -2204,12 +2212,14 @@ use_register_for_decl (const_tree decl)
       /* Otherwise, if RESULT_DECL is DECL_BY_REFERENCE, it will take
 	 the function_result_decl's assignment.  Since it's a pointer,
 	 we can short-circuit a number of the tests below, and we must
-	 duplicat e them because we don't have the
-	 function_result_decl to test.  */
+	 duplicate them because we don't have the function_result_decl
+	 to test.  */
       if (!targetm.calls.allocate_stack_slots_for_args ())
 	return true;
       /* We don't set DECL_IGNORED_P for the function_result_decl.  */
       if (optimize)
+	return true;
+      if (cfun->tail_call_marked)
 	return true;
       /* We don't set DECL_REGISTER for the function_result_decl.  */
       return false;
@@ -2235,6 +2245,11 @@ use_register_for_decl (const_tree decl)
     return true;
 
   if (optimize)
+    return true;
+
+  /* Thunks force a tail call even at -O0 so we need to avoid creating a
+     dangling reference in case the parameter is passed by reference.  */
+  if (TREE_CODE (decl) == PARM_DECL && cfun->tail_call_marked)
     return true;
 
   if (!DECL_REGISTER (decl))
@@ -2841,7 +2856,7 @@ assign_parm_adjust_stack_rtl (struct assign_parm_data_one *data)
   /* If stack protection is in effect for this function, don't leave any
      pointers in their passed stack slots.  */
   else if (crtl->stack_protect_guard
-	   && (flag_stack_protect == 2
+	   && (flag_stack_protect == SPCT_FLAG_ALL
 	       || data->arg.pass_by_reference
 	       || POINTER_TYPE_P (data->nominal_type)))
     stack_parm = NULL;
@@ -3021,7 +3036,15 @@ assign_parm_setup_block (struct assign_parm_data_all *all,
 		  reg = gen_rtx_REG (word_mode, REGNO (entry_parm));
 		  reg = convert_to_mode (mode, copy_to_reg (reg), 1);
 		}
-	      emit_move_insn (change_address (mem, mode, 0), reg);
+
+	      /* We use adjust_address to get a new MEM with the mode
+		 changed.  adjust_address is better than change_address
+		 for this purpose because adjust_address does not lose
+		 the MEM_EXPR associated with the MEM.
+
+		 If the MEM_EXPR is lost, then optimizations like DSE
+		 assume the MEM escapes and thus is not subject to DSE.  */
+	      emit_move_insn (adjust_address (mem, mode, 0), reg);
 	    }
 
 #ifdef BLOCK_REG_PADDING
@@ -3322,12 +3345,13 @@ assign_parm_setup_reg (struct assign_parm_data_all *all, tree parm,
   else
     emit_move_insn (parmreg, validated_mem);
 
-  /* If we were passed a pointer but the actual value can safely live
-     in a register, retrieve it and use it directly.  */
+  /* If we were passed a pointer but the actual value can live in a register,
+     retrieve it and use it directly.  Note that we cannot use nominal_mode,
+     because it will have been set to Pmode above, we must use the actual mode
+     of the parameter instead.  */
   if (data->arg.pass_by_reference && TYPE_MODE (TREE_TYPE (parm)) != BLKmode)
     {
-      /* We can't use nominal_mode, because it will have been set to
-	 Pmode above.  We must use the actual mode of the parm.  */
+      /* Use a stack slot for debugging purposes if possible.  */
       if (use_register_for_decl (parm))
 	{
 	  parmreg = gen_reg_rtx (TYPE_MODE (TREE_TYPE (parm)));
@@ -3811,9 +3835,16 @@ assign_parms (tree fndecl)
 	{
 	  rtx real_decl_rtl;
 
-	  real_decl_rtl = targetm.calls.function_value (TREE_TYPE (decl_result),
-							fndecl, true);
-	  REG_FUNCTION_VALUE_P (real_decl_rtl) = 1;
+	  /* Unless the psABI says not to.  */
+	  if (TYPE_EMPTY_P (TREE_TYPE (decl_result)))
+	    real_decl_rtl = NULL_RTX;
+	  else
+	    {
+	      real_decl_rtl
+		= targetm.calls.function_value (TREE_TYPE (decl_result),
+						fndecl, true);
+	      REG_FUNCTION_VALUE_P (real_decl_rtl) = 1;
+	    }
 	  /* The delay slot scheduler assumes that crtl->return_rtx
 	     holds the hard register containing the return value, not a
 	     temporary pseudo.  */
@@ -4664,7 +4695,8 @@ invoke_set_current_function_hook (tree fndecl)
       if (optimization_current_node != opts)
 	{
 	  optimization_current_node = opts;
-	  cl_optimization_restore (&global_options, TREE_OPTIMIZATION (opts));
+	  cl_optimization_restore (&global_options, &global_options_set,
+				   TREE_OPTIMIZATION (opts));
 	}
 
       targetm.set_current_function (fndecl);
@@ -4841,6 +4873,8 @@ allocate_struct_function (tree fndecl, bool abstract_p)
      binding annotations among them.  */
   cfun->debug_nonbind_markers = lang_hooks.emits_begin_stmt
     && MAY_HAVE_DEBUG_MARKER_STMTS;
+
+  cfun->x_range_query = &global_ranges;
 }
 
 /* This is like allocate_struct_function, but pushes a new cfun for FNDECL
@@ -4915,6 +4949,9 @@ push_dummy_function (bool with_decl)
       fn_result_decl = build_decl (UNKNOWN_LOCATION, RESULT_DECL,
 					 NULL_TREE, void_type_node);
       DECL_RESULT (fn_decl) = fn_result_decl;
+      DECL_ARTIFICIAL (fn_decl) = 1;
+      tree fn_name = get_identifier (" ");
+      SET_DECL_ASSEMBLER_NAME (fn_decl, fn_name);
     }
   else
     fn_decl = NULL_TREE;
@@ -5388,9 +5425,11 @@ expand_function_end (void)
       tree decl_result = DECL_RESULT (current_function_decl);
       rtx decl_rtl = DECL_RTL (decl_result);
 
-      if (REG_P (decl_rtl)
-	  ? REGNO (decl_rtl) >= FIRST_PSEUDO_REGISTER
-	  : DECL_REGISTER (decl_result))
+      if ((REG_P (decl_rtl)
+	   ? REGNO (decl_rtl) >= FIRST_PSEUDO_REGISTER
+	   : DECL_REGISTER (decl_result))
+	  /* Unless the psABI says not to.  */
+	  && !TYPE_EMPTY_P (TREE_TYPE (decl_result)))
 	{
 	  rtx real_decl_rtl = crtl->return_rtx;
 	  complex_mode cmode;
@@ -5807,6 +5846,107 @@ make_prologue_seq (void)
 
   return seq;
 }
+
+/* Emit a sequence of insns to zero the call-used registers before RET
+   according to ZERO_REGS_TYPE.  */
+
+static void
+gen_call_used_regs_seq (rtx_insn *ret, unsigned int zero_regs_type)
+{
+  bool only_gpr = true;
+  bool only_used = true;
+  bool only_arg = true;
+
+  /* No need to zero call-used-regs in main ().  */
+  if (MAIN_NAME_P (DECL_NAME (current_function_decl)))
+    return;
+
+  /* No need to zero call-used-regs if __builtin_eh_return is called
+     since it isn't a normal function return.  */
+  if (crtl->calls_eh_return)
+    return;
+
+  /* If only_gpr is true, only zero call-used registers that are
+     general-purpose registers; if only_used is true, only zero
+     call-used registers that are used in the current function;
+     if only_arg is true, only zero call-used registers that pass
+     parameters defined by the flatform's calling conversion.  */
+
+  using namespace zero_regs_flags;
+
+  only_gpr = zero_regs_type & ONLY_GPR;
+  only_used = zero_regs_type & ONLY_USED;
+  only_arg = zero_regs_type & ONLY_ARG;
+
+  /* For each of the hard registers, we should zero it if:
+	    1. it is a call-used register;
+	and 2. it is not a fixed register;
+	and 3. it is not live at the return of the routine;
+	and 4. it is general registor if only_gpr is true;
+	and 5. it is used in the routine if only_used is true;
+	and 6. it is a register that passes parameter if only_arg is true.  */
+
+  /* First, prepare the data flow information.  */
+  basic_block bb = BLOCK_FOR_INSN (ret);
+  auto_bitmap live_out;
+  bitmap_copy (live_out, df_get_live_out (bb));
+  df_simulate_initialize_backwards (bb, live_out);
+  df_simulate_one_insn_backwards (bb, ret, live_out);
+
+  HARD_REG_SET selected_hardregs;
+  CLEAR_HARD_REG_SET (selected_hardregs);
+  for (unsigned int regno = 0; regno < FIRST_PSEUDO_REGISTER; regno++)
+    {
+      if (!crtl->abi->clobbers_full_reg_p (regno))
+	continue;
+      if (fixed_regs[regno])
+	continue;
+      if (REGNO_REG_SET_P (live_out, regno))
+	continue;
+      if (only_gpr
+	  && !TEST_HARD_REG_BIT (reg_class_contents[GENERAL_REGS], regno))
+	continue;
+      if (only_used && !df_regs_ever_live_p (regno))
+	continue;
+      if (only_arg && !FUNCTION_ARG_REGNO_P (regno))
+	continue;
+#ifdef LEAF_REG_REMAP
+      if (crtl->uses_only_leaf_regs && LEAF_REG_REMAP (regno) < 0)
+	continue;
+#endif
+
+      /* Now this is a register that we might want to zero.  */
+      SET_HARD_REG_BIT (selected_hardregs, regno);
+    }
+
+  if (hard_reg_set_empty_p (selected_hardregs))
+    return;
+
+  /* Now that we have a hard register set that needs to be zeroed, pass it to
+     target to generate zeroing sequence.  */
+  HARD_REG_SET zeroed_hardregs;
+  start_sequence ();
+  zeroed_hardregs = targetm.calls.zero_call_used_regs (selected_hardregs);
+  rtx_insn *seq = get_insns ();
+  end_sequence ();
+  if (seq)
+    {
+      /* Emit the memory blockage and register clobber asm volatile before
+	 the whole sequence.  */
+      start_sequence ();
+      expand_asm_reg_clobber_mem_blockage (zeroed_hardregs);
+      rtx_insn *seq_barrier = get_insns ();
+      end_sequence ();
+
+      emit_insn_before (seq_barrier, ret);
+      emit_insn_before (seq, ret);
+
+      /* Update the data flow information.  */
+      crtl->must_be_zero_on_return |= zeroed_hardregs;
+      df_set_bb_dirty (EXIT_BLOCK_PTR_FOR_FN (cfun));
+    }
+}
+
 
 /* Return a sequence to be used as the epilogue for the current function,
    or NULL.  */
@@ -6479,7 +6619,96 @@ make_pass_thread_prologue_and_epilogue (gcc::context *ctxt)
 {
   return new pass_thread_prologue_and_epilogue (ctxt);
 }
-
+
+namespace {
+
+const pass_data pass_data_zero_call_used_regs =
+{
+  RTL_PASS, /* type */
+  "zero_call_used_regs", /* name */
+  OPTGROUP_NONE, /* optinfo_flags */
+  TV_NONE, /* tv_id */
+  0, /* properties_required */
+  0, /* properties_provided */
+  0, /* properties_destroyed */
+  0, /* todo_flags_start */
+  0, /* todo_flags_finish */
+};
+
+class pass_zero_call_used_regs: public rtl_opt_pass
+{
+public:
+  pass_zero_call_used_regs (gcc::context *ctxt)
+    : rtl_opt_pass (pass_data_zero_call_used_regs, ctxt)
+  {}
+
+  /* opt_pass methods: */
+  virtual unsigned int execute (function *);
+
+}; // class pass_zero_call_used_regs
+
+unsigned int
+pass_zero_call_used_regs::execute (function *fun)
+{
+  using namespace zero_regs_flags;
+  unsigned int zero_regs_type = UNSET;
+
+  tree attr_zero_regs = lookup_attribute ("zero_call_used_regs",
+					  DECL_ATTRIBUTES (fun->decl));
+
+  /* Get the type of zero_call_used_regs from function attribute.
+     We have filtered out invalid attribute values already at this point.  */
+  if (attr_zero_regs)
+    {
+      /* The TREE_VALUE of an attribute is a TREE_LIST whose TREE_VALUE
+	 is the attribute argument's value.  */
+      attr_zero_regs = TREE_VALUE (attr_zero_regs);
+      gcc_assert (TREE_CODE (attr_zero_regs) == TREE_LIST);
+      attr_zero_regs = TREE_VALUE (attr_zero_regs);
+      gcc_assert (TREE_CODE (attr_zero_regs) == STRING_CST);
+
+      for (unsigned int i = 0; zero_call_used_regs_opts[i].name != NULL; ++i)
+	if (strcmp (TREE_STRING_POINTER (attr_zero_regs),
+		     zero_call_used_regs_opts[i].name) == 0)
+	  {
+	    zero_regs_type = zero_call_used_regs_opts[i].flag;
+ 	    break;
+	  }
+    }
+
+  if (!zero_regs_type)
+    zero_regs_type = flag_zero_call_used_regs;
+
+  /* No need to zero call-used-regs when no user request is present.  */
+  if (!(zero_regs_type & ENABLED))
+    return 0;
+
+  edge_iterator ei;
+  edge e;
+
+  /* This pass needs data flow information.  */
+  df_analyze ();
+
+  /* Iterate over the function's return instructions and insert any
+     register zeroing required by the -fzero-call-used-regs command-line
+     option or the "zero_call_used_regs" function attribute.  */
+  FOR_EACH_EDGE (e, ei, EXIT_BLOCK_PTR_FOR_FN (cfun)->preds)
+    {
+      rtx_insn *insn = BB_END (e->src);
+      if (JUMP_P (insn) && ANY_RETURN_P (JUMP_LABEL (insn)))
+	gen_call_used_regs_seq (insn, zero_regs_type);
+    }
+
+  return 0;
+}
+
+} // anon namespace
+
+rtl_opt_pass *
+make_pass_zero_call_used_regs (gcc::context *ctxt)
+{
+  return new pass_zero_call_used_regs (ctxt);
+}
 
 /* If CONSTRAINT is a matching constraint, then return its number.
    Otherwise, return -1.  */

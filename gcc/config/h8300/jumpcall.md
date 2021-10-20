@@ -4,78 +4,86 @@
 
 ;; Conditional jump instructions
 
-(define_expand "cbranchqi4"
-  [(use (match_operator 0 "ordered_comparison_operator"
-         [(match_operand:QI 1 "h8300_dst_operand" "")
-          (match_operand:QI 2 "h8300_src_operand" "")]))
-   (use (match_operand 3 ""))]
-  ""
-  {
-    h8300_expand_branch (operands);
-    DONE;
-  })
-
-(define_expand "cbranchhi4"
-  [(use (match_operator 0 "ordered_comparison_operator"
-         [(match_operand:HI 1 "h8300_dst_operand" "")
-          (match_operand:HI 2 "h8300_src_operand" "")]))
-   (use (match_operand 3 ""))]
-  ""
-  {
-    h8300_expand_branch (operands);
-    DONE;
-  })
-
-(define_expand "cbranchsi4"
-  [(use (match_operator 0 "ordered_comparison_operator"
-         [(match_operand:SI 1 "h8300_dst_operand" "")
-          (match_operand:SI 2 "h8300_src_operand" "")]))
-   (use (match_operand 3 ""))]
-  ""
-  {
-    h8300_expand_branch (operands);
-    DONE;
-  })
-
-(define_insn "branch"
+(define_expand "cbranch<mode>4"
   [(set (pc)
-	(if_then_else (match_operator 2 "comparison_operator"
-		       [(cc0) (const_int 0)])
-		      (match_operand 0 "pc_or_label_operand" "")
-		      (match_operand 1 "pc_or_label_operand" "")))]
-  "operands[0] == pc_rtx || operands[1] == pc_rtx"
-{
-  if ((cc_status.flags & CC_OVERFLOW_UNUSABLE) != 0
-      && (GET_CODE (operands[2]) == GT
-	  || GET_CODE (operands[2]) == GE
-	  || GET_CODE (operands[2]) == LE
-	  || GET_CODE (operands[2]) == LT))
-    {
-      cc_status.flags &= ~CC_OVERFLOW_UNUSABLE;
-      return 0;
-    }
+	(if_then_else (match_operator 0 "ordered_comparison_operator"
+		        [(match_operand:QHSI 1 "h8300_dst_operand")
+			 (match_operand:QHSI 2 "h8300_src_operand")])
+		      (label_ref (match_operand 3 ""))
+		      (pc)))]
+  "")
 
-  if (operands[0] != pc_rtx)
-    {
-      if (get_attr_length (insn) == 2)
-	return "b%j2	%l0";
-      else if (get_attr_length (insn) == 4)
-	return "b%j2	%l0:16";
-      else
-	return "b%k2	.Lh8BR%=\;jmp	@%l0\\n.Lh8BR%=:";
-    }
+(define_insn_and_split "*branch"
+  [(set (pc)
+	(if_then_else (match_operator 0 "comparison_operator"
+		       [(match_operand:QHSI 1 "h8300_dst_operand" "rQ")
+			(match_operand:QHSI 2 "h8300_src_operand" "rQi")])
+		      (label_ref (match_operand 3 "" ""))
+		      (pc)))]
+  ""
+  "#"
+  "&& reload_completed"
+  [(set (match_dup 4)
+	(match_dup 5))
+   (set (pc)
+	(if_then_else (match_op_dup 0
+		       [(match_dup 4) (const_int 0)])
+		      (label_ref (match_dup 3)) (pc)))]
+  "
+{
+  machine_mode mode;
+
+  if (REG_P (operands[1])
+      && operands[2] == const0_rtx
+      && (GET_CODE (operands[0]) == EQ
+	  || GET_CODE (operands[0]) == NE
+	  || GET_CODE (operands[0]) == LT
+	  || GET_CODE (operands[0]) == GE
+	  /* Our tstxx insns will set ZN and clear V, so we can handle
+	     a couple additional cases.  */
+	  || GET_CODE (operands[0]) == LE
+	  || GET_CODE (operands[0]) == GT))
+    mode = E_CCZNmode;
   else
-    {
-      if (get_attr_length (insn) == 2)
-	return "b%k2	%l1";
-      else if (get_attr_length (insn) == 4)
-	return "b%k2	%l1:16";
-      else
-	return "b%j2	.Lh8BR%=\;jmp	@%l1\\n.Lh8BR%=:";
-    }
+    mode = E_CCmode;
+  operands[4] = gen_rtx_REG (mode, CC_REG);
+  operands[5] = gen_rtx_COMPARE (mode, operands[1], operands[2]);
+}")
+
+(define_insn "*branch_1"
+  [(set (pc)
+	(if_then_else (match_operator 1 "comparison_operator"
+		       [(reg:H8cc CC_REG) (const_int 0)])
+		      (label_ref (match_operand 0 "" ""))
+		      (pc)))]
+  "reload_completed"
+{
+  if (get_attr_length (insn) == 2)
+    return "b%j1	%l0";
+  else if (get_attr_length (insn) == 4)
+    return "b%j1	%l0:16";
+  else
+    return "b%k1	.Lh8BR%=\;jmp	@%l0\\n.Lh8BR%=:";
 }
- [(set_attr "type" "branch")
-   (set_attr "cc" "none")])
+ [(set_attr "type" "branch")])
+
+
+(define_insn "*branch_1_false"
+  [(set (pc)
+	(if_then_else (match_operator 1 "comparison_operator"
+		       [(reg:H8cc CC_REG) (const_int 0)])
+		      (pc)
+		      (label_ref (match_operand 0 "" ""))))]
+  "reload_completed"
+{
+  if (get_attr_length (insn) == 2)
+    return "b%k1	%l0";
+  else if (get_attr_length (insn) == 4)
+    return "b%k1	%l0:16";
+  else
+    return "b%j1	.Lh8BR%=\;jmp	@%l0\\n.Lh8BR%=:";
+}
+ [(set_attr "type" "branch")])
 
 ;; The brabc/brabs patterns have been disabled because their length computation
 ;; is horribly broken.  When we call out to a function via a SYMBOL_REF we get
@@ -109,8 +117,7 @@
     }
 }
   [(set_attr "type" "bitbranch")
-   (set_attr "length_table" "bitbranch")
-   (set_attr "cc" "none")])
+   (set_attr "length_table" "bitbranch")])
 
 (define_insn "*brabs"
   [(set (pc)
@@ -134,8 +141,53 @@
     }
 }
   [(set_attr "type" "bitbranch")
-   (set_attr "length_table" "bitbranch")
-   (set_attr "cc" "none")])
+   (set_attr "length_table" "bitbranch")])
+
+(define_insn_and_split ""
+  [(set (pc)
+	(if_then_else (match_operator 3 "eqne_operator"
+			[(zero_extract:QHSI (match_operand:QHSI 1 "register_operand" "r")
+					    (const_int 1)
+					    (match_operand 2 "const_int_operand" "n"))
+			 (const_int 0)])
+		      (label_ref (match_operand 0 "" ""))
+		      (pc)))]
+  "INTVAL (operands[2]) < 16"
+  "#"
+  "&& reload_completed"
+  [(set (reg:CCZ CC_REG)
+	(eq (zero_extract:QHSI (match_dup 1) (const_int 1) (match_dup 2))
+	    (const_int 0)))
+   (set (pc)
+	(if_then_else (match_op_dup 3 [(reg:CCZ CC_REG) (const_int 0)])
+		      (label_ref (match_dup 0))
+		      (pc)))])
+
+(define_insn_and_split ""
+  [(set (pc)
+	(if_then_else (match_operator 3 "eqne_operator"
+			[(zero_extract:SI (match_operand:SI 1 "register_operand" "r")
+					  (const_int 1)
+					  (match_operand 2 "const_int_operand" "n"))
+			 (const_int 0)])
+		      (label_ref (match_operand 0 "" ""))
+		      (pc)))
+   (clobber (match_scratch:SI 4 "=&r"))]
+  "INTVAL (operands[2]) >= 16"
+  "#"
+  "&& reload_completed"
+  [(parallel [(set (match_dup 4)
+		   (ior:SI (and:SI (match_dup 4) (const_int -65536))
+			   (lshiftrt:SI (match_dup 1) (const_int 16))))
+	      (clobber (reg:CC CC_REG))])
+   (set (reg:CCZ CC_REG)
+	(eq (zero_extract:SI (match_dup 4) (const_int 1) (match_dup 2))
+	    (const_int 0)))
+   (set (pc)
+	(if_then_else (match_op_dup 3 [(reg:CCZ CC_REG) (const_int 0)])
+		      (label_ref (match_dup 0))
+		      (pc)))]
+  "operands[2] = GEN_INT (INTVAL (operands[2]) - 16);")
 
 ;; Unconditional and other jump instructions.
 
@@ -179,8 +231,7 @@
    (set (attr "delay_slot")
 	(if_then_else (match_test "TARGET_H8300SX")
 		      (const_string "jump")
-		      (const_string "none")))
-   (set_attr "cc" "none")])
+		      (const_string "none")))])
 
 ;; This is a define expand, because pointers may be either 16 or 32 bits.
 
@@ -201,8 +252,7 @@
       return "jmp	@%S0";
     abort ();
   }
-  [(set_attr "cc" "none")
-   (set_attr "length" "2")])
+  [(set_attr "length" "2")])
 
 ;; This is a define expand, because pointers may be either 16 or 32 bits.
 
@@ -221,8 +271,7 @@
       return "jmp	@%S0";
     abort ();
   }
-  [(set_attr "cc" "none")
-   (set_attr "length" "2")])
+  [(set_attr "length" "2")])
 
 ;; Call subroutine with no return value.
 
@@ -241,7 +290,7 @@
 (define_insn "call_insn_<mode>"
   [(call (mem:QI (match_operand 0 "call_insn_operand" "Cr"))
 	         (match_operand:P 1 "general_operand" "g"))]
-  ""
+  "!SIBLING_CALL_P (insn)"
 {
   rtx xoperands[1];
   xoperands[0] = gen_rtx_MEM (QImode, operands[0]);
@@ -279,7 +328,7 @@
   [(set (match_operand 0 "" "=r")
 	(call (mem:QI (match_operand 1 "call_insn_operand" "Cr"))
 		      (match_operand:P 2 "general_operand" "g")))]
-  ""
+  "!SIBLING_CALL_P (insn)"
 {
   rtx xoperands[2];
   gcc_assert (GET_MODE (operands[1]) == Pmode);
@@ -290,6 +339,76 @@
     output_asm_insn ("jsr\\t@%1:8", xoperands);
   else
     output_asm_insn ("jsr\\t%1", xoperands);
+  return "";
+}
+  [(set_attr "type" "call")
+   (set (attr "length")
+	(if_then_else (match_operand:QI 0 "small_call_insn_operand" "")
+		      (const_int 2)
+		      (const_int 4)))])
+
+(define_expand "sibcall"
+  [(call (match_operand:QI 0 "call_expander_operand" "")
+	 (match_operand 1 "general_operand" ""))]
+  ""
+  {
+    if (!register_operand (XEXP (operands[0], 0), Pmode)
+	&& GET_CODE (XEXP (operands[0], 0)) != SYMBOL_REF)
+      XEXP (operands[0], 0) = force_reg (Pmode, XEXP (operands[0], 0));
+  })
+
+(define_insn "sibcall_insn_<mode>"
+  [(call (mem:QI (match_operand 0 "call_insn_operand" "Cr"))
+	         (match_operand:P 1 "general_operand" "g"))]
+  "SIBLING_CALL_P (insn)"
+{
+  rtx xoperands[1];
+  xoperands[0] = gen_rtx_MEM (QImode, operands[0]);
+  gcc_assert (GET_MODE (operands[0]) == Pmode);
+  if (GET_CODE (XEXP (xoperands[0], 0)) == SYMBOL_REF
+      && (SYMBOL_REF_FLAGS (XEXP (xoperands[0], 0)) & SYMBOL_FLAG_FUNCVEC_FUNCTION))
+    output_asm_insn ("jmp\\t@%0:8", xoperands);
+  else
+    output_asm_insn ("jmp\\t%0", xoperands);
+  return "";
+}
+  [(set_attr "type" "call")
+   (set (attr "length")
+	(if_then_else (match_operand:QI 0 "small_call_insn_operand" "")
+		      (const_int 2)
+		      (const_int 4)))])
+
+;; Call subroutine, returning value in operand 0
+;; (which must be a hard register).
+
+;; ??? Even though we use HImode here, this works on the H8/300H and H8S.
+
+(define_expand "sibcall_value"
+  [(set (match_operand 0 "" "")
+	(call (match_operand:QI 1 "call_expander_operand" "")
+	      (match_operand 2 "general_operand" "")))]
+  ""
+  {
+    if (!register_operand (XEXP (operands[1], 0), Pmode)
+	&& GET_CODE (XEXP (operands[1], 0)) != SYMBOL_REF)
+      XEXP (operands[1], 0) = force_reg (Pmode, XEXP (operands[1], 0));
+  })
+
+(define_insn "sibcall_value_insn_<mode>"
+  [(set (match_operand 0 "" "=r")
+	(call (mem:QI (match_operand 1 "call_insn_operand" "Cr"))
+		      (match_operand:P 2 "general_operand" "g")))]
+  "SIBLING_CALL_P (insn)"
+{
+  rtx xoperands[2];
+  gcc_assert (GET_MODE (operands[1]) == Pmode);
+  xoperands[0] = operands[0];
+  xoperands[1] = gen_rtx_MEM (QImode, operands[1]);
+  if (GET_CODE (XEXP (xoperands[1], 0)) == SYMBOL_REF
+      && (SYMBOL_REF_FLAGS (XEXP (xoperands[1], 0)) & SYMBOL_FLAG_FUNCVEC_FUNCTION))
+    output_asm_insn ("jmp\\t@%1:8", xoperands);
+  else
+    output_asm_insn ("jmp\\t%1", xoperands);
   return "";
 }
   [(set_attr "type" "call")

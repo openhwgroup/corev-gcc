@@ -112,6 +112,13 @@ The default C and C++ compilers may be changed by the CC and CXX
 environment variables, respectively; those environment variables
 may include command line options.
 
+The cgo tool will always invoke the C compiler with the source file's
+directory in the include path; i.e. -I${SRCDIR} is always implied. This
+means that if a header file foo/bar.h exists both in the source
+directory and also in the system include directory (or some other place
+specified by a -I flag), then "#include <foo/bar.h>" will always find the
+local version in preference to any other version.
+
 The cgo tool is enabled by default for native builds on systems where
 it is expected to work. It is disabled by default when
 cross-compiling. You can control this by setting the CGO_ENABLED
@@ -379,6 +386,9 @@ It is possible to defeat this enforcement by using the unsafe package,
 and of course there is nothing stopping the C code from doing anything
 it likes. However, programs that break these rules are likely to fail
 in unexpected and unpredictable ways.
+
+The runtime/cgo.Handle type can be used to safely pass Go values
+between Go and C. See the runtime/cgo package documentation for details.
 
 Note: the current implementation has a bug. While Go code is permitted
 to write nil or a C pointer (but not a Go pointer) to C memory, the
@@ -714,7 +724,7 @@ linkage to the desired libraries. The main function is provided by
 _cgo_main.c:
 
 	int main() { return 0; }
-	void crosscall2(void(*fn)(void*, int, uintptr_t), void *a, int c, uintptr_t ctxt) { }
+	void crosscall2(void(*fn)(void*), void *a, int c, uintptr_t ctxt) { }
 	uintptr_t _cgo_wait_runtime_init_done(void) { return 0; }
 	void _cgo_release_context(uintptr_t ctxt) { }
 	char* _cgo_topofstack(void) { return (char*)0; }

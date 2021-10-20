@@ -1,6 +1,6 @@
 // Stream iterators
 
-// Copyright (C) 2001-2020 Free Software Foundation, Inc.
+// Copyright (C) 2001-2021 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -65,6 +65,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     public:
       ///  Construct end of input stream iterator.
       _GLIBCXX_CONSTEXPR istream_iterator()
+      _GLIBCXX_NOEXCEPT_IF(is_nothrow_default_constructible<_Tp>::value)
       : _M_stream(0), _M_value(), _M_ok(false) {}
 
       ///  Construct start of input stream iterator.
@@ -73,6 +74,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       { _M_read(); }
 
       istream_iterator(const istream_iterator& __obj)
+      _GLIBCXX_NOEXCEPT_IF(is_nothrow_copy_constructible<_Tp>::value)
       : _M_stream(__obj._M_stream), _M_value(__obj._M_value),
         _M_ok(__obj._M_ok)
       { }
@@ -89,8 +91,9 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       ~istream_iterator() = default;
 #endif
 
+      _GLIBCXX_NODISCARD
       const _Tp&
-      operator*() const
+      operator*() const _GLIBCXX_NOEXCEPT
       {
 	__glibcxx_requires_cond(_M_ok,
 				_M_message(__gnu_debug::__msg_deref_istream)
@@ -98,8 +101,10 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	return _M_value;
       }
 
+      _GLIBCXX_NODISCARD
       const _Tp*
-      operator->() const { return std::__addressof((operator*())); }
+      operator->() const _GLIBCXX_NOEXCEPT
+      { return std::__addressof((operator*())); }
 
       istream_iterator&
       operator++()
@@ -124,7 +129,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 
     private:
       bool
-      _M_equal(const istream_iterator& __x) const
+      _M_equal(const istream_iterator& __x) const _GLIBCXX_NOEXCEPT
       {
 	// Ideally this would just return _M_stream == __x._M_stream,
 	// but code compiled with old versions never sets _M_stream to null.
@@ -143,19 +148,26 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 
       /// Return true if the iterators refer to the same stream,
       /// or are both at end-of-stream.
+      _GLIBCXX_NODISCARD
       friend bool
       operator==(const istream_iterator& __x, const istream_iterator& __y)
+      _GLIBCXX_NOEXCEPT
       { return __x._M_equal(__y); }
 
+#if __cpp_impl_three_way_comparison < 201907L
       /// Return true if the iterators refer to different streams,
       /// or if one is at end-of-stream and the other is not.
+      _GLIBCXX_NODISCARD
       friend bool
       operator!=(const istream_iterator& __x, const istream_iterator& __y)
+      _GLIBCXX_NOEXCEPT
       { return !__x._M_equal(__y); }
+#endif
 
 #if __cplusplus > 201703L && __cpp_lib_concepts
+      [[nodiscard]]
       friend bool
-      operator==(const istream_iterator& __i, default_sentinel_t)
+      operator==(const istream_iterator& __i, default_sentinel_t) noexcept
       { return !__i._M_stream; }
 #endif
     };
@@ -177,7 +189,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     : public iterator<output_iterator_tag, void, void, void, void>
     {
     public:
-      //@{
+      ///@{
       /// Public typedef
 #if __cplusplus > 201703L
       using difference_type = ptrdiff_t;
@@ -185,20 +197,15 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       typedef _CharT                         char_type;
       typedef _Traits                        traits_type;
       typedef basic_ostream<_CharT, _Traits> ostream_type;
-      //@}
+      ///@}
 
     private:
       ostream_type*	_M_stream;
       const _CharT*	_M_string;
 
     public:
-#if __cplusplus > 201703L
-      constexpr ostream_iterator() noexcept
-      : _M_stream(nullptr), _M_string(nullptr) { }
-#endif
-
       /// Construct from an ostream.
-      ostream_iterator(ostream_type& __s)
+      ostream_iterator(ostream_type& __s) _GLIBCXX_NOEXCEPT
       : _M_stream(std::__addressof(__s)), _M_string(0) {}
 
       /**
@@ -211,11 +218,11 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
        *  @param  __s  Underlying ostream to write to.
        *  @param  __c  CharT delimiter string to insert.
       */
-      ostream_iterator(ostream_type& __s, const _CharT* __c)
+      ostream_iterator(ostream_type& __s, const _CharT* __c) _GLIBCXX_NOEXCEPT
       : _M_stream(std::__addressof(__s)), _M_string(__c)  { }
 
       /// Copy constructor.
-      ostream_iterator(const ostream_iterator& __obj)
+      ostream_iterator(const ostream_iterator& __obj) _GLIBCXX_NOEXCEPT
       : _M_stream(__obj._M_stream), _M_string(__obj._M_string)  { }
 
 #if __cplusplus >= 201103L
@@ -236,20 +243,21 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	return *this;
       }
 
+      _GLIBCXX_NODISCARD
       ostream_iterator&
-      operator*()
+      operator*() _GLIBCXX_NOEXCEPT
       { return *this; }
 
       ostream_iterator&
-      operator++()
+      operator++() _GLIBCXX_NOEXCEPT
       { return *this; }
 
       ostream_iterator&
-      operator++(int)
+      operator++(int) _GLIBCXX_NOEXCEPT
       { return *this; }
     };
 
-  // @} group iterators
+  /// @} group iterators
 
 _GLIBCXX_END_NAMESPACE_VERSION
 } // namespace

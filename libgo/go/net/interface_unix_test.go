@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+//go:build darwin || dragonfly || freebsd || linux || netbsd || openbsd
 // +build darwin dragonfly freebsd linux netbsd openbsd
 
 package net
@@ -46,7 +47,7 @@ func TestPointToPointInterface(t *testing.T) {
 	if testing.Short() {
 		t.Skip("avoid external network")
 	}
-	if runtime.GOOS == "darwin" {
+	if runtime.GOOS == "darwin" || runtime.GOOS == "ios" {
 		t.Skipf("not supported on %s", runtime.GOOS)
 	}
 	if os.Getuid() != 0 {

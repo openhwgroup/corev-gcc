@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+//go:build ignore
 // +build ignore
 
 package main
@@ -9,9 +10,9 @@ package main
 import (
 	"bytes"
 	"flag"
+	exec "internal/execabs"
 	"log"
 	"os"
-	"os/exec"
 	"strings"
 	"testing"
 	"text/template"
@@ -62,9 +63,10 @@ func testFlags() []string {
 		}
 		name := strings.TrimPrefix(f.Name, "test.")
 
-		if name == "testlogfile" {
-			// test.testlogfile is “for use only by cmd/go”
-		} else {
+		switch name {
+		case "testlogfile", "paniconexit0":
+			// These flags are only for use by cmd/go.
+		default:
 			names = append(names, name)
 		}
 	})

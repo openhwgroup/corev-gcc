@@ -1,6 +1,6 @@
 /* Get common system includes and various definitions and declarations based
    on autoconf macros.
-   Copyright (C) 1998-2020 Free Software Foundation, Inc.
+   Copyright (C) 1998-2021 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -232,9 +232,16 @@ extern int errno;
 #ifdef INCLUDE_VECTOR
 # include <vector>
 #endif
+#ifdef INCLUDE_ARRAY
+# include <array>
+#endif
+#ifdef INCLUDE_FUNCTIONAL
+# include <functional>
+#endif
 # include <cstring>
 # include <new>
 # include <utility>
+# include <type_traits>
 #endif
 
 /* Some of glibc's string inlines cause warnings.  Plus we'd rather
@@ -351,6 +358,10 @@ extern int errno;
 # ifdef HAVE_SYS_FILE_H
 #  include <sys/file.h>
 # endif
+#endif
+
+#ifdef HAVE_SYS_LOCKING_H
+# include <sys/locking.h>
 #endif
 
 #ifndef SEEK_SET
@@ -526,6 +537,10 @@ extern void *realloc (void *, size_t);
 
 #ifdef HAVE_INTTYPES_H
 #include <inttypes.h>
+#endif
+
+#ifndef SIZE_MAX
+# define SIZE_MAX INTTYPE_MAXIMUM (size_t)
 #endif
 
 #ifdef __cplusplus
@@ -731,7 +746,7 @@ extern int vsnprintf (char *, size_t, const char *, va_list);
 #endif
 
 #ifdef INCLUDE_MALLOC_H
-#ifdef HAVE_MALLINFO
+#if defined(HAVE_MALLINFO) || defined(HAVE_MALLINFO2)
 #include <malloc.h>
 #endif
 #endif
@@ -786,6 +801,12 @@ extern void fancy_abort (const char *, int, const char *)
 #define ALWAYS_INLINE inline __attribute__ ((always_inline))
 #else
 #define ALWAYS_INLINE inline
+#endif
+
+#if GCC_VERSION >= 3004
+#define WARN_UNUSED_RESULT __attribute__ ((__warn_unused_result__))
+#else
+#define WARN_UNUSED_RESULT
 #endif
 
 /* Use gcc_unreachable() to mark unreachable locations (like an
@@ -1048,7 +1069,8 @@ extern void fancy_abort (const char *, int, const char *)
 	LIBGCC2_LONG_DOUBLE_TYPE_SIZE STRUCT_VALUE			   \
 	EH_FRAME_IN_DATA_SECTION TARGET_FLT_EVAL_METHOD_NON_DEFAULT	   \
 	JCR_SECTION_NAME TARGET_USE_JCR_SECTION SDB_DEBUGGING_INFO	   \
-	SDB_DEBUG NO_IMPLICIT_EXTERN_C
+	SDB_DEBUG NO_IMPLICIT_EXTERN_C NOTICE_UPDATE_CC			   \
+	CC_STATUS_MDEP_INIT CC_STATUS_MDEP CC_STATUS
 
 /* Hooks that are no longer used.  */
  #pragma GCC poison LANG_HOOKS_FUNCTION_MARK LANG_HOOKS_FUNCTION_FREE	\
@@ -1228,6 +1250,7 @@ void gcc_sort_r (void *, size_t, size_t, sort_r_cmp_fn *, void *);
 void gcc_qsort (void *, size_t, size_t, int (*)(const void *, const void *));
 void gcc_stablesort (void *, size_t, size_t,
 		     int (*)(const void *, const void *));
+void gcc_stablesort_r (void *, size_t, size_t, sort_r_cmp_fn *, void *data);
 /* Redirect four-argument qsort calls to gcc_qsort; one-argument invocations
    correspond to vec::qsort, and use C qsort internally.  */
 #define PP_5th(a1, a2, a3, a4, a5, ...) a5
@@ -1236,6 +1259,7 @@ void gcc_stablesort (void *, size_t, size_t,
 
 #define ONE_K 1024
 #define ONE_M (ONE_K * ONE_K)
+#define ONE_G (ONE_K * ONE_M)
 
 /* Display a number as an integer multiple of either:
    - 1024, if said integer is >= to 10 K (in base 2)
@@ -1272,5 +1296,34 @@ void gcc_stablesort (void *, size_t, size_t,
 #undef NULL
 #define NULL nullptr
 #endif
+
+/* Return true if STR string starts with PREFIX.  */
+
+static inline bool
+startswith (const char *str, const char *prefix)
+{
+  return strncmp (str, prefix, strlen (prefix)) == 0;
+}
+
+/* Strip white spaces from STRING with LEN length.
+   A stripped string is returned and LEN is updated accordingly.  */
+
+static inline char *
+strip_whitespaces (char *string, size_t *len)
+{
+  while (string[0] == ' ' || string[0] == '\t')
+    {
+      --(*len);
+      ++string;
+    }
+
+  while (string[*len - 1] == ' ' || string[*len - 1] == '\t')
+    {
+      string[*len - 1] = '\0';
+      --(*len);
+    }
+
+  return string;
+}
 
 #endif /* ! GCC_SYSTEM_H */

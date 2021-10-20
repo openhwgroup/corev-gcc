@@ -13,7 +13,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net"
 	"os"
 	"os/exec"
@@ -86,7 +85,7 @@ func checkOpenSSLVersion() error {
 	println("to update the test data.")
 	println("")
 	println("Configure it with:")
-	println("./Configure enable-weak-ssl-ciphers")
+	println("./Configure enable-weak-ssl-ciphers no-shared")
 	println("and then add the apps/ directory at the front of your PATH.")
 	println("***********************************************")
 
@@ -224,7 +223,7 @@ func parseTestData(r io.Reader) (flows [][]byte, err error) {
 
 // tempFile creates a temp file containing contents and returns its path.
 func tempFile(contents string) string {
-	file, err := ioutil.TempFile("", "go-tls-test")
+	file, err := os.CreateTemp("", "go-tls-test")
 	if err != nil {
 		panic("failed to create temp file: " + err.Error())
 	}
@@ -336,15 +335,9 @@ func TestMain(m *testing.M) {
 }
 
 func runMain(m *testing.M) int {
-	// TLS 1.3 cipher suites preferences are not configurable and change based
-	// on the architecture. Force them to the version with AES acceleration for
-	// test consistency.
-	once.Do(initDefaultCipherSuites)
-	varDefaultCipherSuitesTLS13 = []uint16{
-		TLS_AES_128_GCM_SHA256,
-		TLS_CHACHA20_POLY1305_SHA256,
-		TLS_AES_256_GCM_SHA384,
-	}
+	// Cipher suites preferences change based on the architecture. Force them to
+	// the version without AES acceleration for test consistency.
+	hasAESGCMHardwareSupport = false
 
 	// Set up localPipe.
 	l, err := net.Listen("tcp", "127.0.0.1:0")
@@ -403,7 +396,7 @@ func testHandshake(t *testing.T, clientConfig, serverConfig *Config) (serverStat
 		}
 		defer cli.Close()
 		clientState = cli.ConnectionState()
-		buf, err := ioutil.ReadAll(cli)
+		buf, err := io.ReadAll(cli)
 		if err != nil {
 			t.Errorf("failed to call cli.Read: %v", err)
 		}

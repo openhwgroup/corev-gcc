@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2020 Free Software Foundation, Inc.
+// Copyright (C) 2019-2021 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -34,3 +34,15 @@ test()
 }
 
 static_assert(test());
+
+constexpr bool
+test_n()
+{
+  int tot = 0;
+  auto sum = [&total = tot](int i){ total += i; };
+  auto sum2 = std::for_each_n(ca0.begin(), std::size(ca0)-1, sum);
+
+  return tot == 55;
+}
+
+static_assert(test_n());

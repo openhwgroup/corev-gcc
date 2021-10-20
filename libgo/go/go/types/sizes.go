@@ -48,7 +48,7 @@ type StdSizes struct {
 func (s *StdSizes) Alignof(T Type) int64 {
 	// For arrays and structs, alignment is defined in terms
 	// of alignment of the elements and fields, respectively.
-	switch t := T.Underlying().(type) {
+	switch t := optype(T).(type) {
 	case *Array:
 		// spec: "For a variable x of array type: unsafe.Alignof(x)
 		// is the same as unsafe.Alignof(x[0]), but at least 1."
@@ -118,7 +118,7 @@ var basicSizes = [...]byte{
 }
 
 func (s *StdSizes) Sizeof(T Type) int64 {
-	switch t := T.Underlying().(type) {
+	switch t := optype(T).(type) {
 	case *Basic:
 		assert(isTyped(T))
 		k := t.kind
@@ -148,6 +148,8 @@ func (s *StdSizes) Sizeof(T Type) int64 {
 		}
 		offsets := s.Offsetsof(t.fields)
 		return offsets[n-1] + s.Sizeof(t.fields[n-1].typ)
+	case *_Sum:
+		panic("Sizeof unimplemented for type sum")
 	case *Interface:
 		return s.WordSize * 2
 	}
@@ -167,6 +169,7 @@ var gcArchSizes = map[string]*StdSizes{
 	"mips64le": {8, 8},
 	"ppc64":    {8, 8},
 	"ppc64le":  {8, 8},
+	"riscv":    {4, 4},
 	"riscv64":  {8, 8},
 	"s390x":    {8, 8},
 	"sparc64":  {8, 8},
@@ -180,7 +183,8 @@ var gcArchSizes = map[string]*StdSizes{
 //
 // Supported architectures for compiler "gc":
 // "386", "arm", "arm64", "amd64", "amd64p32", "mips", "mipsle",
-// "mips64", "mips64le", "ppc64", "ppc64le", "riscv64", "s390x", "sparc64", "wasm".
+// "mips64", "mips64le", "ppc64", "ppc64le", "riscv", "riscv64",
+// "s390x", "sparc64", "wasm".
 func SizesFor(compiler, arch string) Sizes {
 	var m map[string]*StdSizes
 	switch compiler {
@@ -239,7 +243,7 @@ func (conf *Config) offsetsof(T *Struct) []int64 {
 func (conf *Config) offsetof(typ Type, index []int) int64 {
 	var o int64
 	for _, i := range index {
-		s := typ.Underlying().(*Struct)
+		s := asStruct(typ)
 		o += conf.offsetsof(s)[i]
 		typ = s.fields[i].typ
 	}

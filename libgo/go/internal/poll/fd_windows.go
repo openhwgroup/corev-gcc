@@ -886,6 +886,33 @@ func (fd *FD) FindNextFile(data *syscall.Win32finddata) error {
 	return syscall.FindNextFile(fd.Sysfd, data)
 }
 
+// Fchmod updates syscall.ByHandleFileInformation.Fileattributes when needed.
+func (fd *FD) Fchmod(mode uint32) error {
+	if err := fd.incref(); err != nil {
+		return err
+	}
+	defer fd.decref()
+
+	var d syscall.ByHandleFileInformation
+	if err := syscall.GetFileInformationByHandle(fd.Sysfd, &d); err != nil {
+		return err
+	}
+	attrs := d.FileAttributes
+	if mode&syscall.S_IWRITE != 0 {
+		attrs &^= syscall.FILE_ATTRIBUTE_READONLY
+	} else {
+		attrs |= syscall.FILE_ATTRIBUTE_READONLY
+	}
+	if attrs == d.FileAttributes {
+		return nil
+	}
+
+	var du windows.FILE_BASIC_INFO
+	du.FileAttributes = attrs
+	l := uint32(unsafe.Sizeof(d))
+	return windows.SetFileInformationByHandle(fd.Sysfd, windows.FileBasicInfo, uintptr(unsafe.Pointer(&du)), l)
+}
+
 // Fchdir wraps syscall.Fchdir.
 func (fd *FD) Fchdir() error {
 	if err := fd.incref(); err != nil {
@@ -986,7 +1013,7 @@ func sockaddrToRaw(sa syscall.Sockaddr) (unsafe.Pointer, int32, error) {
 }
 
 // ReadMsg wraps the WSARecvMsg network call.
-func (fd *FD) ReadMsg(p []byte, oob []byte) (int, int, int, syscall.Sockaddr, error) {
+func (fd *FD) ReadMsg(p []byte, oob []byte, flags int) (int, int, int, syscall.Sockaddr, error) {
 	if err := fd.readLock(); err != nil {
 		return 0, 0, 0, nil, err
 	}
@@ -1001,6 +1028,7 @@ func (fd *FD) ReadMsg(p []byte, oob []byte) (int, int, int, syscall.Sockaddr, er
 	o.rsa = new(syscall.RawSockaddrAny)
 	o.msg.Name = (syscall.Pointer)(unsafe.Pointer(o.rsa))
 	o.msg.Namelen = int32(unsafe.Sizeof(*o.rsa))
+	o.msg.Flags = uint32(flags)
 	n, err := execIO(o, func(o *operation) error {
 		return windows.WSARecvMsg(o.fd.Sysfd, &o.msg, &o.qty, &o.o, nil)
 	})

@@ -2,23 +2,24 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+//go:build aix
 // +build aix
 
 package runtime
 
 import (
-	"internal/cpu"
 	"unsafe"
 )
 
 //extern sysconf
 func sysconf(int32) _C_long
 
-//extern getsystemcfg
-func getsystemcfg(int32) uint64
-
 type mOS struct {
 	waitsema uintptr // semaphore for parking on locks
+}
+
+func getProcID() uint64 {
+	return uint64(gettid())
 }
 
 //extern malloc
@@ -46,7 +47,7 @@ func clock_gettime(clock_id int64, timeout *timespec) int32
 
 //go:nosplit
 func semacreate(mp *m) {
-	if mp.mos.waitsema != 0 {
+	if mp.waitsema != 0 {
 		return
 	}
 
@@ -59,7 +60,7 @@ func semacreate(mp *m) {
 	if sem_init(sem, 0, 0) != 0 {
 		throw("sem_init")
 	}
-	mp.mos.waitsema = uintptr(unsafe.Pointer(sem))
+	mp.waitsema = uintptr(unsafe.Pointer(sem))
 }
 
 //go:nosplit
@@ -85,7 +86,7 @@ func semasleep(ns int64) int32 {
 		ts.tv_sec = timespec_sec_t(sec)
 		ts.tv_nsec = timespec_nsec_t(nsec)
 
-		if sem_timedwait((*semt)(unsafe.Pointer(_m_.mos.waitsema)), &ts) != 0 {
+		if sem_timedwait((*semt)(unsafe.Pointer(_m_.waitsema)), &ts) != 0 {
 			err := errno()
 			if err == _ETIMEDOUT || err == _EAGAIN || err == _EINTR {
 				return -1
@@ -96,7 +97,7 @@ func semasleep(ns int64) int32 {
 		return 0
 	}
 	for {
-		r1 := sem_wait((*semt)(unsafe.Pointer(_m_.mos.waitsema)))
+		r1 := sem_wait((*semt)(unsafe.Pointer(_m_.waitsema)))
 		if r1 == 0 {
 			break
 		}
@@ -110,7 +111,7 @@ func semasleep(ns int64) int32 {
 
 //go:nosplit
 func semawakeup(mp *m) {
-	if sem_post((*semt)(unsafe.Pointer(mp.mos.waitsema))) != 0 {
+	if sem_post((*semt)(unsafe.Pointer(mp.waitsema))) != 0 {
 		throw("sem_post")
 	}
 }
@@ -118,29 +119,9 @@ func semawakeup(mp *m) {
 func osinit() {
 	ncpu = int32(sysconf(__SC_NPROCESSORS_ONLN))
 	physPageSize = uintptr(sysconf(__SC_PAGE_SIZE))
-	setupSystemConf()
 }
 
 const (
 	_CLOCK_REALTIME  = 9
 	_CLOCK_MONOTONIC = 10
 )
-
-const (
-	// getsystemcfg constants
-	_SC_IMPL     = 2
-	_IMPL_POWER8 = 0x10000
-	_IMPL_POWER9 = 0x20000
-)
-
-// setupSystemConf retrieves information about the CPU and updates
-// cpu.HWCap variables.
-func setupSystemConf() {
-	impl := getsystemcfg(_SC_IMPL)
-	if impl&_IMPL_POWER8 != 0 {
-		cpu.HWCap2 |= cpu.PPC_FEATURE2_ARCH_2_07
-	}
-	if impl&_IMPL_POWER9 != 0 {
-		cpu.HWCap2 |= cpu.PPC_FEATURE2_ARCH_3_00
-	}
-}

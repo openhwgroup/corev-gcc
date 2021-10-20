@@ -1,5 +1,5 @@
 # Makefile for the toplevel directory of the D Standard library.
-# Copyright (C) 2006-2020 Free Software Foundation, Inc.
+# Copyright (C) 2006-2021 Free Software Foundation, Inc.
 #
 # GCC is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -33,14 +33,14 @@ AM_MAKEFLAGS = \
 	"AR_FLAGS=$(AR_FLAGS)" \
 	"CC_FOR_BUILD=$(CC_FOR_BUILD)" \
 	"CC_FOR_TARGET=$(CC_FOR_TARGET)" \
-	"CCASFLAGS=$(CCASFLAGS) $(CET_FLAGS)" \
-	"CFLAGS=$(CFLAGS) $(CET_FLAGS)" \
-	"CXXFLAGS=$(CXXFLAGS) $(CET_FLAGS)" \
+	"CCASFLAGS=$(CCASFLAGS)" \
+	"CFLAGS=$(CFLAGS)" \
+	"CXXFLAGS=$(CXXFLAGS)" \
 	"CFLAGS_FOR_BUILD=$(CFLAGS_FOR_BUILD)" \
-	"CFLAGS_FOR_TARGET=$(CFLAGS_FOR_TARGET) $(CET_FLAGS)" \
+	"CFLAGS_FOR_TARGET=$(CFLAGS_FOR_TARGET)" \
 	"GDC_FOR_TARGET=$(GDC_FOR_TARGET)" \
 	"GDC=$(GDC)" \
-	"GDCFLAGS=$(GDCFLAGS) $(CET_FLAGS)" \
+	"GDCFLAGS=$(GDCFLAGS)" \
 	"INSTALL=$(INSTALL)" \
 	"INSTALL_DATA=$(INSTALL_DATA)" \
 	"INSTALL_PROGRAM=$(INSTALL_PROGRAM)" \

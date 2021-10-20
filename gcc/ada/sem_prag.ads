@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---          Copyright (C) 1992-2020, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2021, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -49,6 +49,7 @@ package Sem_Prag is
       Pragma_Contract_Cases               => True,
       Pragma_Convention                   => True,
       Pragma_CPU                          => True,
+      Pragma_CUDA_Device                  => True,
       Pragma_CUDA_Global                  => True,
       Pragma_Default_Initial_Condition    => True,
       Pragma_Default_Storage_Pool         => True,
@@ -63,6 +64,7 @@ package Sem_Prag is
       Pragma_Favor_Top_Level              => True,
       Pragma_Ghost                        => True,
       Pragma_Global                       => True,
+      Pragma_GNAT_Annotate                => True,
       Pragma_Import                       => True,
       Pragma_Independent                  => True,
       Pragma_Independent_Components       => True,
@@ -115,7 +117,6 @@ package Sem_Prag is
       Pragma_Type_Invariant               => True,
       Pragma_Unchecked_Union              => True,
       Pragma_Universal_Aliasing           => True,
-      Pragma_Universal_Data               => True,
       Pragma_Unmodified                   => True,
       Pragma_Unreferenced                 => True,
       Pragma_Unreferenced_Objects         => True,
@@ -265,6 +266,13 @@ package Sem_Prag is
    --  the entity of [generic] package body or [generic] subprogram body which
    --  caused "freezing" of the related contract where the pragma resides.
 
+   procedure Analyze_Subprogram_Variant_In_Decl_Part
+     (N         : Node_Id;
+      Freeze_Id : Entity_Id := Empty);
+   --  Perform full analysis of delayed pragma Subprogram_Variant. Freeze_Id is
+   --  the entity of [generic] package body or [generic] subprogram body which
+   --  caused "freezing" of the related contract where the pragma resides.
+
    procedure Analyze_Test_Case_In_Decl_Part (N : Node_Id);
    --  Perform preanalysis of pragma Test_Case
 
@@ -353,9 +361,9 @@ package Sem_Prag is
       Subp_Outputs : in out Elist_Id;
       Global_Seen  : out Boolean);
    --  Subsidiary to the analysis of pragmas Depends, Global, Refined_Depends
-   --  and Refined_Global. The routine is also used by GNATprove. Collect all
-   --  inputs and outputs of subprogram Subp_Id in lists Subp_Inputs (inputs)
-   --  and Subp_Outputs (outputs). The inputs and outputs are gathered from:
+   --  and Refined_Global. Collect all inputs and outputs of subprogram Subp_Id
+   --  in lists Subp_Inputs (inputs) and Subp_Outputs (outputs). The inputs and
+   --  outputs are gathered from:
    --    1) The formal parameters of the subprogram
    --    2) The generic formal parameters of the generic subprogram
    --    3) The current instance of a concurrent type
@@ -422,7 +430,7 @@ package Sem_Prag is
 
    function Get_Argument
      (Prag       : Node_Id;
-      Context_Id : Node_Id := Empty) return Node_Id;
+      Context_Id : Entity_Id := Empty) return Node_Id;
    --  Obtain the argument of pragma Prag depending on context and the nature
    --  of the pragma. The argument is extracted in the following manner:
    --

@@ -1,3 +1,52 @@
+2021-07-21  Martin Sebor  <msebor@redhat.com>
+
+	PR bootstrap/101379
+	* config/linux/arm/host-config.h (__kernel_helper_version): New
+	function.  Adjust shadow macro.
+
+2021-01-15  Jakub Jelinek  <jakub@redhat.com>
+
+	PR target/70454
+	* configure.tgt: For i?86 and x86_64 determine if -march=i486 needs to
+	be added through preprocessor check on
+	__GCC_HAVE_SYNC_COMPARE_AND_SWAP_4.  Determine if try_ifunc is needed
+	based on preprocessor check on __GCC_HAVE_SYNC_COMPARE_AND_SWAP_16
+	or __GCC_HAVE_SYNC_COMPARE_AND_SWAP_8.
+
+2021-01-05  Samuel Thibault  <samuel.thibault@ens-lyon.org>
+
+	* configure: Re-generate.
+
+2020-12-05  Iain Sandoe  <iain@sandoe.co.uk>
+
+	PR target/97865
+	* configure: Regenerate.
+
+2020-11-29  John David Anglin  <danglin@gcc.gnu.org>
+
+	* configure: Regenerate.
+
+2020-10-11  Clement Chigot  <clement.chigot@atos.net>
+
+	* config/t-aix: Delete and recreate libatomic before creating
+	FAT library.
+
+2020-09-27  Clement Chigot  <clement.chigot@atos.net>
+
+	* config/t-aix: Use $(AR) without -X32_64.
+
+2020-09-11  Tom de Vries  <tdevries@suse.de>
+
+	PR target/96898
+	* configure.tgt: Add nvptx.
+	* libatomic_i.h (MASK_8, INVERT_MASK_8): New macro definition.
+	* config/nvptx/host-config.h: New file.
+	* config/nvptx/lock.c: New file.
+
+2020-09-07  Tom de Vries  <tdevries@suse.de>
+
+	* testsuite/libatomic.c/atomic-generic.c: Include string.h.
+
 2020-07-14  David Edelsohn  <dje.gcc@gmail.com>
 
 	* config/t-aix: Set BITS from compiler cpp macro.
@@ -545,7 +594,7 @@
 
 	* Initial commit.
 
-Copyright (C) 2012-2020 Free Software Foundation, Inc.
+Copyright (C) 2012-2021 Free Software Foundation, Inc.
 
 Copying and distribution of this file, with or without modification,
 are permitted in any medium without royalty provided the copyright

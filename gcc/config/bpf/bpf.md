@@ -1,5 +1,5 @@
 ;; Machine description for eBPF.
-;; Copyright (C) 2019-2020 Free Software Foundation, Inc.
+;; Copyright (C) 2019-2021 Free Software Foundation, Inc.
 
 ;; This file is part of GCC.
 
@@ -82,10 +82,15 @@
 
 ;;;; NOPs
 
+;; The Linux kernel verifier performs some optimizations that rely on
+;; nop instructions to be encoded as `ja 0', i.e. a jump to offset 0,
+;; which actually means to jump to the next instruction, since in BPF
+;; offsets are expressed in 64-bit words _minus one_.
+
 (define_insn "nop"
   [(const_int 0)]
   ""
-  "mov\t%%r0,%%r0"
+  "ja\t0"
   [(set_attr "type" "alu")])
 
 ;;;; Arithmetic/Logical
@@ -95,9 +100,9 @@
 ;; insns, with the proper modes.
 ;;
 ;; 32-bit arithmetic (for SI modes) is implemented using the alu32
-;; instructions.
+;; instructions, if available.
 
-(define_mode_iterator AM [SI DI])
+(define_mode_iterator AM [(SI "bpf_has_alu32") DI])
 
 ;;; Addition
 (define_insn "add<AM:mode>3"
@@ -160,6 +165,16 @@
   "div<msuffix>\t%0,%2"
   [(set_attr "type" "<mtype>")])
 
+;; However, xBPF does provide a signed division operator, sdiv.
+
+(define_insn "div<AM:mode>3"
+  [(set (match_operand:AM 0 "register_operand" "=r,r")
+        (div:AM (match_operand:AM 1 "register_operand" " 0,0")
+                (match_operand:AM 2 "reg_or_imm_operand" "r,I")))]
+  "TARGET_XBPF"
+  "sdiv<msuffix>\t%0,%2"
+  [(set_attr "type" "<mtype>")])
+
 ;;; Modulus
 
 ;; Note that eBPF doesn't provide instructions for signed integer
@@ -171,6 +186,16 @@
                  (match_operand:AM 2 "reg_or_imm_operand" "r,I")))]
   ""
   "mod<msuffix>\t%0,%2"
+  [(set_attr "type" "<mtype>")])
+
+;; Again, xBPF provides a signed version, smod.
+
+(define_insn "mod<AM:mode>3"
+  [(set (match_operand:AM 0 "register_operand" "=r,r")
+        (mod:AM (match_operand:AM 1 "register_operand" " 0,0")
+                (match_operand:AM 2 "reg_or_imm_operand" "r,I")))]
+  "TARGET_XBPF"
+  "smod<msuffix>\t%0,%2"
   [(set_attr "type" "<mtype>")])
 
 ;;; Logical AND
@@ -216,22 +241,24 @@
 ;; the ldx{bhwdw} instructions to load the values in registers.
 
 (define_insn "zero_extendhidi2"
-  [(set (match_operand:DI 0 "register_operand" "=r,r")
-	(zero_extend:DI (match_operand:HI 1 "nonimmediate_operand" "r,m")))]
+  [(set (match_operand:DI 0 "register_operand" "=r,r,r")
+	(zero_extend:DI (match_operand:HI 1 "nonimmediate_operand" "0,r,m")))]
   ""
   "@
    and\t%0,0xffff
+   mov\t%0,%1\;and\t%0,0xffff
    ldxh\t%0,%1"
-  [(set_attr "type" "alu,ldx")])
+  [(set_attr "type" "alu,alu,ldx")])
 
 (define_insn "zero_extendqidi2"
-  [(set (match_operand:DI 0 "register_operand" "=r,r")
-	(zero_extend:DI (match_operand:QI 1 "nonimmediate_operand" "r,m")))]
+  [(set (match_operand:DI 0 "register_operand" "=r,r,r")
+	(zero_extend:DI (match_operand:QI 1 "nonimmediate_operand" "0,r,m")))]
   ""
   "@
    and\t%0,0xff
+   mov\t%0,%1\;and\t%0,0xff
    ldxb\t%0,%1"
-  [(set_attr "type" "alu,ldx")])
+  [(set_attr "type" "alu,alu,ldx")])
 
 (define_insn "zero_extendsidi2"
   [(set (match_operand:DI 0 "register_operand" "=r,r")
@@ -239,7 +266,7 @@
 	  (match_operand:SI 1 "nonimmediate_operand" "r,m")))]
   ""
   "@
-   mov32\t%0,%1
+   * return bpf_has_alu32 ? \"mov32\t%0,%1\" : \"mov\t%0,%1\;and\t%0,0xffffffff\";
    ldxw\t%0,%1"
   [(set_attr "type" "alu,ldx")])
 
@@ -288,7 +315,7 @@
 
 ;;;; Shifts
 
-(define_mode_iterator SIM [SI DI])
+(define_mode_iterator SIM [(SI "bpf_has_alu32") DI])
 
 (define_insn "ashr<SIM:mode>3"
   [(set (match_operand:SIM 0 "register_operand"                 "=r,r")
@@ -319,24 +346,28 @@
 ;; The eBPF jump instructions use 64-bit arithmetic when evaluating
 ;; the jump conditions.  Therefore we use DI modes below.
 
-(define_expand "cbranchdi4"
+(define_mode_iterator JM [(SI "bpf_has_jmp32") DI])
+
+(define_expand "cbranch<JM:mode>4"
   [(set (pc)
 	(if_then_else (match_operator 0 "comparison_operator"
-			[(match_operand:DI 1 "register_operand")
-			 (match_operand:DI 2 "reg_or_imm_operand")])
+			[(match_operand:JM 1 "register_operand")
+			 (match_operand:JM 2 "reg_or_imm_operand")])
 		      (label_ref (match_operand 3 "" ""))
 		      (pc)))]
   ""
 {
   if (!ordered_comparison_operator (operands[0], VOIDmode))
     FAIL;
+
+  bpf_expand_cbranch (<JM:MODE>mode, operands);
 })
 
-(define_insn "*branch_on_di"
+(define_insn "*branch_on_<JM:mode>"
   [(set (pc)
 	(if_then_else (match_operator 3 "ordered_comparison_operator"
-			 [(match_operand:DI 0 "register_operand" "r")
-			  (match_operand:DI 1 "reg_or_imm_operand" "rI")])
+			 [(match_operand:JM 0 "register_operand" "r")
+			  (match_operand:JM 1 "reg_or_imm_operand" "rI")])
 		      (label_ref (match_operand 2 "" ""))
 		      (pc)))]
   ""
@@ -345,16 +376,16 @@
 
   switch (code)
   {
-  case EQ: return "jeq\t%0,%1,%2"; break;
-  case NE: return "jne\t%0,%1,%2"; break;
-  case LT: return "jslt\t%0,%1,%2"; break;
-  case LE: return "jsle\t%0,%1,%2"; break;
-  case GT: return "jsgt\t%0,%1,%2"; break;
-  case GE: return "jsge\t%0,%1,%2"; break;
-  case LTU: return "jlt\t%0,%1,%2"; break;
-  case LEU: return "jle\t%0,%1,%2"; break;
-  case GTU: return "jgt\t%0,%1,%2"; break;
-  case GEU: return "jge\t%0,%1,%2"; break;
+  case EQ: return "jeq<msuffix>\t%0,%1,%2"; break;
+  case NE: return "jne<msuffix>\t%0,%1,%2"; break;
+  case LT: return "jslt<msuffix>\t%0,%1,%2"; break;
+  case LE: return "jsle<msuffix>\t%0,%1,%2"; break;
+  case GT: return "jsgt<msuffix>\t%0,%1,%2"; break;
+  case GE: return "jsge<msuffix>\t%0,%1,%2"; break;
+  case LTU: return "jlt<msuffix>\t%0,%1,%2"; break;
+  case LEU: return "jle<msuffix>\t%0,%1,%2"; break;
+  case GTU: return "jgt<msuffix>\t%0,%1,%2"; break;
+  case GEU: return "jge<msuffix>\t%0,%1,%2"; break;
   default:
     gcc_unreachable ();
     return "";

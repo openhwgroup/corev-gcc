@@ -103,7 +103,16 @@ func (p *cpuProfile) add(gp *g, stk []uintptr) {
 		// because otherwise its write barrier behavior may not
 		// be correct. See the long comment there before
 		// changing the argument here.
-		cpuprof.log.write(&gp.labels, nanotime(), hdr[:], stk)
+		//
+		// Note: it can happen on Windows, where we are calling
+		// p.add with a gp that is not the current g, that gp is nil,
+		// meaning we interrupted a system thread with no g.
+		// Avoid faulting in that case.
+		var tagPtr *unsafe.Pointer
+		if gp != nil {
+			tagPtr = &gp.labels
+		}
+		cpuprof.log.write(tagPtr, nanotime(), hdr[:], stk)
 	}
 
 	atomic.Store(&prof.signalLock, 0)
@@ -189,7 +198,7 @@ func CPUProfile() []byte {
 	panic("CPUProfile no longer available")
 }
 
-//go:linkname runtime_pprof_runtime_cyclesPerSecond runtime..z2fpprof.runtime_cyclesPerSecond
+//go:linkname runtime_pprof_runtime_cyclesPerSecond runtime_1pprof.runtime__cyclesPerSecond
 func runtime_pprof_runtime_cyclesPerSecond() int64 {
 	return tickspersecond()
 }
@@ -200,7 +209,7 @@ func runtime_pprof_runtime_cyclesPerSecond() int64 {
 // on has been returned, readProfile returns eof=true.
 // The caller must save the returned data and tags before calling readProfile again.
 //
-//go:linkname runtime_pprof_readProfile runtime..z2fpprof.readProfile
+//go:linkname runtime_pprof_readProfile runtime_1pprof.readProfile
 func runtime_pprof_readProfile() ([]uint64, []unsafe.Pointer, bool) {
 	lock(&cpuprof.lock)
 	log := cpuprof.log

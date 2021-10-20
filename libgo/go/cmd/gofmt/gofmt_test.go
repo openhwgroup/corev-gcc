@@ -7,7 +7,6 @@ package main
 import (
 	"bytes"
 	"flag"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -50,11 +49,12 @@ func gofmtFlags(filename string, maxLines int) string {
 		case scanner.EOF:
 			return ""
 		}
-
 	}
 
 	return ""
 }
+
+var typeParamsEnabled = false
 
 func runTest(t *testing.T, in, out string) {
 	// process flags
@@ -78,6 +78,11 @@ func runTest(t *testing.T, in, out string) {
 		case "-stdin":
 			// fake flag - pretend input is from stdin
 			stdin = true
+		case "-G":
+			// fake flag - test is for generic code
+			if !typeParamsEnabled {
+				return
+			}
 		default:
 			t.Errorf("unrecognized flag name: %s", name)
 		}
@@ -93,7 +98,7 @@ func runTest(t *testing.T, in, out string) {
 		return
 	}
 
-	expected, err := ioutil.ReadFile(out)
+	expected, err := os.ReadFile(out)
 	if err != nil {
 		t.Error(err)
 		return
@@ -102,7 +107,7 @@ func runTest(t *testing.T, in, out string) {
 	if got := buf.Bytes(); !bytes.Equal(got, expected) {
 		if *update {
 			if in != out {
-				if err := ioutil.WriteFile(out, got, 0666); err != nil {
+				if err := os.WriteFile(out, got, 0666); err != nil {
 					t.Error(err)
 				}
 				return
@@ -116,7 +121,7 @@ func runTest(t *testing.T, in, out string) {
 		if err == nil {
 			t.Errorf("%s", d)
 		}
-		if err := ioutil.WriteFile(in+".gofmt", got, 0666); err != nil {
+		if err := os.WriteFile(in+".gofmt", got, 0666); err != nil {
 			t.Error(err)
 		}
 	}
@@ -157,7 +162,7 @@ func TestCRLF(t *testing.T) {
 	const input = "testdata/crlf.input"   // must contain CR/LF's
 	const golden = "testdata/crlf.golden" // must not contain any CR's
 
-	data, err := ioutil.ReadFile(input)
+	data, err := os.ReadFile(input)
 	if err != nil {
 		t.Error(err)
 	}
@@ -165,7 +170,7 @@ func TestCRLF(t *testing.T) {
 		t.Errorf("%s contains no CR/LF's", input)
 	}
 
-	data, err = ioutil.ReadFile(golden)
+	data, err = os.ReadFile(golden)
 	if err != nil {
 		t.Error(err)
 	}
@@ -175,7 +180,7 @@ func TestCRLF(t *testing.T) {
 }
 
 func TestBackupFile(t *testing.T) {
-	dir, err := ioutil.TempDir("", "gofmt_test")
+	dir, err := os.MkdirTemp("", "gofmt_test")
 	if err != nil {
 		t.Fatal(err)
 	}

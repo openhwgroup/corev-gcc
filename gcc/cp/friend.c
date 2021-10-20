@@ -1,5 +1,5 @@
 /* Help friends in C++.
-   Copyright (C) 1997-2020 Free Software Foundation, Inc.
+   Copyright (C) 1997-2021 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -475,25 +475,18 @@ make_friend_class (tree type, tree friend_type, bool complain)
 
 tree
 do_friend (tree ctype, tree declarator, tree decl,
-	   tree attrlist, enum overload_flags flags,
+	   enum overload_flags flags,
 	   bool funcdef_flag)
 {
   gcc_assert (TREE_CODE (decl) == FUNCTION_DECL);
   gcc_assert (!ctype || MAYBE_CLASS_TYPE_P (ctype));
 
-  /* Every decl that gets here is a friend of something.  */
-  DECL_FRIEND_P (decl) = 1;
+  /* Friend functions are unique, until proved otherwise.  */
+  DECL_UNIQUE_FRIEND_P (decl) = 1;
 
   if (DECL_OVERRIDE_P (decl) || DECL_FINAL_P (decl))
     error ("friend declaration %qD may not have virt-specifiers",
 	   decl);
-
-  /* Unfortunately, we have to handle attributes here.  Normally we would
-     handle them in start_decl_1, but since this is a friend decl start_decl_1
-     never gets to see it.  */
-
-  /* Set attributes here so if duplicate decl, will have proper attributes.  */
-  cplus_decl_attributes (&decl, attrlist, 0);
 
   if (TREE_CODE (declarator) == TEMPLATE_ID_EXPR)
     {
@@ -558,7 +551,7 @@ do_friend (tree ctype, tree declarator, tree decl,
 	  else if (class_template_depth)
 	    /* We rely on tsubst_friend_function to check the
 	       validity of the declaration later.  */
-	    decl = push_template_decl_real (decl, /*is_friend=*/true);
+	    decl = push_template_decl (decl, /*is_friend=*/true);
 	  else
 	    decl = check_classfn (ctype, decl,
 				  template_member_p
@@ -581,25 +574,19 @@ do_friend (tree ctype, tree declarator, tree decl,
 	error ("member %qD declared as friend before type %qT defined",
 		  decl, ctype);
     }
-  /* A global friend.
-     @@ or possibly a friend from a base class ?!?  */
-  else if (TREE_CODE (decl) == FUNCTION_DECL)
+  else
     {
+      /* Namespace-scope friend function.  */
       int is_friend_template = PROCESSING_REAL_TEMPLATE_DECL_P ();
 
-      /* Friends must all go through the overload machinery,
-	 even though they may not technically be overloaded.
-
-	 Note that because classes all wind up being top-level
-	 in their scope, their friend wind up in top-level scope as well.  */
       if (funcdef_flag)
 	SET_DECL_FRIEND_CONTEXT (decl, current_class_type);
 
       if (! DECL_USE_TEMPLATE (decl))
 	{
 	  /* We must check whether the decl refers to template
-	     arguments before push_template_decl_real adds a
-	     reference to the containing template class.  */
+	     arguments before push_template_decl adds a reference to
+	     the containing template class.  */
 	  int warn = (warn_nontemplate_friend
 		      && ! funcdef_flag && ! is_friend_template
 		      && current_template_parms
@@ -611,10 +598,10 @@ do_friend (tree ctype, tree declarator, tree decl,
 	       general, such a declaration depends on template
 	       parameters.  Instead, we call pushdecl when the class
 	       is instantiated.  */
-	    decl = push_template_decl_real (decl, /*is_friend=*/true);
+	    decl = push_template_decl (decl, /*is_friend=*/true);
 	  else if (current_function_decl)
 	    /* pushdecl will check there's a local decl already.  */
-	    decl = pushdecl (decl, /*is_friend=*/true);
+	    decl = pushdecl (decl, /*hiding=*/true);
 	  else
 	    {
 	      /* We can't use pushdecl, as we might be in a template
@@ -624,7 +611,7 @@ do_friend (tree ctype, tree declarator, tree decl,
 	      tree ns = decl_namespace_context (decl);
 
 	      push_nested_namespace (ns);
-	      decl = pushdecl_namespace_level (decl, /*is_friend=*/true);
+	      decl = pushdecl_namespace_level (decl, /*hiding=*/true);
 	      pop_nested_namespace (ns);
 	    }
 
@@ -653,7 +640,6 @@ do_friend (tree ctype, tree declarator, tree decl,
       add_friend (current_class_type,
 		  is_friend_template ? DECL_TI_TEMPLATE (decl) : decl,
 		  /*complain=*/true);
-      DECL_FRIEND_P (decl) = 1;
     }
 
   return decl;

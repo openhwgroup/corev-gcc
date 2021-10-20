@@ -1,5 +1,5 @@
 /* GCC core type declarations.
-   Copyright (C) 2002-2020 Free Software Foundation, Inc.
+   Copyright (C) 2002-2021 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -154,6 +154,7 @@ struct cl_option_handlers;
 struct diagnostic_context;
 class pretty_printer;
 class diagnostic_event_id_t;
+typedef const char * (*diagnostic_input_charset_callback)(const char *);
 
 template<typename T> struct array_traits;
 
@@ -217,6 +218,14 @@ enum profile_reproducibility {
     PROFILE_REPRODUCIBILITY_SERIAL,
     PROFILE_REPRODUCIBILITY_PARALLEL_RUNS,
     PROFILE_REPRODUCIBILITY_MULTITHREADED
+};
+
+/* Type of -fstack-protector-*.  */
+enum stack_protector {
+  SPCT_FLAG_DEFAULT = 1,
+  SPCT_FLAG_ALL = 2,
+  SPCT_FLAG_STRONG = 3,
+  SPCT_FLAG_EXPLICIT = 4
 };
 
 /* Types of unwind/exception handling info that can be generated.  */
@@ -359,23 +368,6 @@ struct kv_pair
   const ValueType value;	/* the value of the name */
 };
 
-/* Iterator pair used for a collection iteration with range-based loops.  */
-
-template<typename T>
-struct iterator_range
-{
-public:
-  iterator_range (const T &begin, const T &end)
-    : m_begin (begin), m_end (end) {}
-
-  T begin () const { return m_begin; }
-  T end () const { return m_end; }
-
-private:
-  T m_begin;
-  T m_end;
-};
-
 #else
 
 struct _dont_use_rtx_here_;
@@ -433,7 +425,20 @@ enum excess_precision_type
 {
   EXCESS_PRECISION_TYPE_IMPLICIT,
   EXCESS_PRECISION_TYPE_STANDARD,
-  EXCESS_PRECISION_TYPE_FAST
+  EXCESS_PRECISION_TYPE_FAST,
+  EXCESS_PRECISION_TYPE_FLOAT16
+};
+
+/* Level of size optimization.  */
+
+enum optimize_size_level
+{
+  /* Do not optimize for size.  */
+  OPTIMIZE_SIZE_NO,
+  /* Optimize for size but not at extreme performance costs.  */
+  OPTIMIZE_SIZE_BALANCED,
+  /* Optimize for size as much as possible.  */
+  OPTIMIZE_SIZE_MAX
 };
 
 /* Support for user-provided GGC and PCH markers.  The first parameter
@@ -471,6 +476,7 @@ typedef unsigned char uchar;
 #include "align.h"
 /* Most host source files will require the following headers.  */
 #if !defined (GENERATOR_FILE)
+#include "iterator-utils.h"
 #include "real.h"
 #include "fixed-value.h"
 #include "hash-table.h"

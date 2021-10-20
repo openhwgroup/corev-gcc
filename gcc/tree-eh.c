@@ -1,5 +1,5 @@
 /* Exception handling semantics and decomposition for trees.
-   Copyright (C) 2003-2020 Free Software Foundation, Inc.
+   Copyright (C) 2003-2021 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -905,12 +905,7 @@ lower_try_finally_dup_block (gimple_seq seq, struct leh_state *outer_state,
   for (gsi = gsi_start (new_seq); !gsi_end_p (gsi); gsi_next (&gsi))
     {
       gimple *stmt = gsi_stmt (gsi);
-      /* We duplicate __builtin_stack_restore at -O0 in the hope of eliminating
-	 it on the EH paths.  When it is not eliminated, make it transparent in
-	 the debug info.  */
-      if (gimple_call_builtin_p (stmt, BUILT_IN_STACK_RESTORE))
-	gimple_set_location (stmt, UNKNOWN_LOCATION);
-      else if (LOCATION_LOCUS (gimple_location (stmt)) == UNKNOWN_LOCATION)
+      if (LOCATION_LOCUS (gimple_location (stmt)) == UNKNOWN_LOCATION)
 	{
 	  tree block = gimple_block (stmt);
 	  gimple_set_location (stmt, loc);
@@ -2546,9 +2541,9 @@ operation_could_trap_p (enum tree_code op, bool fp_operation, bool honor_trapv,
   bool honor_snans = fp_operation && flag_signaling_nans != 0;
   bool handled;
 
-  /* This function cannot tell whether or not COND_EXPR and VEC_COND_EXPR could
-     trap, because that depends on the respective condition op.  */
-  gcc_assert (op != COND_EXPR && op != VEC_COND_EXPR);
+  /* This function cannot tell whether or not COND_EXPR could trap,
+     because that depends on its condition op.  */
+  gcc_assert (op != COND_EXPR);
 
   if (TREE_CODE_CLASS (op) != tcc_comparison
       && TREE_CODE_CLASS (op) != tcc_unary
@@ -2728,8 +2723,11 @@ tree_could_trap_p (tree expr)
       return TREE_THIS_VOLATILE (expr);
 
     case CALL_EXPR:
+      /* Internal function calls do not trap.  */
+      if (CALL_EXPR_FN (expr) == NULL_TREE)
+	return false;
       t = get_callee_fndecl (expr);
-      /* Assume that calls to weak functions may trap.  */
+      /* Assume that indirect and calls to weak functions may trap.  */
       if (!t || !DECL_P (t))
 	return true;
       if (DECL_WEAK (t))
@@ -2858,7 +2856,7 @@ stmt_could_throw_1_p (gassign *stmt)
       if (TREE_CODE_CLASS (code) == tcc_comparison)
 	t = TREE_TYPE (gimple_assign_rhs1 (stmt));
       else
-	t = gimple_expr_type (stmt);
+	t = TREE_TYPE (gimple_assign_lhs (stmt));
       fp_operation = FLOAT_TYPE_P (t);
       if (fp_operation)
 	{
@@ -4751,15 +4749,20 @@ cleanup_all_empty_eh (void)
   eh_landing_pad lp;
   int i;
 
-  /* Ideally we'd walk the region tree and process LPs inner to outer
-     to avoid quadraticness in EH redirection.  Walking the LP array
-     in reverse seems to be an approximation of that.  */
+  /* The post-order traversal may lead to quadraticness in the redirection
+     of incoming EH edges from inner LPs, so first try to walk the region
+     tree from inner to outer LPs in order to eliminate these edges.  */
   for (i = vec_safe_length (cfun->eh->lp_array) - 1; i >= 1; --i)
     {
       lp = (*cfun->eh->lp_array)[i];
       if (lp)
 	changed |= cleanup_empty_eh (lp);
     }
+
+  /* Now do the post-order traversal to eliminate outer empty LPs.  */
+  for (i = 1; vec_safe_iterate (cfun->eh->lp_array, i, &lp); ++i)
+    if (lp)
+      changed |= cleanup_empty_eh (lp);
 
   return changed;
 }

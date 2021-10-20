@@ -1,5 +1,5 @@
 /* Pipeline hazard description translator.
-   Copyright (C) 2000-2020 Free Software Foundation, Inc.
+   Copyright (C) 2000-2021 Free Software Foundation, Inc.
 
    Written by Vladimir Makarov <vmakarov@redhat.com>
 
@@ -6137,7 +6137,7 @@ evaluate_equiv_classes (automaton_t automaton, vec<state_t> *equiv_classes)
 
 /* The function merges equivalent states of AUTOMATON.  */
 static void
-merge_states (automaton_t automaton, vec<state_t> equiv_classes)
+merge_states (automaton_t automaton, const vec<state_t> &equiv_classes)
 {
   state_t curr_state;
   state_t new_state;
@@ -6787,7 +6787,7 @@ create_automata (void)
    finish_regexp_representation calls.  */
 
 /* This recursive function forms string representation of regexp
-   (without tailing '\0').  */
+   (without trailing '\0').  */
 static void
 form_regexp (regexp_t regexp)
 {
@@ -7247,7 +7247,7 @@ create_state_ainsn_table (automaton_t automaton)
   tab->check_vect.create (10000);
 
   tab->base_vect.create (0);
-  tab->base_vect.safe_grow (automaton->achieved_states_num);
+  tab->base_vect.safe_grow (automaton->achieved_states_num, true);
 
   full_vect_length = (automaton->insn_equiv_classes_num
                       * automaton->achieved_states_num);
@@ -7339,7 +7339,7 @@ add_vect (state_ainsn_table_t tab, int vect_num, vla_hwint_t vect)
   {
     size_t full_base = tab->automaton->insn_equiv_classes_num * vect_num;
     if (tab->full_vect.length () < full_base + vect_length)
-      tab->full_vect.safe_grow (full_base + vect_length);
+      tab->full_vect.safe_grow (full_base + vect_length, true);
     for (i = 0; i < vect_length; i++)
       tab->full_vect[full_base + i] = vect[i];
   }
@@ -7743,7 +7743,7 @@ output_dead_lock_vect (automaton_t automaton)
   output_states_vect.create (0);
   pass_states (automaton, add_states_vect_el);
 
-  dead_lock_vect.safe_grow (output_states_vect.length ());
+  dead_lock_vect.safe_grow (output_states_vect.length (), true);
   for (i = 0; i < output_states_vect.length (); i++)
     {
       state_t s = output_states_vect[i];

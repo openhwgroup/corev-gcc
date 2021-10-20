@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2020, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2021, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -23,33 +23,37 @@
 --                                                                          --
 ------------------------------------------------------------------------------
 
-with Atree;    use Atree;
-with Checks;   use Checks;
-with Einfo;    use Einfo;
-with Errout;   use Errout;
-with Exp_Dbug; use Exp_Dbug;
-with Exp_Util; use Exp_Util;
-with Layout;   use Layout;
-with Lib.Xref; use Lib.Xref;
-with Namet;    use Namet;
-with Nlists;   use Nlists;
-with Nmake;    use Nmake;
-with Opt;      use Opt;
-with Sem;      use Sem;
-with Sem_Aux;  use Sem_Aux;
-with Sem_Ch3;  use Sem_Ch3;
-with Sem_Ch8;  use Sem_Ch8;
-with Sem_Ch13; use Sem_Ch13;
-with Sem_Eval; use Sem_Eval;
-with Sem_Res;  use Sem_Res;
-with Sem_Util; use Sem_Util;
-with Sinfo;    use Sinfo;
-with Snames;   use Snames;
-with Stand;    use Stand;
-with Targparm; use Targparm;
-with Tbuild;   use Tbuild;
-with Ttypes;   use Ttypes;
-with Uintp;    use Uintp;
+with Atree;          use Atree;
+with Checks;         use Checks;
+with Einfo;          use Einfo;
+with Einfo.Entities; use Einfo.Entities;
+with Einfo.Utils;    use Einfo.Utils;
+with Errout;         use Errout;
+with Exp_Dbug;       use Exp_Dbug;
+with Exp_Util;       use Exp_Util;
+with Layout;         use Layout;
+with Lib.Xref;       use Lib.Xref;
+with Namet;          use Namet;
+with Nlists;         use Nlists;
+with Nmake;          use Nmake;
+with Opt;            use Opt;
+with Sem;            use Sem;
+with Sem_Aux;        use Sem_Aux;
+with Sem_Ch3;        use Sem_Ch3;
+with Sem_Ch8;        use Sem_Ch8;
+with Sem_Ch13;       use Sem_Ch13;
+with Sem_Eval;       use Sem_Eval;
+with Sem_Res;        use Sem_Res;
+with Sem_Util;       use Sem_Util;
+with Sinfo;          use Sinfo;
+with Sinfo.Nodes;    use Sinfo.Nodes;
+with Sinfo.Utils;    use Sinfo.Utils;
+with Snames;         use Snames;
+with Stand;          use Stand;
+with Targparm;       use Targparm;
+with Tbuild;         use Tbuild;
+with Ttypes;         use Ttypes;
+with Uintp;          use Uintp;
 
 package body Exp_Pakd is
 
@@ -233,8 +237,11 @@ package body Exp_Pakd is
          elsif T_Size <= 32 then
             Swap_RE := RE_Bswap_32;
 
-         else pragma Assert (T_Size <= 64);
+         elsif T_Size <= 64 then
             Swap_RE := RE_Bswap_64;
+
+         else pragma Assert (T_Size <= 128);
+            Swap_RE := RE_Bswap_128;
          end if;
 
          Swap_F := RTE (Swap_RE);
@@ -316,7 +323,7 @@ package body Exp_Pakd is
 
             --  Integer (subscript) - Integer (Styp'First)
 
-            if Esize (Styp) < Esize (Standard_Integer) then
+            if Esize (Styp) < Standard_Integer_Size then
                Newsub :=
                  Make_Op_Subtract (Loc,
                    Left_Opnd => Convert_To (Standard_Integer, Newsub),
@@ -486,7 +493,7 @@ package body Exp_Pakd is
 
       Ancest   : Entity_Id;
       PB_Type  : Entity_Id;
-      PASize   : Uint;
+      PASize   : Uint := No_Uint;
       Decl     : Node_Id;
       PAT      : Entity_Id;
       Len_Expr : Node_Id;
@@ -556,19 +563,21 @@ package body Exp_Pakd is
          --  Do not reset RM_Size if already set, as happens in the case of
          --  a modular type.
 
-         if Unknown_Esize (PAT) then
-            Set_Esize (PAT, PASize);
-         end if;
+         if Present (PASize) then
+            if not Known_Esize (PAT) then
+               Set_Esize (PAT, PASize);
+            end if;
 
-         if Unknown_RM_Size (PAT) then
-            Set_RM_Size (PAT, PASize);
+            if not Known_RM_Size (PAT) then
+               Set_RM_Size (PAT, PASize);
+            end if;
          end if;
 
          Adjust_Esize_Alignment (PAT);
 
          --  Set remaining fields of packed array type
 
-         Init_Alignment                (PAT);
+         Reinit_Alignment              (PAT);
          Set_Parent                    (PAT, Empty);
          Set_Associated_Node_For_Itype (PAT, Typ);
          Set_Original_Array_Type       (PAT, Typ);
@@ -606,7 +615,7 @@ package body Exp_Pakd is
          --  type or component, take it into account.
 
          if Csize <= 2 or else Csize = 4 or else Csize mod 2 /= 0
-           or else Alignment (Typ) = 1
+           or else (Known_Alignment (Typ) and then Alignment (Typ) = 1)
            or else Component_Alignment (Typ) = Calign_Storage_Unit
          then
             if Reverse_Storage_Order (Typ) then
@@ -616,7 +625,7 @@ package body Exp_Pakd is
             end if;
 
          elsif Csize mod 4 /= 0
-           or else Alignment (Typ) = 2
+           or else (Known_Alignment (Typ) and then Alignment (Typ) = 2)
          then
             if Reverse_Storage_Order (Typ) then
                PB_Type := RTE (RE_Rev_Packed_Bytes2);
@@ -673,7 +682,9 @@ package body Exp_Pakd is
       --  type, since this size clearly belongs to the packed array type. The
       --  size of the conceptual unpacked type is always set to unknown.
 
-      PASize := RM_Size (Typ);
+      if Known_RM_Size (Typ) then
+         PASize := RM_Size (Typ);
+      end if;
 
       --  Case of an array where at least one index is of an enumeration
       --  type with a non-standard representation, but the component size
@@ -821,8 +832,8 @@ package body Exp_Pakd is
 
       elsif not Is_Constrained (Typ) then
 
-         --  When generating standard DWARF (i.e when GNAT_Encodings is
-         --  DWARF_GNAT_Encodings_Minimal), the ___XP suffix will be stripped
+         --  When generating standard DWARF (i.e when GNAT_Encodings is not
+         --  DWARF_GNAT_Encodings_All), the ___XP suffix will be stripped
          --  by the back-end but generate it anyway to ease compiler debugging.
          --  This will help to distinguish implementation types from original
          --  packed arrays.
@@ -917,22 +928,7 @@ package body Exp_Pakd is
                --  The bounds are statically known, and btyp is one of the
                --  unsigned types, depending on the length.
 
-               if Len_Bits <= Standard_Short_Short_Integer_Size then
-                  Btyp := RTE (RE_Short_Short_Unsigned);
-
-               elsif Len_Bits <= Standard_Short_Integer_Size then
-                  Btyp := RTE (RE_Short_Unsigned);
-
-               elsif Len_Bits <= Standard_Integer_Size then
-                  Btyp := RTE (RE_Unsigned);
-
-               elsif Len_Bits <= Standard_Long_Integer_Size then
-                  Btyp := RTE (RE_Long_Unsigned);
-
-               else
-                  Btyp := RTE (RE_Long_Long_Unsigned);
-               end if;
-
+               Btyp := Small_Integer_Type_For (Len_Bits, Uns => True);
                Lit := Make_Integer_Literal (Loc, 2 ** Len_Bits - 1);
                Set_Print_In_Hex (Lit);
 
@@ -951,7 +947,7 @@ package body Exp_Pakd is
                                    Make_Integer_Literal (Loc, 0),
                                  High_Bound => Lit))));
 
-               if PASize = Uint_0 then
+               if Present (PASize) then
                   PASize := Len_Bits;
                end if;
 
@@ -1268,8 +1264,15 @@ package body Exp_Pakd is
          --  array type on Obj to get lost. So we save the type of Obj, and
          --  make sure it is reset properly.
 
-         New_Lhs := Duplicate_Subexpr (Obj, Name_Req => True);
-         New_Rhs := Duplicate_Subexpr_No_Checks (Obj);
+         declare
+            T : constant Entity_Id := Etype (Obj);
+         begin
+            New_Lhs := Duplicate_Subexpr (Obj, Name_Req => True);
+            New_Rhs := Duplicate_Subexpr_No_Checks (Obj);
+            Set_Etype (Obj, T);
+            Set_Etype (New_Lhs, T);
+            Set_Etype (New_Rhs, T);
+         end;
 
          --  First we deal with the "and"
 
@@ -1914,9 +1917,10 @@ package body Exp_Pakd is
       --  where PAT is the packed array type. This works fine, since in the
       --  modular case we guarantee that the unused bits are always zeroes.
       --  We do have to compare the lengths because we could be comparing
-      --  two different subtypes of the same base type.
+      --  two different subtypes of the same base type. We can only do this
+      --  if the PATs on both sides are the same.
 
-      if Is_Modular_Integer_Type (PAT) then
+      if Is_Modular_Integer_Type (PAT) and then PAT = Etype (R) then
          Rewrite (N,
            Make_And_Then (Loc,
              Left_Opnd =>
@@ -1973,6 +1977,7 @@ package body Exp_Pakd is
       Rtyp : Entity_Id;
       PAT  : Entity_Id;
       Lit  : Node_Id;
+      Size : Unat;
 
    begin
       Convert_To_Actual_Subtype (Opnd);
@@ -1994,9 +1999,15 @@ package body Exp_Pakd is
 
       --  where PAT is the packed array type, Mask is a mask of all 1 bits of
       --  length equal to the size of this packed type, and Rtyp is the actual
-      --  actual subtype of the operand.
+      --  actual subtype of the operand. Preserve old behavior in case size is
+      --  not set.
 
-      Lit := Make_Integer_Literal (Loc, 2 ** RM_Size (PAT) - 1);
+      if Known_RM_Size (PAT) then
+         Size := RM_Size (PAT);
+      else
+         Size := Uint_0;
+      end if;
+      Lit := Make_Integer_Literal (Loc, 2 ** Size - 1);
       Set_Print_In_Hex (Lit);
 
       if not Is_Array_Type (PAT) then

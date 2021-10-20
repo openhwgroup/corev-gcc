@@ -1,5 +1,5 @@
 /* Scanning of rtl for dataflow analysis.
-   Copyright (C) 1999-2020 Free Software Foundation, Inc.
+   Copyright (C) 1999-2021 Free Software Foundation, Inc.
    Originally contributed by Michael P. Hayes
              (m.hayes@elec.canterbury.ac.nz, mhayes@redhat.com)
    Major rewrite contributed by Danny Berlin (dberlin@dberlin.org)
@@ -2576,9 +2576,21 @@ df_ref_record (enum df_ref_class cl,
 
       if (GET_CODE (reg) == SUBREG)
 	{
-	  regno += subreg_regno_offset (regno, GET_MODE (SUBREG_REG (reg)),
-					SUBREG_BYTE (reg), GET_MODE (reg));
-	  endregno = regno + subreg_nregs (reg);
+	  int off = subreg_regno_offset (regno, GET_MODE (SUBREG_REG (reg)),
+					 SUBREG_BYTE (reg), GET_MODE (reg));
+	  unsigned int nregno = regno + off;
+	  endregno = nregno + subreg_nregs (reg);
+	  if (off < 0 && regno < (unsigned) -off)
+	    /* Deal with paradoxical SUBREGs on big endian where
+	       in debug insns the hard reg number might be smaller
+	       than -off, such as (subreg:DI (reg:SI 0 [+4 ]) 0));
+	       RA decisions shouldn't be affected by debug insns
+	       and so RA can decide to put pseudo into a hard reg
+	       with small REGNO, even when it is referenced in
+	       a paradoxical SUBREG in a debug insn.  */
+	    regno = 0;
+	  else
+	    regno = nregno;
 	}
       else
 	endregno = END_REGNO (reg);
@@ -2594,6 +2606,8 @@ df_ref_record (enum df_ref_class cl,
 	  if (GET_CODE (reg) == SUBREG)
 	    ref_flags |= DF_REF_PARTIAL;
 	  ref_flags |= DF_REF_MW_HARDREG;
+
+	  gcc_assert (regno < endregno);
 
 	  hardreg = problem_data->mw_reg_pool->allocate ();
 	  hardreg->type = ref_type;
@@ -2816,7 +2830,6 @@ df_uses_record (class df_collection_rec *collection_rec,
     case CONST:
     CASE_CONST_ANY:
     case PC:
-    case CC0:
     case ADDR_VEC:
     case ADDR_DIFF_VEC:
       return;
@@ -2902,7 +2915,6 @@ df_uses_record (class df_collection_rec *collection_rec,
 	    case PARALLEL:
 	    case SCRATCH:
 	    case PC:
-	    case CC0:
 		break;
 	    case MEM:
 	      df_uses_record (collection_rec, &XEXP (dst, 0),
@@ -3092,7 +3104,8 @@ df_get_call_refs (class df_collection_rec *collection_rec,
 
   for (i = 0; i < FIRST_PSEUDO_REGISTER; i++)
     {
-      if (i == STACK_POINTER_REGNUM)
+      if (i == STACK_POINTER_REGNUM
+	  && !FAKE_CALL_P (insn_info->insn))
 	/* The stack ptr is used (honorarily) by a CALL insn.  */
 	df_ref_record (DF_REF_BASE, collection_rec, regno_reg_rtx[i],
 		       NULL, bb, insn_info, DF_REF_REG_USE,
@@ -3614,6 +3627,14 @@ df_update_entry_block_defs (void)
 }
 
 
+/* Return true if REGNO is used by the epilogue.  */
+bool
+df_epilogue_uses_p (unsigned int regno)
+{
+  return (EPILOGUE_USES (regno)
+	  || TEST_HARD_REG_BIT (crtl->must_be_zero_on_return, regno));
+}
+
 /* Set the bit for regs that are considered being used at the exit. */
 
 static void
@@ -3661,7 +3682,7 @@ df_get_exit_block_use_set (bitmap exit_block_uses)
      epilogue as being live at the end of the function since they
      may be referenced by our caller.  */
   for (i = 0; i < FIRST_PSEUDO_REGISTER; i++)
-    if (global_regs[i] || EPILOGUE_USES (i))
+    if (global_regs[i] || df_epilogue_uses_p (i))
       bitmap_set_bit (exit_block_uses, i);
 
   if (targetm.have_epilogue () && epilogue_completed)
@@ -3802,7 +3823,6 @@ df_hard_reg_init (void)
   initialized = true;
 }
 
-
 /* Recompute the parts of scanning that are based on regs_ever_live
    because something changed in that array.  */
 
@@ -3861,7 +3881,6 @@ df_regs_ever_live_p (unsigned int regno)
 {
   return regs_ever_live[regno];
 }
-
 
 /* Set regs_ever_live[REGNO] to VALUE.  If this cause regs_ever_live
    to change, schedule that change for the next update.  */

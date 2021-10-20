@@ -1,5 +1,5 @@
 /* Prototypes for exported functions defined in arm.c and pe.c
-   Copyright (C) 1999-2020 Free Software Foundation, Inc.
+   Copyright (C) 1999-2021 Free Software Foundation, Inc.
    Contributed by Richard Earnshaw (rearnsha@arm.com)
    Minor hacks by Nick Clifton (nickc@cygnus.com)
 
@@ -74,7 +74,8 @@ extern bool arm_small_register_classes_for_mode_p (machine_mode);
 extern int const_ok_for_arm (HOST_WIDE_INT);
 extern int const_ok_for_op (HOST_WIDE_INT, enum rtx_code);
 extern int const_ok_for_dimode_op (HOST_WIDE_INT, enum rtx_code);
-extern void thumb1_gen_const_int (rtx, HOST_WIDE_INT);
+extern void thumb1_gen_const_int_rtl (rtx, HOST_WIDE_INT);
+extern void thumb1_gen_const_int_print (rtx, HOST_WIDE_INT);
 extern int arm_split_constant (RTX_CODE, machine_mode, rtx,
 			       HOST_WIDE_INT, rtx, rtx, int);
 extern int legitimate_pic_operand_p (rtx);
@@ -100,7 +101,7 @@ extern char *neon_output_shift_immediate (const char *, char, rtx *,
 					  machine_mode, int, bool);
 extern void neon_pairwise_reduce (rtx, rtx, machine_mode,
 				  rtx (*) (rtx, rtx, rtx));
-extern rtx neon_make_constant (rtx);
+extern rtx neon_make_constant (rtx, bool generate = true);
 extern tree arm_builtin_vectorized_function (unsigned int, tree, tree);
 extern void neon_expand_vector_init (rtx, rtx);
 extern void neon_lane_bounds (rtx, HOST_WIDE_INT, HOST_WIDE_INT, const_tree);
@@ -120,7 +121,6 @@ extern int arm_coproc_mem_operand_no_writeback (rtx);
 extern int arm_coproc_mem_operand_wb (rtx, int);
 extern int neon_vector_mem_operand (rtx, int, bool);
 extern int mve_vector_mem_operand (machine_mode, rtx, bool);
-bool arm_mve_mode_and_operands_type_check (machine_mode, rtx, rtx);
 extern int neon_struct_mem_operand (rtx);
 
 extern rtx *neon_vcmla_lane_prepare_operands (rtx *);
@@ -243,8 +243,7 @@ extern bool arm_change_mode_p (tree);
 extern tree arm_valid_target_attribute_tree (tree, struct gcc_options *,
 					     struct gcc_options *);
 extern void arm_configure_build_target (struct arm_build_target *,
-					struct cl_target_option *,
-					struct gcc_options *, bool);
+					struct cl_target_option *, bool);
 extern void arm_option_reconfigure_globals (void);
 extern void arm_options_perform_arch_sanity_checks (void);
 extern void arm_pr_long_calls (struct cpp_reader *);
@@ -373,9 +372,11 @@ extern void arm_emit_coreregs_64bit_shift (enum rtx_code, rtx, rtx, rtx, rtx,
 extern bool arm_fusion_enabled_p (tune_params::fuse_ops);
 extern bool arm_valid_symbolic_address_p (rtx);
 extern bool arm_validize_comparison (rtx *, rtx *, rtx *);
+extern bool arm_expand_vector_compare (rtx, rtx_code, rtx, rtx, bool, bool);
 #endif /* RTX_CODE */
 
 extern bool arm_gen_setmem (rtx *);
+extern void arm_expand_vcond (rtx *, machine_mode);
 extern void arm_expand_vec_perm (rtx target, rtx op0, rtx op1, rtx sel);
 
 extern bool arm_autoinc_modes_ok_p (machine_mode, enum arm_auto_incmodes);
@@ -395,6 +396,7 @@ extern void arm_cpu_cpp_builtins (struct cpp_reader *);
 
 /* Defined in arm-d.c  */
 extern void arm_d_target_versions (void);
+extern void arm_d_register_target_info (void);
 
 extern bool arm_is_constant_pool_ref (rtx);
 

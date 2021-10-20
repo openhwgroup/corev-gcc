@@ -2,13 +2,13 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+//go:build js && wasm
 // +build js,wasm
 
 package syscall
 
 import (
 	"errors"
-	"io"
 	"sync"
 	"syscall/js"
 )
@@ -456,11 +456,11 @@ func Seek(fd int, offset int64, whence int) (int64, error) {
 
 	var newPos int64
 	switch whence {
-	case io.SeekStart:
+	case 0:
 		newPos = offset
-	case io.SeekCurrent:
+	case 1:
 		newPos = f.pos + offset
-	case io.SeekEnd:
+	case 2:
 		var st Stat_t
 		if err := Fstat(fd, &st); err != nil {
 			return 0, err

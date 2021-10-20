@@ -15,11 +15,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"mime"
 	"mime/multipart"
 	"net"
 	"net/http/httptrace"
+	"net/http/internal/ascii"
 	"net/textproto"
 	"net/url"
 	urlpkg "net/url"
@@ -175,6 +175,10 @@ type Request struct {
 	// but will return EOF immediately when no body is present.
 	// The Server will close the request body. The ServeHTTP
 	// Handler does not need to.
+	//
+	// Body must allow Read to be called concurrently with Close.
+	// In particular, calling Close should unblock a Read waiting
+	// for input.
 	Body io.ReadCloser
 
 	// GetBody defines an optional func to return a new copy of
@@ -382,7 +386,7 @@ func (r *Request) Clone(ctx context.Context) *Request {
 	if s := r.TransferEncoding; s != nil {
 		s2 := make([]string, len(s))
 		copy(s2, s)
-		r2.TransferEncoding = s
+		r2.TransferEncoding = s2
 	}
 	r2.Form = cloneURLValues(r.Form)
 	r2.PostForm = cloneURLValues(r.PostForm)
@@ -540,6 +544,7 @@ var errMissingHost = errors.New("http: Request.Write on Request with no Host or 
 
 // extraHeaders may be nil
 // waitForContinue may be nil
+// always closes body
 func (r *Request) write(w io.Writer, usingProxy bool, extraHeaders Header, waitForContinue func() bool) (err error) {
 	trace := httptrace.ContextClientTrace(r.Context())
 	if trace != nil && trace.WroteRequest != nil {
@@ -549,6 +554,15 @@ func (r *Request) write(w io.Writer, usingProxy bool, extraHeaders Header, waitF
 			})
 		}()
 	}
+	closed := false
+	defer func() {
+		if closed {
+			return
+		}
+		if closeErr := r.closeBody(); closeErr != nil && err == nil {
+			err = closeErr
+		}
+	}()
 
 	// Find the target host. Prefer the Host: header, but if that
 	// is not given, use the host from the request URL.
@@ -667,6 +681,7 @@ func (r *Request) write(w io.Writer, usingProxy bool, extraHeaders Header, waitF
 			trace.Wait100Continue()
 		}
 		if !waitForContinue() {
+			closed = true
 			r.closeBody()
 			return nil
 		}
@@ -679,6 +694,7 @@ func (r *Request) write(w io.Writer, usingProxy bool, extraHeaders Header, waitF
 	}
 
 	// Write body and trailer
+	closed = true
 	err = tw.writeBody(w)
 	if err != nil {
 		if tw.bodyReadError == err {
@@ -708,7 +724,7 @@ func idnaASCII(v string) (string, error) {
 	// version does not.
 	// Note that for correct ASCII IDNs ToASCII will only do considerably more
 	// work, but it will not cause an allocation.
-	if isASCII(v) {
+	if ascii.Is(v) {
 		return v, nil
 	}
 	return idna.Lookup.ToASCII(v)
@@ -764,7 +780,8 @@ func removeZone(host string) string {
 }
 
 // ParseHTTPVersion parses an HTTP version string.
-// "HTTP/1.0" returns (1, 0, true).
+// "HTTP/1.0" returns (1, 0, true). Note that strings without
+// a minor version, such as "HTTP/2", are not valid.
 func ParseHTTPVersion(vers string) (major, minor int, ok bool) {
 	const Big = 1000000 // arbitrary upper bound
 	switch vers {
@@ -808,7 +825,7 @@ func validMethod(method string) bool {
 	return len(method) > 0 && strings.IndexFunc(method, isNotToken) == -1
 }
 
-// NewRequest wraps NewRequestWithContext using the background context.
+// NewRequest wraps NewRequestWithContext using context.Background.
 func NewRequest(method, url string, body io.Reader) (*Request, error) {
 	return NewRequestWithContext(context.Background(), method, url, body)
 }
@@ -854,7 +871,7 @@ func NewRequestWithContext(ctx context.Context, method, url string, body io.Read
 	}
 	rc, ok := body.(io.ReadCloser)
 	if !ok && body != nil {
-		rc = ioutil.NopCloser(body)
+		rc = io.NopCloser(body)
 	}
 	// The host's colon:port should be normalized. See Issue 14836.
 	u.Host = removeEmptyPort(u.Host)
@@ -876,21 +893,21 @@ func NewRequestWithContext(ctx context.Context, method, url string, body io.Read
 			buf := v.Bytes()
 			req.GetBody = func() (io.ReadCloser, error) {
 				r := bytes.NewReader(buf)
-				return ioutil.NopCloser(r), nil
+				return io.NopCloser(r), nil
 			}
 		case *bytes.Reader:
 			req.ContentLength = int64(v.Len())
 			snapshot := *v
 			req.GetBody = func() (io.ReadCloser, error) {
 				r := snapshot
-				return ioutil.NopCloser(&r), nil
+				return io.NopCloser(&r), nil
 			}
 		case *strings.Reader:
 			req.ContentLength = int64(v.Len())
 			snapshot := *v
 			req.GetBody = func() (io.ReadCloser, error) {
 				r := snapshot
-				return ioutil.NopCloser(&r), nil
+				return io.NopCloser(&r), nil
 			}
 		default:
 			// This is where we'd set it to -1 (at least
@@ -932,7 +949,7 @@ func (r *Request) BasicAuth() (username, password string, ok bool) {
 func parseBasicAuth(auth string) (username, password string, ok bool) {
 	const prefix = "Basic "
 	// Case insensitive prefix match. See Issue 22736.
-	if len(auth) < len(prefix) || !strings.EqualFold(auth[:len(prefix)], prefix) {
+	if len(auth) < len(prefix) || !ascii.EqualFold(auth[:len(prefix)], prefix) {
 		return
 	}
 	c, err := base64.StdEncoding.DecodeString(auth[len(prefix):])
@@ -994,16 +1011,16 @@ func putTextprotoReader(r *textproto.Reader) {
 // requests and handle them via the Handler interface. ReadRequest
 // only supports HTTP/1.x requests. For HTTP/2, use golang.org/x/net/http2.
 func ReadRequest(b *bufio.Reader) (*Request, error) {
-	return readRequest(b, deleteHostHeader)
+	req, err := readRequest(b)
+	if err != nil {
+		return nil, err
+	}
+
+	delete(req.Header, "Host")
+	return req, err
 }
 
-// Constants for readRequest's deleteHostHeader parameter.
-const (
-	deleteHostHeader = true
-	keepHostHeader   = false
-)
-
-func readRequest(b *bufio.Reader, deleteHostHeader bool) (req *Request, err error) {
+func readRequest(b *bufio.Reader) (req *Request, err error) {
 	tp := newTextprotoReader(b)
 	req = new(Request)
 
@@ -1061,6 +1078,9 @@ func readRequest(b *bufio.Reader, deleteHostHeader bool) (req *Request, err erro
 		return nil, err
 	}
 	req.Header = Header(mimeHeader)
+	if len(req.Header["Host"]) > 1 {
+		return nil, fmt.Errorf("too many Host headers")
+	}
 
 	// RFC 7230, section 5.3: Must treat
 	//	GET /index.html HTTP/1.1
@@ -1072,9 +1092,6 @@ func readRequest(b *bufio.Reader, deleteHostHeader bool) (req *Request, err erro
 	req.Host = req.URL.Host
 	if req.Host == "" {
 		req.Host = req.Header.get("Host")
-	}
-	if deleteHostHeader {
-		delete(req.Header, "Host")
 	}
 
 	fixPragmaCacheControl(req.Header)
@@ -1108,6 +1125,9 @@ func readRequest(b *bufio.Reader, deleteHostHeader bool) (req *Request, err erro
 // MaxBytesReader prevents clients from accidentally or maliciously
 // sending a large request and wasting server resources.
 func MaxBytesReader(w ResponseWriter, r io.ReadCloser, n int64) io.ReadCloser {
+	if n < 0 { // Treat negative limits as equivalent to 0.
+		n = 0
+	}
 	return &maxBytesReader{w: w, r: r, n: n}
 }
 
@@ -1189,7 +1209,7 @@ func parsePostForm(r *Request) (vs url.Values, err error) {
 			maxFormSize = int64(10 << 20) // 10 MB is a lot of text.
 			reader = io.LimitReader(r.Body, maxFormSize+1)
 		}
-		b, e := ioutil.ReadAll(reader)
+		b, e := io.ReadAll(reader)
 		if e != nil {
 			if err == nil {
 				err = e
@@ -1273,16 +1293,18 @@ func (r *Request) ParseForm() error {
 // its file parts are stored in memory, with the remainder stored on
 // disk in temporary files.
 // ParseMultipartForm calls ParseForm if necessary.
+// If ParseForm returns an error, ParseMultipartForm returns it but also
+// continues parsing the request body.
 // After one call to ParseMultipartForm, subsequent calls have no effect.
 func (r *Request) ParseMultipartForm(maxMemory int64) error {
 	if r.MultipartForm == multipartByReader {
 		return errors.New("http: multipart handled by MultipartReader")
 	}
+	var parseFormErr error
 	if r.Form == nil {
-		err := r.ParseForm()
-		if err != nil {
-			return err
-		}
+		// Let errors in ParseForm fall through, and just
+		// return it at the end.
+		parseFormErr = r.ParseForm()
 	}
 	if r.MultipartForm != nil {
 		return nil
@@ -1309,7 +1331,7 @@ func (r *Request) ParseMultipartForm(maxMemory int64) error {
 
 	r.MultipartForm = f
 
-	return nil
+	return parseFormErr
 }
 
 // FormValue returns the first value for the named component of the query.
@@ -1383,10 +1405,11 @@ func (r *Request) wantsClose() bool {
 	return hasToken(r.Header.get("Connection"), "close")
 }
 
-func (r *Request) closeBody() {
-	if r.Body != nil {
-		r.Body.Close()
+func (r *Request) closeBody() error {
+	if r.Body == nil {
+		return nil
 	}
+	return r.Body.Close()
 }
 
 func (r *Request) isReplayable() bool {
@@ -1436,5 +1459,5 @@ func requestMethodUsuallyLacksBody(method string) bool {
 // an HTTP/1 connection.
 func (r *Request) requiresHTTP1() bool {
 	return hasToken(r.Header.Get("Connection"), "upgrade") &&
-		strings.EqualFold(r.Header.Get("Upgrade"), "websocket")
+		ascii.EqualFold(r.Header.Get("Upgrade"), "websocket")
 }

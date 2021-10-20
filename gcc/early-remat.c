@@ -1,5 +1,5 @@
 /* Early (pre-RA) rematerialization
-   Copyright (C) 2017-2020 Free Software Foundation, Inc.
+   Copyright (C) 2017-2021 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -1007,7 +1007,7 @@ void
 early_remat::init_block_info (void)
 {
   unsigned int n_blocks = last_basic_block_for_fn (m_fn);
-  m_block_info.safe_grow_cleared (n_blocks);
+  m_block_info.safe_grow_cleared (n_blocks, true);
 }
 
 /* Maps basic block indices to their position in the post order.  */
@@ -1059,7 +1059,7 @@ early_remat::sort_candidates (void)
 
   m_candidates.qsort (compare_candidates);
 
-  delete postorder_index;
+  delete[] postorder_index;
 }
 
 /* Commit to the current candidate indices and initialize cross-references.  */
@@ -1068,7 +1068,7 @@ void
 early_remat::finalize_candidate_indices (void)
 {
   /* Create a bitmap for each candidate register.  */
-  m_regno_to_candidates.safe_grow (max_reg_num ());
+  m_regno_to_candidates.safe_grow (max_reg_num (), true);
   unsigned int regno;
   bitmap_iterator bi;
   EXECUTE_IF_SET_IN_BITMAP (&m_candidate_regnos, 0, regno, bi)

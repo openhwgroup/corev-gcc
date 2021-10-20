@@ -1,5 +1,5 @@
 /* d-lang.cc -- Language-dependent hooks for D.
-   Copyright (C) 2006-2020 Free Software Foundation, Inc.
+   Copyright (C) 2006-2021 Free Software Foundation, Inc.
 
 GCC is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -43,14 +43,14 @@ along with GCC; see the file COPYING3.  If not see
 #include "langhooks.h"
 #include "langhooks-def.h"
 #include "target.h"
+#include "function.h"
 #include "stringpool.h"
 #include "stor-layout.h"
 #include "varasm.h"
 #include "output.h"
 #include "print-tree.h"
-#include "gimple-expr.h"
-#include "gimplify.h"
 #include "debug.h"
+#include "input.h"
 
 #include "d-tree.h"
 #include "id.h"
@@ -109,38 +109,48 @@ deps_add_target (const char *target, bool quoted)
 
   if (!quoted)
     {
-      obstack_grow (&buffer, target, strlen (target));
+      obstack_grow0 (&buffer, target, strlen (target));
       d_option.deps_target.safe_push ((const char *) obstack_finish (&buffer));
       return;
     }
 
   /* Quote characters in target which are significant to Make.  */
+  unsigned slashes = 0;
+
   for (const char *p = target; *p != '\0'; p++)
     {
       switch (*p)
 	{
+	case '\\':
+	  slashes++;
+	  break;
+
 	case ' ':
 	case '\t':
-	  for (const char *q = p - 1; target <= q && *q == '\\';  q--)
+	  while (slashes--)
 	    obstack_1grow (&buffer, '\\');
 	  obstack_1grow (&buffer, '\\');
-	  break;
+	  goto Ldef;
 
 	case '$':
 	  obstack_1grow (&buffer, '$');
-	  break;
+	  goto Ldef;
 
 	case '#':
+	case ':':
 	  obstack_1grow (&buffer, '\\');
-	  break;
+	  goto Ldef;
 
 	default:
+	Ldef:
+	  slashes = 0;
 	  break;
 	}
 
       obstack_1grow (&buffer, *p);
     }
 
+  obstack_1grow (&buffer, '\0');
   d_option.deps_target.safe_push ((const char *) obstack_finish (&buffer));
 }
 
@@ -270,6 +280,8 @@ deps_write (Module *module, obstack *buffer)
       obstack_grow (buffer, str, strlen (str));
       obstack_grow (buffer, ":\n", 2);
     }
+
+  obstack_1grow (buffer, '\0');
 }
 
 /* Implements the lang_hooks.init_options routine for language D.
@@ -334,9 +346,6 @@ d_init_options_struct (gcc_options *opts)
   /* GCC options.  */
   opts->x_flag_exceptions = 1;
 
-  /* Avoid range issues for complex multiply and divide.  */
-  opts->x_flag_complex_method = 2;
-
   /* Unlike C, there is no global `errno' variable.  */
   opts->x_flag_errno_math = 0;
   opts->frontend_set_flag_errno_math = true;
@@ -354,6 +363,19 @@ d_option_lang_mask (void)
   return CL_D;
 }
 
+/* Implements input charset and BOM skipping configuration for
+   diagnostics.  */
+static const char *d_input_charset_callback (const char * /*filename*/)
+{
+  /* TODO: The input charset is automatically determined by code in
+     dmd/dmodule.c based on the contents of the file.  If this detection
+     logic were factored out and could be reused here, then we would be able
+     to return UTF-16 or UTF-32 as needed here.  For now, we return always
+     NULL, which means no conversion is necessary, i.e. the input is assumed
+     to be UTF-8 when diagnostics read this file.  */
+  return nullptr;
+}
+
 /* Implements the lang_hooks.init routine for language D.  */
 
 static bool
@@ -364,6 +386,11 @@ d_init (void)
   Module::_init ();
   Expression::_init ();
   Objc::_init ();
+
+  /* Diagnostics input init, to enable BOM skipping and
+     input charset conversion.  */
+  diagnostic_initialize_input_context (global_dc,
+				       d_input_charset_callback, true);
 
   /* Back-end init.  */
   global_binding_level = ggc_cleared_alloc <binding_level> ();
@@ -381,7 +408,7 @@ d_init (void)
     using_eh_for_cleanups ();
 
   if (!supports_one_only ())
-    flag_weak = 0;
+    flag_weak_templates = 0;
 
   /* This is the C main, not the D main.  */
   main_identifier_node = get_identifier ("main");
@@ -543,10 +570,6 @@ d_handle_option (size_t scode, const char *arg, HOST_WIDE_INT value,
       global.params.vcomplex = value;
       break;
 
-    case OPT_ftransition_checkimports:
-      global.params.check10378 = value;
-      break;
-
     case OPT_ftransition_complex:
       global.params.vcomplex = value;
       break;
@@ -562,10 +585,6 @@ d_handle_option (size_t scode, const char *arg, HOST_WIDE_INT value,
 
     case OPT_ftransition_field:
       global.params.vfield = value;
-      break;
-
-    case OPT_ftransition_import:
-      global.params.bug10378 = value;
       break;
 
     case OPT_ftransition_nogc:
@@ -773,13 +792,13 @@ d_post_options (const char ** fn)
 
   if (global.params.betterC)
     {
-      if (!global_options_set.x_flag_moduleinfo)
+      if (!OPTION_SET_P (flag_moduleinfo))
 	global.params.useModuleInfo = false;
 
-      if (!global_options_set.x_flag_rtti)
+      if (!OPTION_SET_P (flag_rtti))
 	global.params.useTypeInfo = false;
 
-      if (!global_options_set.x_flag_exceptions)
+      if (!OPTION_SET_P (flag_exceptions))
 	global.params.useExceptions = false;
 
       global.params.checkAction = CHECKACTION_C;
@@ -791,7 +810,7 @@ d_post_options (const char ** fn)
   /* Turn off partitioning unless it was explicitly requested, as it doesn't
      work with D exception chaining, where EH handler uses LSDA to determine
      whether two thrown exception are in the same context.  */
-  if (!global_options_set.x_flag_reorder_blocks_and_partition)
+  if (!OPTION_SET_P (flag_reorder_blocks_and_partition))
     global_options.x_flag_reorder_blocks_and_partition = 0;
 
   /* Error about use of deprecated features.  */
@@ -800,7 +819,7 @@ d_post_options (const char ** fn)
     global.params.useDeprecated = DIAGNOSTICerror;
 
   /* Make -fmax-errors visible to frontend's diagnostic machinery.  */
-  if (global_options_set.x_flag_max_errors)
+  if (OPTION_SET_P (flag_max_errors))
     global.params.errorLimit = flag_max_errors;
 
   if (flag_excess_precision == EXCESS_PRECISION_DEFAULT)
@@ -841,164 +860,6 @@ d_post_options (const char ** fn)
     warn_return_type = 0;
 
   return false;
-}
-
-/* Return TRUE if an operand OP of a given TYPE being copied has no data.
-   The middle-end does a similar check with zero sized types.  */
-
-static bool
-empty_modify_p (tree type, tree op)
-{
-  tree_code code = TREE_CODE (op);
-  switch (code)
-    {
-    case COMPOUND_EXPR:
-      return empty_modify_p (type, TREE_OPERAND (op, 1));
-
-    case CONSTRUCTOR:
-      /* Non-empty construcors are valid.  */
-      if (CONSTRUCTOR_NELTS (op) != 0 || TREE_CLOBBER_P (op))
-	return false;
-      break;
-
-    case CALL_EXPR:
-      /* Leave nrvo alone because it isn't a copy.  */
-      if (CALL_EXPR_RETURN_SLOT_OPT (op))
-	return false;
-      break;
-
-    default:
-      /* If the operand doesn't have a simple form.  */
-      if (!is_gimple_lvalue (op) && !INDIRECT_REF_P (op))
-	return false;
-      break;
-    }
-
-  return empty_aggregate_p (type);
-}
-
-/* Implements the lang_hooks.gimplify_expr routine for language D.
-   Do gimplification of D specific expression trees in EXPR_P.  */
-
-static int
-d_gimplify_expr (tree *expr_p, gimple_seq *pre_p,
-		 gimple_seq *post_p ATTRIBUTE_UNUSED)
-{
-  tree_code code = TREE_CODE (*expr_p);
-  enum gimplify_status ret = GS_UNHANDLED;
-  tree op0, op1;
-  tree type;
-
-  switch (code)
-    {
-    case INIT_EXPR:
-    case MODIFY_EXPR:
-      op0 = TREE_OPERAND (*expr_p, 0);
-      op1 = TREE_OPERAND (*expr_p, 1);
-
-      if (!error_operand_p (op0) && !error_operand_p (op1)
-	  && (AGGREGATE_TYPE_P (TREE_TYPE (op0))
-	      || AGGREGATE_TYPE_P (TREE_TYPE (op1)))
-	  && !useless_type_conversion_p (TREE_TYPE (op1), TREE_TYPE (op0)))
-	{
-	  /* If the back end isn't clever enough to know that the lhs and rhs
-	     types are the same, add an explicit conversion.  */
-	  TREE_OPERAND (*expr_p, 1) = build1 (VIEW_CONVERT_EXPR,
-					      TREE_TYPE (op0), op1);
-	  ret = GS_OK;
-	}
-      else if (empty_modify_p (TREE_TYPE (op0), op1))
-	{
-	  /* Remove any copies of empty aggregates.  */
-	  gimplify_expr (&TREE_OPERAND (*expr_p, 0), pre_p, post_p,
-			 is_gimple_lvalue, fb_lvalue);
-
-	  if (TREE_SIDE_EFFECTS (op1))
-	    gimplify_and_add (op1, pre_p);
-
-	  *expr_p = TREE_OPERAND (*expr_p, 0);
-	  ret = GS_OK;
-	}
-      break;
-
-    case ADDR_EXPR:
-      op0 = TREE_OPERAND (*expr_p, 0);
-      /* Constructors are not lvalues, so make them one.  */
-      if (TREE_CODE (op0) == CONSTRUCTOR)
-	{
-	  TREE_OPERAND (*expr_p, 0) = force_target_expr (op0);
-	  ret = GS_OK;
-	}
-      break;
-
-    case CALL_EXPR:
-      if (CALL_EXPR_ARGS_ORDERED (*expr_p))
-	{
-	  /* Strictly evaluate all arguments from left to right.  */
-	  int nargs = call_expr_nargs (*expr_p);
-	  location_t loc = EXPR_LOC_OR_LOC (*expr_p, input_location);
-
-	  /* No need to enforce evaluation order if only one argument.  */
-	  if (nargs < 2)
-	    break;
-
-	  /* Or if all arguments are already free of side-effects.  */
-	  bool has_side_effects = false;
-	  for (int i = 0; i < nargs; i++)
-	    {
-	      if (TREE_SIDE_EFFECTS (CALL_EXPR_ARG (*expr_p, i)))
-		{
-		  has_side_effects = true;
-		  break;
-		}
-	    }
-
-	  if (!has_side_effects)
-	    break;
-
-	  /* Leave the last argument for gimplify_call_expr.  */
-	  for (int i = 0; i < nargs - 1; i++)
-	    {
-	      tree new_arg = CALL_EXPR_ARG (*expr_p, i);
-
-	      /* If argument has a side-effect, gimplify_arg will handle it.  */
-	      if (gimplify_arg (&new_arg, pre_p, loc) == GS_ERROR)
-		ret = GS_ERROR;
-
-	      /* Even if an argument itself doesn't have any side-effects, it
-		 might be altered by another argument in the list.  */
-	      if (new_arg == CALL_EXPR_ARG (*expr_p, i)
-		  && !really_constant_p (new_arg))
-		new_arg = get_formal_tmp_var (new_arg, pre_p);
-
-	      CALL_EXPR_ARG (*expr_p, i) = new_arg;
-	    }
-
-	  if (ret != GS_ERROR)
-	    ret = GS_OK;
-	}
-      break;
-
-    case UNSIGNED_RSHIFT_EXPR:
-      /* Convert op0 to an unsigned type.  */
-      op0 = TREE_OPERAND (*expr_p, 0);
-      op1 = TREE_OPERAND (*expr_p, 1);
-
-      type = d_unsigned_type (TREE_TYPE (op0));
-
-      *expr_p = convert (TREE_TYPE (*expr_p),
-			 build2 (RSHIFT_EXPR, type, convert (type, op0), op1));
-      ret = GS_OK;
-      break;
-
-    case FLOAT_MOD_EXPR:
-      gcc_unreachable ();
-
-    default:
-      break;
-    }
-
-  return ret;
 }
 
 /* Add the module M to the list of modules that may declare GCC builtins.
@@ -1045,6 +906,7 @@ d_parse_file (void)
 	      obstack_grow (&buffer, str, strlen (str));
 	    }
 
+	  obstack_1grow (&buffer, '\0');
 	  message ("%s", (char *) obstack_finish (&buffer));
 	}
     }
@@ -1066,32 +928,43 @@ d_parse_file (void)
     {
       if (strcmp (in_fnames[i], "-") == 0)
 	{
-	  /* Handling stdin, generate a unique name for the module.  */
-	  obstack buffer;
-	  gcc_obstack_init (&buffer);
-	  int c;
+	  /* Load the entire contents of stdin into memory.  8 kilobytes should
+	     be a good enough initial size, but double on each iteration.
+	     16 bytes are added for the final '\n' and 15 bytes of padding.  */
+	  ssize_t size = 8 * 1024;
+	  uchar *buffer = XNEWVEC (uchar, size + 16);
+	  ssize_t len = 0;
+	  ssize_t count;
 
+	  while ((count = read (STDIN_FILENO, buffer + len, size - len)) > 0)
+	    {
+	      len += count;
+	      if (len == size)
+		{
+		  size *= 2;
+		  buffer = XRESIZEVEC (uchar, buffer, size + 16);
+		}
+	    }
+
+	  if (count < 0)
+	    {
+	      error (Loc ("stdin", 0, 0), "%s", xstrerror (errno));
+	      free (buffer);
+	      continue;
+	    }
+
+	  /* Handling stdin, generate a unique name for the module.  */
 	  Module *m = Module::create (in_fnames[i],
 				      Identifier::generateId ("__stdin"),
 				      global.params.doDocComments,
 				      global.params.doHdrGeneration);
 	  modules.push (m);
 
-	  /* Load the entire contents of stdin into memory.  */
-	  while ((c = getc (stdin)) != EOF)
-	    obstack_1grow (&buffer, c);
-
-	  if (!obstack_object_size (&buffer))
-	    obstack_1grow (&buffer, '\0');
-
 	  /* Overwrite the source file for the module, the one created by
 	     Module::create would have a forced a `.d' suffix.  */
 	  m->srcfile = File::create ("<stdin>");
-	  m->srcfile->len = obstack_object_size (&buffer);
-	  m->srcfile->buffer = (unsigned char *) obstack_finish (&buffer);
-
-	  /* Tell the front-end not to free the buffer after parsing.  */
-	  m->srcfile->ref = 1;
+	  m->srcfile->len = len;
+	  m->srcfile->buffer = buffer;
 	}
       else
 	{
@@ -1127,7 +1000,6 @@ d_parse_file (void)
 
       m->importedFrom = m;
       m->parse ();
-      Compiler::loadModule (m);
 
       if (m->isDocFile)
 	{
@@ -1151,6 +1023,10 @@ d_parse_file (void)
 	}
     }
 
+  /* If an error occurs later during compilation, remember that we generated
+     the headers, so that they can be removed before exit.  */
+  bool dump_headers = false;
+
   if (global.errors)
     goto had_errors;
 
@@ -1170,6 +1046,8 @@ d_parse_file (void)
 
 	  genhdrfile (m);
 	}
+
+      dump_headers = true;
     }
 
   if (global.errors)
@@ -1199,7 +1077,7 @@ d_parse_file (void)
       if (global.params.verbose)
 	message ("semantic  %s", m->toChars ());
 
-      m->semantic (NULL);
+      dsymbolSemantic (m, NULL);
     }
 
   /* Do deferred semantic analysis.  */
@@ -1231,7 +1109,7 @@ d_parse_file (void)
       if (global.params.verbose)
 	message ("semantic2 %s", m->toChars ());
 
-      m->semantic2 (NULL);
+      semantic2 (m, NULL);
     }
 
   Module::runDeferredSemantic2 ();
@@ -1247,7 +1125,7 @@ d_parse_file (void)
       if (global.params.verbose)
 	message ("semantic3 %s", m->toChars ());
 
-      m->semantic3 (NULL);
+      semantic3 (m, NULL);
     }
 
   Module::runDeferredSemantic3 ();
@@ -1394,6 +1272,19 @@ d_parse_file (void)
      exit with an error status.  */
   errorcount += (global.errors + global.warnings);
 
+  /* Remove generated .di files on error.  */
+  if (errorcount && dump_headers)
+    {
+      for (size_t i = 0; i < modules.length; i++)
+	{
+	  Module *m = modules[i];
+	  if (d_option.fonly && m != Module::rootModule)
+	    continue;
+
+	  remove (m->hdrfile->toChars ());
+	}
+    }
+
   /* Write out globals.  */
   d_finish_compilation (vec_safe_address (global_declarations),
 			vec_safe_length (global_declarations));
@@ -1507,12 +1398,65 @@ d_type_for_size (unsigned bits, int unsignedp)
   return 0;
 }
 
-/* Implements the lang_hooks.types.type_promotes_to routine for language D.
-   All promotions for variable arguments are handled by the D frontend.  */
+/* Implements the lang_hooks.types.type_promotes_to routine for language D.  */
 
 static tree
 d_type_promotes_to (tree type)
 {
+  /* Promotions are only applied on unnamed function arguments for declarations
+     with `extern(C)' or `extern(C++)' linkage.  */
+  if (cfun && DECL_LANG_FRONTEND (cfun->decl)
+      && DECL_LANG_FRONTEND (cfun->decl)->linkage != LINKd)
+    {
+      /* In [type/integer-promotions], integer promotions are conversions of the
+	 following types:
+
+		bool	int
+		byte	int
+		ubyte	int
+		short	int
+		ushort	int
+		char	int
+		wchar	int
+		dchar	uint
+
+	 If an enum has as a base type one of the types in the left column, it
+	 is converted to the type in the right column.  */
+      if (TREE_CODE (type) == ENUMERAL_TYPE && ENUM_IS_SCOPED (type))
+	type = TREE_TYPE (type);
+
+      type = TYPE_MAIN_VARIANT (type);
+
+      /* Check for promotions of target-defined types first.  */
+      tree promoted_type = targetm.promoted_type (type);
+      if (promoted_type)
+	return promoted_type;
+
+      if (TREE_CODE (type) == BOOLEAN_TYPE)
+	return d_int_type;
+
+      if (INTEGRAL_TYPE_P (type))
+	{
+	  if (type == d_byte_type || type == d_ubyte_type
+	      || type == d_short_type || type == d_ushort_type
+	      || type == char8_type_node || type == char16_type_node)
+	    return d_int_type;
+
+	  if (type == char32_type_node)
+	    return d_uint_type;
+
+	  if (TYPE_PRECISION (type) < TYPE_PRECISION (d_int_type))
+	    return d_int_type;
+	}
+
+      /* Float arguments are converted to doubles.  */
+      if (type == float_type_node)
+	return double_type_node;
+
+      if (type == ifloat_type_node)
+	return idouble_type_node;
+    }
+
   return type;
 }
 
@@ -1817,6 +1761,16 @@ d_build_eh_runtime_type (tree type)
   return convert (ptr_type_node, build_address (decl));
 }
 
+/* Implements the lang_hooks.enum_underlying_base_type routine for language D.
+   Returns the underlying type of the given enumeration TYPE.  */
+
+static tree
+d_enum_underlying_base_type (const_tree type)
+{
+  gcc_assert (TREE_CODE (type) == ENUMERAL_TYPE);
+  return TREE_TYPE (type);
+}
+
 /* Definitions for our language-specific hooks.  */
 
 #undef LANG_HOOKS_NAME
@@ -1833,6 +1787,7 @@ d_build_eh_runtime_type (tree type)
 #undef LANG_HOOKS_GET_ALIAS_SET
 #undef LANG_HOOKS_TYPES_COMPATIBLE_P
 #undef LANG_HOOKS_BUILTIN_FUNCTION
+#undef LANG_HOOKS_BUILTIN_FUNCTION_EXT_SCOPE
 #undef LANG_HOOKS_REGISTER_BUILTIN_TYPE
 #undef LANG_HOOKS_FINISH_INCOMPLETE_DECL
 #undef LANG_HOOKS_GIMPLIFY_EXPR
@@ -1842,6 +1797,7 @@ d_build_eh_runtime_type (tree type)
 #undef LANG_HOOKS_DUP_LANG_SPECIFIC_DECL
 #undef LANG_HOOKS_EH_PERSONALITY
 #undef LANG_HOOKS_EH_RUNTIME_TYPE
+#undef LANG_HOOKS_ENUM_UNDERLYING_BASE_TYPE
 #undef LANG_HOOKS_PUSHDECL
 #undef LANG_HOOKS_GETDECLS
 #undef LANG_HOOKS_GLOBAL_BINDINGS_P
@@ -1863,6 +1819,7 @@ d_build_eh_runtime_type (tree type)
 #define LANG_HOOKS_GET_ALIAS_SET	    d_get_alias_set
 #define LANG_HOOKS_TYPES_COMPATIBLE_P	    d_types_compatible_p
 #define LANG_HOOKS_BUILTIN_FUNCTION	    d_builtin_function
+#define LANG_HOOKS_BUILTIN_FUNCTION_EXT_SCOPE d_builtin_function_ext_scope
 #define LANG_HOOKS_REGISTER_BUILTIN_TYPE    d_register_builtin_type
 #define LANG_HOOKS_FINISH_INCOMPLETE_DECL   d_finish_incomplete_decl
 #define LANG_HOOKS_GIMPLIFY_EXPR	    d_gimplify_expr
@@ -1872,6 +1829,7 @@ d_build_eh_runtime_type (tree type)
 #define LANG_HOOKS_DUP_LANG_SPECIFIC_DECL   d_dup_lang_specific_decl
 #define LANG_HOOKS_EH_PERSONALITY	    d_eh_personality
 #define LANG_HOOKS_EH_RUNTIME_TYPE	    d_build_eh_runtime_type
+#define LANG_HOOKS_ENUM_UNDERLYING_BASE_TYPE d_enum_underlying_base_type
 #define LANG_HOOKS_PUSHDECL		    d_pushdecl
 #define LANG_HOOKS_GETDECLS		    d_getdecls
 #define LANG_HOOKS_GLOBAL_BINDINGS_P	    d_global_bindings_p

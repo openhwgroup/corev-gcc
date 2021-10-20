@@ -1,5 +1,5 @@
 # configure.ac -- Backtrace configure script.
-# Copyright (C) 2012-2020 Free Software Foundation, Inc.
+# Copyright (C) 2012-2021 Free Software Foundation, Inc.
 
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are
@@ -500,8 +500,7 @@ AC_CACHE_CHECK([whether objcopy supports debuglink],
   libbacktrace_cv_objcopy_debuglink=no
 elif ! test -n "${OBJCOPY}"; then
   libbacktrace_cv_objcopy_debuglink=no
-elif ${OBJCOPY} --add-gnu-debuglink=x /bin/ls /tmp/ls$$; then
-  rm -f /tmp/ls$$
+elif ${OBJCOPY} --help | fgrep add-gnu-debuglink >/dev/null 2>&1; then
   libbacktrace_cv_objcopy_debuglink=yes
 else
   libbacktrace_cv_objcopy_debuglink=no
@@ -510,7 +509,22 @@ AM_CONDITIONAL(HAVE_OBJCOPY_DEBUGLINK, test "$libbacktrace_cv_objcopy_debuglink"
 
 AC_ARG_VAR(DSYMUTIL, [location of dsymutil])
 AC_CHECK_PROG(DSYMUTIL, dsymutil, dsymutil)
-AM_CONDITIONAL(HAVE_DSYMUTIL, test -n "${DSYMUTIL}")
+AM_CONDITIONAL(USE_DSYMUTIL, test -n "${DSYMUTIL}" -a "$FORMAT_FILE" = "macho.lo")
+
+AC_ARG_VAR(NM, [location of nm])
+AC_CHECK_PROG(NM, nm, nm)
+
+AC_CHECK_PROG(XZ, xz, xz)
+AM_CONDITIONAL(HAVE_XZ, test "$XZ" != "")
+AC_CHECK_PROG(COMM, comm, comm)
+AM_CONDITIONAL(HAVE_COMM, test "$COMM" != "")
+
+AM_CONDITIONAL(HAVE_MINIDEBUG,
+  test "${with_target_subdir}" = "" -a "$FORMAT_FILE" = "elf.lo" -a "${OBJCOPY}" != "" -a "${NM}" != "" -a "${XZ}" != "" -a "${COMM}" != "")
+
+AC_CHECK_LIB([lzma], [lzma_auto_decoder],
+    [AC_DEFINE(HAVE_LIBLZMA, 1, [Define if -llzma is available.])])
+AM_CONDITIONAL(HAVE_LIBLZMA, test "$ac_cv_lib_lzma_lzma_auto_decoder" = yes)
 
 AC_CACHE_CHECK([whether tests can run],
   [libbacktrace_cv_sys_native],

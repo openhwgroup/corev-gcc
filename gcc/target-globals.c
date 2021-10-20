@@ -1,5 +1,5 @@
 /* Target-dependent globals.
-   Copyright (C) 2010-2020 Free Software Foundation, Inc.
+   Copyright (C) 2010-2021 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -108,11 +108,11 @@ save_target_globals_default_opts ()
 	 attribute.  */
       optimization_current_node = optimization_default_node;
       cl_optimization_restore
-	(&global_options,
+	(&global_options, &global_options_set,
 	 TREE_OPTIMIZATION (optimization_default_node));
       globals = save_target_globals ();
       optimization_current_node = opts;
-      cl_optimization_restore (&global_options,
+      cl_optimization_restore (&global_options, &global_options_set,
 			       TREE_OPTIMIZATION (opts));
       return globals;
     }

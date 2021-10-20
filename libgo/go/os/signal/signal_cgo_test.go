@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+//go:build (darwin || dragonfly || freebsd || (linux && !android) || netbsd || openbsd) && cgo
 // +build darwin dragonfly freebsd linux,!android netbsd openbsd
 // +build cgo
 
@@ -17,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	ptypkg "os/signal/internal/pty"
@@ -127,7 +129,7 @@ func TestTerminalSignal(t *testing.T) {
 				if len(line) > 0 || len(handled) > 0 {
 					t.Logf("%q", append(handled, line...))
 				}
-				if perr, ok := err.(*os.PathError); ok {
+				if perr, ok := err.(*fs.PathError); ok {
 					err = perr.Err
 				}
 				// EOF means pty is closed.

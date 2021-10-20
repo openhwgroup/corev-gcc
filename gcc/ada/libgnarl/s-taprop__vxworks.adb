@@ -6,7 +6,7 @@
 --                                                                          --
 --                                  B o d y                                 --
 --                                                                          --
---         Copyright (C) 1992-2020, Free Software Foundation, Inc.          --
+--         Copyright (C) 1992-2021, Free Software Foundation, Inc.          --
 --                                                                          --
 -- GNARL is free software; you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -33,10 +33,6 @@
 
 --  This package contains all the GNULL primitives that interface directly with
 --  the underlying OS.
-
-pragma Polling (Off);
---  Turn off polling, we do not want ATC polling to take place during tasking
---  operations. It causes infinite loops and other problems.
 
 with Ada.Unchecked_Conversion;
 
@@ -66,12 +62,17 @@ package body System.Task_Primitives.Operations is
    use System.Tasking;
    use System.OS_Interface;
    use System.Parameters;
-   use type System.VxWorks.Ext.t_id;
    use type Interfaces.C.int;
    use type System.OS_Interface.unsigned;
+   use type System.VxWorks.Ext.t_id;
+   use type System.VxWorks.Ext.STATUS;
+   use type System.VxWorks.Ext.BOOL;
 
-   subtype int is System.OS_Interface.int;
+   subtype int      is System.OS_Interface.int;
    subtype unsigned is System.OS_Interface.unsigned;
+   subtype STATUS   is System.VxWorks.Ext.STATUS;
+
+   OK  : constant STATUS := System.VxWorks.Ext.OK;
 
    Relative : constant := 0;
 
@@ -87,13 +88,13 @@ package body System.Task_Primitives.Operations is
 
    --  The followings are internal configuration constants needed
 
-   Dispatching_Policy : Character;
+   Dispatching_Policy : constant Character;
    pragma Import (C, Dispatching_Policy, "__gl_task_dispatching_policy");
 
    Foreign_Task_Elaborated : aliased Boolean := True;
    --  Used to identified fake tasks (i.e., non-Ada Threads)
 
-   Locking_Policy : Character;
+   Locking_Policy : constant Character;
    pragma Import (C, Locking_Policy, "__gl_locking_policy");
 
    Mutex_Protocol : Priority_Type;
@@ -103,7 +104,7 @@ package body System.Task_Primitives.Operations is
    --  time; it is used to execute in mutual exclusion from all other tasks.
    --  Used to protect All_Tasks_List
 
-   Time_Slice_Val : Integer;
+   Time_Slice_Val : constant Integer;
    pragma Import (C, Time_Slice_Val, "__gl_time_slice_val");
 
    Null_Thread_Id : constant Thread_Id := 0;
@@ -337,17 +338,17 @@ package body System.Task_Primitives.Operations is
    -------------------
 
    procedure Finalize_Lock (L : not null access Lock) is
-      Result : int;
+      Result : STATUS;
    begin
       Result := semDelete (L.Mutex);
-      pragma Assert (Result = 0);
+      pragma Assert (Result = OK);
    end Finalize_Lock;
 
    procedure Finalize_Lock (L : not null access RTS_Lock) is
-      Result : int;
+      Result : STATUS;
    begin
       Result := semDelete (L.Mutex);
-      pragma Assert (Result = 0);
+      pragma Assert (Result = OK);
    end Finalize_Lock;
 
    ----------------
@@ -358,7 +359,7 @@ package body System.Task_Primitives.Operations is
      (L                 : not null access Lock;
       Ceiling_Violation : out Boolean)
    is
-      Result : int;
+      Result : STATUS;
 
    begin
       if L.Protocol = Prio_Protect
@@ -371,21 +372,21 @@ package body System.Task_Primitives.Operations is
       end if;
 
       Result := semTake (L.Mutex, WAIT_FOREVER);
-      pragma Assert (Result = 0);
+      pragma Assert (Result = OK);
    end Write_Lock;
 
    procedure Write_Lock (L : not null access RTS_Lock) is
-      Result : int;
+      Result : STATUS;
    begin
       Result := semTake (L.Mutex, WAIT_FOREVER);
-      pragma Assert (Result = 0);
+      pragma Assert (Result = OK);
    end Write_Lock;
 
    procedure Write_Lock (T : Task_Id) is
-      Result : int;
+      Result : STATUS;
    begin
       Result := semTake (T.Common.LL.L.Mutex, WAIT_FOREVER);
-      pragma Assert (Result = 0);
+      pragma Assert (Result = OK);
    end Write_Lock;
 
    ---------------
@@ -404,24 +405,24 @@ package body System.Task_Primitives.Operations is
    ------------
 
    procedure Unlock (L : not null access Lock) is
-      Result : int;
+      Result : STATUS;
    begin
       Result := semGive (L.Mutex);
-      pragma Assert (Result = 0);
+      pragma Assert (Result = OK);
    end Unlock;
 
    procedure Unlock (L : not null access RTS_Lock) is
-      Result : int;
+      Result : STATUS;
    begin
       Result := semGive (L.Mutex);
-      pragma Assert (Result = 0);
+      pragma Assert (Result = OK);
    end Unlock;
 
    procedure Unlock (T : Task_Id) is
-      Result : int;
+      Result : STATUS;
    begin
       Result := semGive (T.Common.LL.L.Mutex);
-      pragma Assert (Result = 0);
+      pragma Assert (Result = OK);
    end Unlock;
 
    -----------------
@@ -446,7 +447,7 @@ package body System.Task_Primitives.Operations is
    procedure Sleep (Self_ID : Task_Id; Reason : System.Tasking.Task_States) is
       pragma Unreferenced (Reason);
 
-      Result : int;
+      Result : STATUS;
 
    begin
       pragma Assert (Self_ID = Self);
@@ -454,7 +455,7 @@ package body System.Task_Primitives.Operations is
       --  Release the mutex before sleeping
 
       Result := semGive (Self_ID.Common.LL.L.Mutex);
-      pragma Assert (Result = 0);
+      pragma Assert (Result = OK);
 
       --  Perform a blocking operation to take the CV semaphore. Note that a
       --  blocking operation in VxWorks will reenable task scheduling. When we
@@ -462,12 +463,12 @@ package body System.Task_Primitives.Operations is
       --  again be disabled.
 
       Result := semTake (Self_ID.Common.LL.CV, WAIT_FOREVER);
-      pragma Assert (Result = 0);
+      pragma Assert (Result = OK);
 
       --  Take the mutex back
 
       Result := semTake (Self_ID.Common.LL.L.Mutex, WAIT_FOREVER);
-      pragma Assert (Result = 0);
+      pragma Assert (Result = OK);
    end Sleep;
 
    -----------------
@@ -490,7 +491,7 @@ package body System.Task_Primitives.Operations is
       Orig     : constant Duration := Monotonic_Clock;
       Absolute : Duration;
       Ticks    : int;
-      Result   : int;
+      Result   : STATUS;
       Wakeup   : Boolean := False;
 
    begin
@@ -520,7 +521,7 @@ package body System.Task_Primitives.Operations is
             --  Release the mutex before sleeping
 
             Result := semGive (Self_ID.Common.LL.L.Mutex);
-            pragma Assert (Result = 0);
+            pragma Assert (Result = OK);
 
             --  Perform a blocking operation to take the CV semaphore. Note
             --  that a blocking operation in VxWorks will reenable task
@@ -529,7 +530,7 @@ package body System.Task_Primitives.Operations is
 
             Result := semTake (Self_ID.Common.LL.CV, Ticks);
 
-            if Result = 0 then
+            if Result = OK then
 
                --  Somebody may have called Wakeup for us
 
@@ -560,7 +561,7 @@ package body System.Task_Primitives.Operations is
             --  Take the mutex back
 
             Result := semTake (Self_ID.Common.LL.L.Mutex, WAIT_FOREVER);
-            pragma Assert (Result = 0);
+            pragma Assert (Result = OK);
 
             exit when Timedout or Wakeup;
          end loop;
@@ -594,7 +595,7 @@ package body System.Task_Primitives.Operations is
       Timedout : Boolean;
       Aborted  : Boolean := False;
 
-      Result : int;
+      Result   : STATUS;
       pragma Warnings (Off, Result);
 
    begin
@@ -621,7 +622,7 @@ package body System.Task_Primitives.Operations is
 
          Result := semTake (Self_ID.Common.LL.L.Mutex, WAIT_FOREVER);
 
-         pragma Assert (Result = 0);
+         pragma Assert (Result = OK);
 
          Self_ID.Common.State := Delay_Sleep;
          Timedout := False;
@@ -632,13 +633,13 @@ package body System.Task_Primitives.Operations is
             --  Release the TCB before sleeping
 
             Result := semGive (Self_ID.Common.LL.L.Mutex);
-            pragma Assert (Result = 0);
+            pragma Assert (Result = OK);
 
             exit when Aborted;
 
             Result := semTake (Self_ID.Common.LL.CV, Ticks);
 
-            if Result /= 0 then
+            if Result /= OK then
 
                --  If Ticks = int'last, it was most probably truncated, so make
                --  another round after recomputing Ticks from absolute time.
@@ -659,7 +660,7 @@ package body System.Task_Primitives.Operations is
 
             Result := semTake (Self_ID.Common.LL.L.Mutex, WAIT_FOREVER);
 
-            pragma Assert (Result = 0);
+            pragma Assert (Result = OK);
 
             exit when Timedout;
          end loop;
@@ -701,10 +702,10 @@ package body System.Task_Primitives.Operations is
 
    procedure Wakeup (T : Task_Id; Reason : System.Tasking.Task_States) is
       pragma Unreferenced (Reason);
-      Result : int;
+      Result : STATUS;
    begin
       Result := semGive (T.Common.LL.CV);
-      pragma Assert (Result = 0);
+      pragma Assert (Result = OK);
    end Wakeup;
 
    -----------
@@ -713,7 +714,7 @@ package body System.Task_Primitives.Operations is
 
    procedure Yield (Do_Yield : Boolean := True) is
       pragma Unreferenced (Do_Yield);
-      Result : int;
+      Result : STATUS;
       pragma Unreferenced (Result);
    begin
       Result := taskDelay (0);
@@ -730,13 +731,13 @@ package body System.Task_Primitives.Operations is
    is
       pragma Unreferenced (Loss_Of_Inheritance);
 
-      Result     : int;
+      Result     : STATUS;
 
    begin
       Result :=
         taskPrioritySet
           (T.Common.LL.Thread, To_VxWorks_Priority (int (Prio)));
-      pragma Assert (Result = 0);
+      pragma Assert (Result = OK);
 
       --  Note: in VxWorks 6.6 (or earlier), the task is placed at the end of
       --  the priority queue instead of the head. This is not the behavior
@@ -942,16 +943,16 @@ package body System.Task_Primitives.Operations is
    ------------------
 
    procedure Finalize_TCB (T : Task_Id) is
-      Result : int;
+      Result : STATUS;
 
    begin
       Result := semDelete (T.Common.LL.L.Mutex);
-      pragma Assert (Result = 0);
+      pragma Assert (Result = OK);
 
       T.Common.LL.Thread := Null_Thread_Id;
 
       Result := semDelete (T.Common.LL.CV);
-      pragma Assert (Result = 0);
+      pragma Assert (Result = OK);
 
       if T.Known_Tasks_Index /= -1 then
          Known_Tasks (T.Known_Tasks_Index) := null;
@@ -1141,7 +1142,7 @@ package body System.Task_Primitives.Operations is
             S.State := False;
 
             Result := semGive (S.L);
-            pragma Assert (Result = 0);
+            pragma Assert (Result = OK);
 
             SSL.Abort_Undefer.all;
 
@@ -1222,7 +1223,7 @@ package body System.Task_Primitives.Operations is
       if T.Common.LL.Thread /= Null_Thread_Id
         and then T.Common.LL.Thread /= Thread_Self
       then
-         return taskSuspend (T.Common.LL.Thread) = 0;
+         return taskSuspend (T.Common.LL.Thread) = OK;
       else
          return True;
       end if;
@@ -1240,7 +1241,7 @@ package body System.Task_Primitives.Operations is
       if T.Common.LL.Thread /= Null_Thread_Id
         and then T.Common.LL.Thread /= Thread_Self
       then
-         return taskResume (T.Common.LL.Thread) = 0;
+         return taskResume (T.Common.LL.Thread) = OK;
       else
          return True;
       end if;
@@ -1255,7 +1256,7 @@ package body System.Task_Primitives.Operations is
       Thread_Self : constant Thread_Id := taskIdSelf;
       C           : Task_Id;
 
-      Dummy : int;
+      Dummy : STATUS;
       Old   : int;
 
    begin
@@ -1272,7 +1273,7 @@ package body System.Task_Primitives.Operations is
          C := C.Common.All_Tasks_Link;
       end loop;
 
-      Dummy := Int_Unlock (Old);
+      Int_Unlock (Old);
    end Stop_All_Tasks;
 
    ---------------
@@ -1282,7 +1283,7 @@ package body System.Task_Primitives.Operations is
    function Stop_Task (T : ST.Task_Id) return Boolean is
    begin
       if T.Common.LL.Thread /= Null_Thread_Id then
-         return Task_Stop (T.Common.LL.Thread) = 0;
+         return Task_Stop (T.Common.LL.Thread) = OK;
       else
          return True;
       end if;
@@ -1296,7 +1297,7 @@ package body System.Task_Primitives.Operations is
    is
    begin
       if T.Common.LL.Thread /= Null_Thread_Id then
-         return Task_Cont (T.Common.LL.Thread) = 0;
+         return Task_Cont (T.Common.LL.Thread) = OK;
       else
          return True;
       end if;
@@ -1308,7 +1309,7 @@ package body System.Task_Primitives.Operations is
 
    function Is_Task_Context return Boolean is
    begin
-      return System.OS_Interface.Interrupt_Context /= 1;
+      return OSI.Interrupt_Context = 0;
    end Is_Task_Context;
 
    ----------------
@@ -1316,7 +1317,7 @@ package body System.Task_Primitives.Operations is
    ----------------
 
    procedure Initialize (Environment_Task : Task_Id) is
-      Result : int;
+      Result : STATUS;
       pragma Unreferenced (Result);
 
    begin

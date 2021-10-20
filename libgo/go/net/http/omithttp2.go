@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+//go:build nethttpomithttp2
 // +build nethttpomithttp2
 
 package http
@@ -32,10 +33,6 @@ type http2Transport struct {
 func (*http2Transport) RoundTrip(*Request) (*Response, error) { panic(noHTTP2) }
 func (*http2Transport) CloseIdleConnections()                 {}
 
-type http2erringRoundTripper struct{ err error }
-
-func (http2erringRoundTripper) RoundTrip(*Request) (*Response, error) { panic(noHTTP2) }
-
 type http2noDialH2RoundTripper struct{}
 
 func (http2noDialH2RoundTripper) RoundTrip(*Request) (*Response, error) { panic(noHTTP2) }
@@ -49,7 +46,7 @@ type http2clientConnPool struct {
 	conns map[string][]struct{}
 }
 
-func http2configureTransport(*Transport) (*http2Transport, error) { panic(noHTTP2) }
+func http2configureTransports(*Transport) (*http2Transport, error) { panic(noHTTP2) }
 
 func http2isNoCachedConnError(err error) bool {
 	_, ok := err.(interface{ IsHTTP2NoCachedConnError() })

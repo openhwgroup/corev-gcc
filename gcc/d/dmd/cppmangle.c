@@ -1,6 +1,6 @@
 
 /* Compiler implementation of the D programming language
- * Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved
+ * Copyright (C) 1999-2021 by The D Language Foundation, All Rights Reserved
  * written by Walter Bright
  * http://www.digitalmars.com
  * Distributed under the Boost Software License, Version 1.0.
@@ -582,13 +582,21 @@ class CppMangleVisitor : public Visitor
         //printf("mangle_function(%s)\n", d->toChars());
         /*
          * <mangled-name> ::= _Z <encoding>
+         */
+        buf->writestring("_Z");
+        this->mangle_function_encoding(d);
+    }
+
+    void mangle_function_encoding(FuncDeclaration *d)
+    {
+        //printf("mangle_function_encoding(%s)\n", d->toChars());
+        /*
          * <encoding> ::= <function name> <bare-function-type>
          *            ::= <data name>
          *            ::= <special-name>
          */
         TypeFunction *tf = (TypeFunction *)d->type;
 
-        buf->writestring("_Z");
         if (getFuncTemplateDecl(d))
         {
             /* It's an instance of a function template
@@ -798,6 +806,14 @@ public:
         writeBasicType(t, 'D', 'n');
     }
 
+    void visit(TypeNoreturn *t)
+    {
+        if (t->isImmutable() || t->isShared())
+            return error(t);
+
+        writeBasicType(t, 0, 'v');      // mangle like `void`
+    }
+
     void visit(TypeBasic *t)
     {
         if (t->isImmutable() || t->isShared())
@@ -1004,7 +1020,7 @@ public:
         if (t->isImmutable() || t->isShared())
             return error(t);
 
-        /* __c_(u)long(long) get special mangling
+        /* __c_(u)long(long) and others get special mangling
          */
         Identifier *id = t->sym->ident;
         //printf("enum id = '%s'\n", id->toChars());
@@ -1012,10 +1028,18 @@ public:
             return writeBasicType(t, 0, 'l');
         else if (id == Id::__c_ulong)
             return writeBasicType(t, 0, 'm');
+        else if (id == Id::__c_wchar_t)
+            return writeBasicType(t, 0, 'w');
         else if (id == Id::__c_longlong)
             return writeBasicType(t, 0, 'x');
         else if (id == Id::__c_ulonglong)
             return writeBasicType(t, 0, 'y');
+        else if (id == Id::__c_complex_float)
+            return writeBasicType(t, 'C', 'f');
+        else if (id == Id::__c_complex_double)
+            return writeBasicType(t, 'C', 'd');
+        else if (id == Id::__c_complex_real)
+            return writeBasicType(t, 'C', 'e');
 
         doSymbol(t);
     }
@@ -1130,5 +1154,15 @@ const char *cppTypeInfoMangleItanium(Dsymbol *s)
     buf.writestring("_ZTI");    // "TI" means typeinfo structure
     CppMangleVisitor v(&buf, s->loc);
     v.cpp_mangle_name(s, false);
+    return buf.extractChars();
+}
+
+const char *cppThunkMangleItanium(FuncDeclaration *fd, int offset)
+{
+    //printf("cppThunkMangleItanium(%s)\n", fd.toChars());
+    OutBuffer buf;
+    buf.printf("_ZThn%u_", offset);  // "Th" means thunk, "n%u" is the call offset
+    CppMangleVisitor v(&buf, fd->loc);
+    v.mangle_function_encoding(fd);
     return buf.extractChars();
 }

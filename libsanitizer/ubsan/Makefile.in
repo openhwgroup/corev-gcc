@@ -340,6 +340,7 @@ install_sh = @install_sh@
 libdir = @libdir@
 libexecdir = @libexecdir@
 link_libasan = @link_libasan@
+link_libhwasan = @link_libhwasan@
 link_liblsan = @link_liblsan@
 link_libtsan = @link_libtsan@
 link_libubsan = @link_libubsan@
@@ -377,6 +378,7 @@ AM_CXXFLAGS = -Wall -W -Wno-unused-parameter -Wwrite-strings -pedantic \
 	-fomit-frame-pointer -funwind-tables -fvisibility=hidden \
 	-Wno-variadic-macros $(LIBSTDCXX_RAW_CXX_CXXFLAGS) \
 	-std=gnu++14 $(EXTRA_CXXFLAGS)
+AM_CCASFLAGS = $(EXTRA_ASFLAGS)
 ACLOCAL_AMFLAGS = -I m4
 toolexeclib_LTLIBRARIES = libubsan.la
 ubsan_plugin_files = \

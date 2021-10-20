@@ -1,5 +1,5 @@
 /* Implementation of -Wmisleading-indentation
-   Copyright (C) 2015-2020 Free Software Foundation, Inc.
+   Copyright (C) 2015-2021 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -45,36 +45,11 @@ next_tab_stop (unsigned int vis_column, unsigned int tab_width)
    on the line (up to or before EXPLOC).  */
 
 static bool
-get_visual_column (expanded_location exploc, location_t loc,
+get_visual_column (expanded_location exploc,
 		   unsigned int *out,
 		   unsigned int *first_nws,
 		   unsigned int tab_width)
 {
-  /* PR c++/68819: if the column number is zero, we presumably
-     had a location_t > LINE_MAP_MAX_LOCATION_WITH_COLS, and so
-     we have no column information.
-     Act as if no conversion was possible, triggering the
-     error-handling path in the caller.  */
-  if (!exploc.column)
-    {
-      static bool issued_note = false;
-      if (!issued_note)
-	{
-	  /* Notify the user the first time this happens.  */
-	  issued_note = true;
-	  inform (loc,
-		  "%<-Wmisleading-indentation%> is disabled from this point"
-		  " onwards, since column-tracking was disabled due to"
-		  " the size of the code/headers");
-	  if (!flag_large_source_files)
-	    inform (loc,
-		    "adding %<-flarge-source-files%> will allow for more" 
-		    " column-tracking support, at the expense of compilation"
-		    " time and memory");
-	}
-      return false;
-    }
-
   char_span line = location_get_source_line (exploc.file, exploc.line);
   if (!line)
     return false;
@@ -213,19 +188,6 @@ should_warn_for_misleading_indentation (const token_indent_info &guard_tinfo,
 					const token_indent_info &body_tinfo,
 					const token_indent_info &next_tinfo)
 {
-  location_t guard_loc = guard_tinfo.location;
-  location_t body_loc = body_tinfo.location;
-  location_t next_stmt_loc = next_tinfo.location;
-
-  enum cpp_ttype body_type = body_tinfo.type;
-  enum cpp_ttype next_tok_type = next_tinfo.type;
-
-  /* Don't attempt to compare the indentation of BODY_LOC and NEXT_STMT_LOC
-     if either are within macros.  */
-  if (linemap_location_from_macro_expansion_p (line_table, body_loc)
-      || linemap_location_from_macro_expansion_p (line_table, next_stmt_loc))
-    return false;
-
   /* Don't attempt to compare indentation if #line or # 44 "file"-style
      directives are present, suggesting generated code.
 
@@ -266,6 +228,7 @@ should_warn_for_misleading_indentation (const token_indent_info &guard_tinfo,
      }            <- NEXT
      baz ();
   */
+  enum cpp_ttype next_tok_type = next_tinfo.type;
   if (next_tok_type == CPP_CLOSE_BRACE
       || next_tinfo.keyword == RID_ELSE)
     return false;
@@ -287,6 +250,7 @@ should_warn_for_misleading_indentation (const token_indent_info &guard_tinfo,
       bar (); <- BODY
       baz (); <- NEXT
   */
+  enum cpp_ttype body_type = body_tinfo.type;
   if (body_type == CPP_OPEN_BRACE)
     return false;
 
@@ -294,9 +258,78 @@ should_warn_for_misleading_indentation (const token_indent_info &guard_tinfo,
   if (next_tok_type == CPP_SEMICOLON)
     return false;
 
+  location_t guard_loc = guard_tinfo.location;
+  location_t body_loc = body_tinfo.location;
+  location_t next_stmt_loc = next_tinfo.location;
+
+  /* Resolve each token location to the respective macro expansion
+     point that produced the token.  */
+  if (linemap_location_from_macro_expansion_p (line_table, guard_loc))
+    guard_loc = linemap_resolve_location (line_table, guard_loc,
+					  LRK_MACRO_EXPANSION_POINT, NULL);
+  if (linemap_location_from_macro_expansion_p (line_table, body_loc))
+    body_loc = linemap_resolve_location (line_table, body_loc,
+					 LRK_MACRO_EXPANSION_POINT, NULL);
+  if (linemap_location_from_macro_expansion_p (line_table, next_stmt_loc))
+    next_stmt_loc = linemap_resolve_location (line_table, next_stmt_loc,
+					      LRK_MACRO_EXPANSION_POINT, NULL);
+
+  /* When all three tokens are produced from a single macro expansion, we
+     instead consider their loci inside that macro's definition.  */
+  if (guard_loc == body_loc && body_loc == next_stmt_loc)
+    {
+      const line_map *guard_body_common_map
+	= first_map_in_common (line_table,
+			       guard_tinfo.location, body_tinfo.location,
+			       &guard_loc, &body_loc);
+      const line_map *body_next_common_map
+	= first_map_in_common (line_table,
+			       body_tinfo.location, next_tinfo.location,
+			       &body_loc, &next_stmt_loc);
+
+      /* Punt on complicated nesting of macros.  */
+      if (guard_body_common_map != body_next_common_map)
+	return false;
+
+      guard_loc = linemap_resolve_location (line_table, guard_loc,
+					    LRK_MACRO_DEFINITION_LOCATION, NULL);
+      body_loc = linemap_resolve_location (line_table, body_loc,
+					   LRK_MACRO_DEFINITION_LOCATION, NULL);
+      next_stmt_loc = linemap_resolve_location (line_table, next_stmt_loc,
+						LRK_MACRO_DEFINITION_LOCATION,
+						NULL);
+    }
+
   expanded_location body_exploc = expand_location (body_loc);
   expanded_location next_stmt_exploc = expand_location (next_stmt_loc);
   expanded_location guard_exploc = expand_location (guard_loc);
+
+  /* PR c++/68819: if the column number is zero, we presumably
+     had a location_t > LINE_MAP_MAX_LOCATION_WITH_COLS, and so
+     we have no column information.  */
+  if (!guard_exploc.column || !body_exploc.column || !next_stmt_exploc.column)
+    {
+      static bool issued_note = false;
+      if (!issued_note)
+	{
+	  /* Notify the user the first time this happens.  */
+	  issued_note = true;
+	  inform (guard_loc,
+		  "%<-Wmisleading-indentation%> is disabled from this point"
+		  " onwards, since column-tracking was disabled due to"
+		  " the size of the code/headers");
+	  if (!flag_large_source_files)
+	    inform (guard_loc,
+		    "adding %<-flarge-source-files%> will allow for more" 
+		    " column-tracking support, at the expense of compilation"
+		    " time and memory");
+	}
+      return false;
+    }
+
+  /* Give up if the loci are not all distinct.  */
+  if (guard_loc == body_loc || body_loc == next_stmt_loc)
+    return false;
 
   const unsigned int tab_width = global_dc->tabstop;
 
@@ -343,7 +376,7 @@ should_warn_for_misleading_indentation (const token_indent_info &guard_tinfo,
 	  gcc_assert (guard_exploc.line == next_stmt_exploc.line);
 	  unsigned int guard_vis_column;
 	  unsigned int guard_line_first_nws;
-	  if (!get_visual_column (guard_exploc, guard_loc,
+	  if (!get_visual_column (guard_exploc,
 				  &guard_vis_column,
 				  &guard_line_first_nws, tab_width))
 	    return false;
@@ -403,15 +436,15 @@ should_warn_for_misleading_indentation (const token_indent_info &guard_tinfo,
 	 the case for input files containing #line directives, and these
 	 are often for autogenerated sources (e.g. from .md files), where
 	 it's not clear that it's meaningful to look at indentation.  */
-      if (!get_visual_column (next_stmt_exploc, next_stmt_loc,
+      if (!get_visual_column (next_stmt_exploc,
 			      &next_stmt_vis_column,
 			      &next_stmt_line_first_nws, tab_width))
 	return false;
-      if (!get_visual_column (body_exploc, body_loc,
+      if (!get_visual_column (body_exploc,
 			      &body_vis_column,
 			      &body_line_first_nws, tab_width))
 	return false;
-      if (!get_visual_column (guard_exploc, guard_loc,
+      if (!get_visual_column (guard_exploc,
 			      &guard_vis_column,
 			      &guard_line_first_nws, tab_width))
 	return false;
@@ -666,7 +699,7 @@ assert_get_visual_column_succeeds (const location &loc,
   exploc.sysp = false;
   unsigned int actual_visual_column;
   unsigned int actual_first_nws;
-  bool result = get_visual_column (exploc, UNKNOWN_LOCATION,
+  bool result = get_visual_column (exploc,
 				   &actual_visual_column,
 				   &actual_first_nws, tab_width);
   ASSERT_TRUE_AT (loc, result);
@@ -704,7 +737,7 @@ assert_get_visual_column_fails (const location &loc,
   exploc.sysp = false;
   unsigned int actual_visual_column;
   unsigned int actual_first_nws;
-  bool result = get_visual_column (exploc, UNKNOWN_LOCATION,
+  bool result = get_visual_column (exploc,
 				   &actual_visual_column,
 				   &actual_first_nws, tab_width);
   ASSERT_FALSE_AT (loc, result);

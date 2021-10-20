@@ -28,3 +28,10 @@ module m
 go 1.13
 
 require example.com/dotgo.go v1.0.0
+-- go.sum --
+example.com/dotgo.go v1.0.0 h1:XKJfs0V8x2PvY2tX8bJBCEbCDLnt15ma2onwhVpew/I=
+example.com/dotgo.go v1.0.0/go.mod h1:Qi6z/X3AC5vHiuMt6HF2ICx3KhIBGrMdrA7YoPDKqR0=
+-- use.go --
+package use
+
+import _ "example.com/dotgo.go"

@@ -1,5 +1,5 @@
 /* Loop distribution.
-   Copyright (C) 2006-2020 Free Software Foundation, Inc.
+   Copyright (C) 2006-2021 Free Software Foundation, Inc.
    Contributed by Georges-Andre Silber <Georges-Andre.Silber@ensmp.fr>
    and Sebastian Pop <sebastian.pop@amd.com>.
 
@@ -115,6 +115,11 @@ along with GCC; see the file COPYING3.  If not see
 #include "tree-vectorizer.h"
 #include "tree-eh.h"
 #include "gimple-fold.h"
+#include "tree-affine.h"
+#include "intl.h"
+#include "rtl.h"
+#include "memmodel.h"
+#include "optabs.h"
 
 
 #define MAX_DATAREFS_NUM \
@@ -526,7 +531,8 @@ class loop_distribution
 
   /* Build the vertices of the reduced dependence graph RDG.  Return false
      if that failed.  */
-  bool create_rdg_vertices (struct graph *rdg, vec<gimple *> stmts, loop_p loop);
+  bool create_rdg_vertices (struct graph *rdg, const vec<gimple *> &stmts,
+			    loop_p loop);
 
   /* Initialize STMTS with all the statements of LOOP.  We use topological
      order to discover all statements.  The order is important because
@@ -645,9 +651,13 @@ class loop_distribution
      statements from STMTS into separate loops.  Returns the number of
      distributed loops.  Set NB_CALLS to number of generated builtin calls.
      Set *DESTROY_P to whether LOOP needs to be destroyed.  */
-  int distribute_loop (class loop *loop, vec<gimple *> stmts,
+  int distribute_loop (class loop *loop, const vec<gimple *> &stmts,
 		       control_dependences *cd, int *nb_calls, bool *destroy_p,
 		       bool only_patterns_p);
+
+  /* Transform loops which mimic the effects of builtins rawmemchr or strlen and
+     replace them accordingly.  */
+  bool transform_reduction_loop (loop_p loop);
 
   /* Compute topological order for basic blocks.  Topological order is
      needed because data dependence is computed for data references in
@@ -698,7 +708,8 @@ bb_top_order_cmp_r (const void *x, const void *y, void *loop)
 }
 
 bool
-loop_distribution::create_rdg_vertices (struct graph *rdg, vec<gimple *> stmts,
+loop_distribution::create_rdg_vertices (struct graph *rdg,
+					const vec<gimple *> &stmts,
 					loop_p loop)
 {
   int i;
@@ -1212,6 +1223,18 @@ generate_memcpy_builtin (class loop *loop, partition *partition)
     kind = BUILT_IN_MEMCPY;
   else
     kind = BUILT_IN_MEMMOVE;
+  /* Try harder if we're copying a constant size.  */
+  if (kind == BUILT_IN_MEMMOVE && poly_int_tree_p (nb_bytes))
+    {
+      aff_tree asrc, adest;
+      tree_to_aff_combination (src, ptr_type_node, &asrc);
+      tree_to_aff_combination (dest, ptr_type_node, &adest);
+      aff_combination_scale (&adest, -1);
+      aff_combination_add (&asrc, &adest);
+      if (aff_comb_cannot_overlap_p (&asrc, wi::to_poly_widest (nb_bytes),
+				     wi::to_poly_widest (nb_bytes)))
+	kind = BUILT_IN_MEMCPY;
+    }
 
   dest = force_gimple_operand_gsi (&gsi, dest, true, NULL_TREE,
 				   false, GSI_CONTINUE_LINKING);
@@ -1477,14 +1500,14 @@ loop_distribution::build_rdg_partition_for_vertex (struct graph *rdg, int v)
    data references.  */
 
 static bool
-find_single_drs (class loop *loop, struct graph *rdg, partition *partition,
+find_single_drs (class loop *loop, struct graph *rdg, const bitmap &partition_stmts,
 		 data_reference_p *dst_dr, data_reference_p *src_dr)
 {
   unsigned i;
   data_reference_p single_ld = NULL, single_st = NULL;
   bitmap_iterator bi;
 
-  EXECUTE_IF_SET_IN_BITMAP (partition->stmts, 0, i, bi)
+  EXECUTE_IF_SET_IN_BITMAP (partition_stmts, 0, i, bi)
     {
       gimple *stmt = RDG_STMT (rdg, i);
       data_reference_p dr;
@@ -1525,44 +1548,47 @@ find_single_drs (class loop *loop, struct graph *rdg, partition *partition,
 	}
     }
 
-  if (!single_st)
+  if (!single_ld && !single_st)
     return false;
 
-  /* Bail out if this is a bitfield memory reference.  */
-  if (TREE_CODE (DR_REF (single_st)) == COMPONENT_REF
-      && DECL_BIT_FIELD (TREE_OPERAND (DR_REF (single_st), 1)))
-    return false;
-
-  /* Data reference must be executed exactly once per iteration of each
-     loop in the loop nest.  We only need to check dominance information
-     against the outermost one in a perfect loop nest because a bb can't
-     dominate outermost loop's latch without dominating inner loop's.  */
-  basic_block bb_st = gimple_bb (DR_STMT (single_st));
-  if (!dominated_by_p (CDI_DOMINATORS, loop->latch, bb_st))
-    return false;
+  basic_block bb_ld = NULL;
+  basic_block bb_st = NULL;
 
   if (single_ld)
     {
-      gimple *store = DR_STMT (single_st), *load = DR_STMT (single_ld);
-      /* Direct aggregate copy or via an SSA name temporary.  */
-      if (load != store
-	  && gimple_assign_lhs (load) != gimple_assign_rhs1 (store))
-	return false;
-
       /* Bail out if this is a bitfield memory reference.  */
       if (TREE_CODE (DR_REF (single_ld)) == COMPONENT_REF
 	  && DECL_BIT_FIELD (TREE_OPERAND (DR_REF (single_ld), 1)))
 	return false;
 
-      /* Load and store must be in the same loop nest.  */
-      basic_block bb_ld = gimple_bb (DR_STMT (single_ld));
-      if (bb_st->loop_father != bb_ld->loop_father)
+      /* Data reference must be executed exactly once per iteration of each
+	 loop in the loop nest.  We only need to check dominance information
+	 against the outermost one in a perfect loop nest because a bb can't
+	 dominate outermost loop's latch without dominating inner loop's.  */
+      bb_ld = gimple_bb (DR_STMT (single_ld));
+      if (!dominated_by_p (CDI_DOMINATORS, loop->latch, bb_ld))
+	return false;
+    }
+
+  if (single_st)
+    {
+      /* Bail out if this is a bitfield memory reference.  */
+      if (TREE_CODE (DR_REF (single_st)) == COMPONENT_REF
+	  && DECL_BIT_FIELD (TREE_OPERAND (DR_REF (single_st), 1)))
 	return false;
 
       /* Data reference must be executed exactly once per iteration.
-	 Same as single_st, we only need to check against the outermost
+	 Same as single_ld, we only need to check against the outermost
 	 loop.  */
-      if (!dominated_by_p (CDI_DOMINATORS, loop->latch, bb_ld))
+      bb_st = gimple_bb (DR_STMT (single_st));
+      if (!dominated_by_p (CDI_DOMINATORS, loop->latch, bb_st))
+	return false;
+    }
+
+  if (single_ld && single_st)
+    {
+      /* Load and store must be in the same loop nest.  */
+      if (bb_st->loop_father != bb_ld->loop_father)
 	return false;
 
       edge e = single_exit (bb_st->loop_father);
@@ -1759,11 +1785,11 @@ loop_distribution::classify_builtin_ldst (loop_p loop, struct graph *rdg,
   /* Now check that if there is a dependence.  */
   ddr_p ddr = get_data_dependence (rdg, src_dr, dst_dr);
 
-  /* Classify as memcpy if no dependence between load and store.  */
+  /* Classify as memmove if no dependence between load and store.  */
   if (DDR_ARE_DEPENDENT (ddr) == chrec_known)
     {
       partition->builtin = alloc_builtin (dst_dr, src_dr, base, src_base, size);
-      partition->kind = PKIND_MEMCPY;
+      partition->kind = PKIND_MEMMOVE;
       return;
     }
 
@@ -1837,8 +1863,18 @@ loop_distribution::classify_partition (loop_p loop,
     return has_reduction;
 
   /* Find single load/store data references for builtin partition.  */
-  if (!find_single_drs (loop, rdg, partition, &single_st, &single_ld))
+  if (!find_single_drs (loop, rdg, partition->stmts, &single_st, &single_ld)
+      || !single_st)
     return has_reduction;
+
+  if (single_ld && single_st)
+    {
+      gimple *store = DR_STMT (single_st), *load = DR_STMT (single_ld);
+      /* Direct aggregate copy or via an SSA name temporary.  */
+      if (load != store
+	  && gimple_assign_lhs (load) != gimple_assign_rhs1 (store))
+	return has_reduction;
+    }
 
   partition->loc = gimple_location (DR_STMT (single_st));
 
@@ -1940,7 +1976,7 @@ loop_distribution::rdg_build_partitions (struct graph *rdg,
 /* Dump to FILE the PARTITIONS.  */
 
 static void
-dump_rdg_partitions (FILE *file, vec<partition *> partitions)
+dump_rdg_partitions (FILE *file, const vec<partition *> &partitions)
 {
   int i;
   partition *partition;
@@ -1950,10 +1986,10 @@ dump_rdg_partitions (FILE *file, vec<partition *> partitions)
 }
 
 /* Debug PARTITIONS.  */
-extern void debug_rdg_partitions (vec<partition *> );
+extern void debug_rdg_partitions (const vec<partition *> &);
 
 DEBUG_FUNCTION void
-debug_rdg_partitions (vec<partition *> partitions)
+debug_rdg_partitions (const vec<partition *> &partitions)
 {
   dump_rdg_partitions (stderr, partitions);
 }
@@ -2004,7 +2040,7 @@ number_of_rw_in_partition (struct graph *rdg, partition *partition)
 
 static bool
 partition_contains_all_rw (struct graph *rdg,
-			   vec<partition *> partitions)
+			   const vec<partition *> &partitions)
 {
   int i;
   partition *partition;
@@ -2358,6 +2394,7 @@ loop_distribution::merge_dep_scc_partitions (struct graph *rdg,
   sort_partitions_by_post_order (pg, partitions);
   gcc_assert (partitions->length () == (unsigned)num_sccs);
   free_partition_graph_vdata (pg);
+  for_each_edge (pg, free_partition_graph_edata_cb, NULL);
   free_graph (pg);
 }
 
@@ -2907,7 +2944,8 @@ loop_distribution::finalize_partitions (class loop *loop,
    Set *DESTROY_P to whether LOOP needs to be destroyed.  */
 
 int
-loop_distribution::distribute_loop (class loop *loop, vec<gimple *> stmts,
+loop_distribution::distribute_loop (class loop *loop,
+		 const vec<gimple *> &stmts,
 		 control_dependences *cd, int *nb_calls, bool *destroy_p,
 		 bool only_patterns_p)
 {
@@ -3151,11 +3189,19 @@ loop_distribution::distribute_loop (class loop *loop, vec<gimple *> stmts,
 void loop_distribution::bb_top_order_init (void)
 {
   int rpo_num;
-  int *rpo = XNEWVEC (int, last_basic_block_for_fn (cfun));
+  int *rpo = XNEWVEC (int, n_basic_blocks_for_fn (cfun) - NUM_FIXED_BLOCKS);
+  edge entry = single_succ_edge (ENTRY_BLOCK_PTR_FOR_FN (cfun));
+  bitmap exit_bbs = BITMAP_ALLOC (NULL);
 
   bb_top_order_index = XNEWVEC (int, last_basic_block_for_fn (cfun));
   bb_top_order_index_size = last_basic_block_for_fn (cfun);
-  rpo_num = pre_and_rev_post_order_compute_fn (cfun, NULL, rpo, true);
+
+  entry->flags &= ~EDGE_DFS_BACK;
+  bitmap_set_bit (exit_bbs, EXIT_BLOCK);
+  rpo_num = rev_post_order_and_mark_dfs_back_seme (cfun, entry, exit_bbs, true,
+						   rpo, NULL);
+  BITMAP_FREE (exit_bbs);
+
   for (int i = 0; i < rpo_num; i++)
     bb_top_order_index[rpo[i]] = i;
 
@@ -3181,6 +3227,16 @@ find_seed_stmts_for_distribution (class loop *loop, vec<gimple *> *work_list)
   /* Initialize the worklist with stmts we seed the partitions with.  */
   for (unsigned i = 0; i < loop->num_nodes; ++i)
     {
+      /* In irreducible sub-regions we don't know how to redirect
+	 conditions, so fail.  See PR100492.  */
+      if (bbs[i]->flags & BB_IRREDUCIBLE_LOOP)
+	{
+	  if (dump_file && (dump_flags & TDF_DETAILS))
+	    fprintf (dump_file, "loop %d contains an irreducible region.\n",
+		     loop->num);
+	  work_list->truncate (0);
+	  break;
+	}
       for (gphi_iterator gsi = gsi_start_phis (bbs[i]);
 	   !gsi_end_p (gsi); gsi_next (&gsi))
 	{
@@ -3223,6 +3279,429 @@ find_seed_stmts_for_distribution (class loop *loop, vec<gimple *> *work_list)
     }
   free (bbs);
   return work_list->length () > 0;
+}
+
+/* A helper function for generate_{rawmemchr,strlen}_builtin functions in order
+   to place new statements SEQ before LOOP and replace the old reduction
+   variable with the new one.  */
+
+static void
+generate_reduction_builtin_1 (loop_p loop, gimple_seq &seq,
+			      tree reduction_var_old, tree reduction_var_new,
+			      const char *info, machine_mode load_mode)
+{
+  /* Place new statements before LOOP.  */
+  gimple_stmt_iterator gsi = gsi_last_bb (loop_preheader_edge (loop)->src);
+  gsi_insert_seq_after (&gsi, seq, GSI_CONTINUE_LINKING);
+
+  /* Replace old reduction variable with new one.  */
+  imm_use_iterator iter;
+  gimple *stmt;
+  use_operand_p use_p;
+  FOR_EACH_IMM_USE_STMT (stmt, iter, reduction_var_old)
+    {
+      FOR_EACH_IMM_USE_ON_STMT (use_p, iter)
+	SET_USE (use_p, reduction_var_new);
+
+      update_stmt (stmt);
+    }
+
+  if (dump_file && (dump_flags & TDF_DETAILS))
+    fprintf (dump_file, info, GET_MODE_NAME (load_mode));
+}
+
+/* Generate a call to rawmemchr and place it before LOOP.  REDUCTION_VAR is
+   replaced with a fresh SSA name representing the result of the call.  */
+
+static void
+generate_rawmemchr_builtin (loop_p loop, tree reduction_var,
+			    data_reference_p store_dr, tree base, tree pattern,
+			    location_t loc)
+{
+  gimple_seq seq = NULL;
+
+  tree mem = force_gimple_operand (base, &seq, true, NULL_TREE);
+  gimple *fn_call = gimple_build_call_internal (IFN_RAWMEMCHR, 2, mem, pattern);
+  tree reduction_var_new = copy_ssa_name (reduction_var);
+  gimple_call_set_lhs (fn_call, reduction_var_new);
+  gimple_set_location (fn_call, loc);
+  gimple_seq_add_stmt (&seq, fn_call);
+
+  if (store_dr)
+    {
+      gassign *g = gimple_build_assign (DR_REF (store_dr), reduction_var_new);
+      gimple_seq_add_stmt (&seq, g);
+    }
+
+  generate_reduction_builtin_1 (loop, seq, reduction_var, reduction_var_new,
+				"generated rawmemchr%s\n",
+				TYPE_MODE (TREE_TYPE (TREE_TYPE (base))));
+}
+
+/* Helper function for generate_strlen_builtin(,_using_rawmemchr)  */
+
+static void
+generate_strlen_builtin_1 (loop_p loop, gimple_seq &seq,
+			   tree reduction_var_old, tree reduction_var_new,
+			   machine_mode mode, tree start_len)
+{
+  /* REDUCTION_VAR_NEW has either size type or ptrdiff type and must be
+     converted if types of old and new reduction variable are not compatible. */
+  reduction_var_new = gimple_convert (&seq, TREE_TYPE (reduction_var_old),
+				      reduction_var_new);
+
+  /* Loops of the form `for (i=42; s[i]; ++i);` have an additional start
+     length.  */
+  if (!integer_zerop (start_len))
+    {
+      tree lhs = make_ssa_name (TREE_TYPE (reduction_var_new));
+      gimple *g = gimple_build_assign (lhs, PLUS_EXPR, reduction_var_new,
+				       start_len);
+      gimple_seq_add_stmt (&seq, g);
+      reduction_var_new = lhs;
+    }
+
+  generate_reduction_builtin_1 (loop, seq, reduction_var_old, reduction_var_new,
+				"generated strlen%s\n", mode);
+}
+
+/* Generate a call to strlen and place it before LOOP.  REDUCTION_VAR is
+   replaced with a fresh SSA name representing the result of the call.  */
+
+static void
+generate_strlen_builtin (loop_p loop, tree reduction_var, tree base,
+			 tree start_len, location_t loc)
+{
+  gimple_seq seq = NULL;
+
+  tree reduction_var_new = make_ssa_name (size_type_node);
+
+  tree mem = force_gimple_operand (base, &seq, true, NULL_TREE);
+  tree fn = build_fold_addr_expr (builtin_decl_implicit (BUILT_IN_STRLEN));
+  gimple *fn_call = gimple_build_call (fn, 1, mem);
+  gimple_call_set_lhs (fn_call, reduction_var_new);
+  gimple_set_location (fn_call, loc);
+  gimple_seq_add_stmt (&seq, fn_call);
+
+  generate_strlen_builtin_1 (loop, seq, reduction_var, reduction_var_new,
+			     QImode, start_len);
+}
+
+/* Generate code in order to mimic the behaviour of strlen but this time over
+   an array of elements with mode different than QI.  REDUCTION_VAR is replaced
+   with a fresh SSA name representing the result, i.e., the length.  */
+
+static void
+generate_strlen_builtin_using_rawmemchr (loop_p loop, tree reduction_var,
+					 tree base, tree load_type,
+					 tree start_len, location_t loc)
+{
+  gimple_seq seq = NULL;
+
+  tree start = force_gimple_operand (base, &seq, true, NULL_TREE);
+  tree zero = build_zero_cst (load_type);
+  gimple *fn_call = gimple_build_call_internal (IFN_RAWMEMCHR, 2, start, zero);
+  tree end = make_ssa_name (TREE_TYPE (base));
+  gimple_call_set_lhs (fn_call, end);
+  gimple_set_location (fn_call, loc);
+  gimple_seq_add_stmt (&seq, fn_call);
+
+  /* Determine the number of elements between START and END by
+     evaluating (END - START) / sizeof (*START).  */
+  tree diff = make_ssa_name (ptrdiff_type_node);
+  gimple *diff_stmt = gimple_build_assign (diff, POINTER_DIFF_EXPR, end, start);
+  gimple_seq_add_stmt (&seq, diff_stmt);
+  /* Let SIZE be the size of each character.  */
+  tree size = gimple_convert (&seq, ptrdiff_type_node,
+			      TYPE_SIZE_UNIT (load_type));
+  tree count = make_ssa_name (ptrdiff_type_node);
+  gimple *count_stmt = gimple_build_assign (count, TRUNC_DIV_EXPR, diff, size);
+  gimple_seq_add_stmt (&seq, count_stmt);
+
+  generate_strlen_builtin_1 (loop, seq, reduction_var, count,
+			     TYPE_MODE (load_type),
+			     start_len);
+}
+
+/* Return true if we can count at least as many characters by taking pointer
+   difference as we can count via reduction_var without an overflow.  Thus
+   compute 2^n < (2^(m-1) / s) where n = TYPE_PRECISION (reduction_var_type),
+   m = TYPE_PRECISION (ptrdiff_type_node), and s = size of each character.  */
+static bool
+reduction_var_overflows_first (tree reduction_var_type, tree load_type)
+{
+  widest_int n2 = wi::lshift (1, TYPE_PRECISION (reduction_var_type));;
+  widest_int m2 = wi::lshift (1, TYPE_PRECISION (ptrdiff_type_node) - 1);
+  widest_int s = wi::to_widest (TYPE_SIZE_UNIT (load_type));
+  return wi::ltu_p (n2, wi::udiv_trunc (m2, s));
+}
+
+static gimple *
+determine_reduction_stmt_1 (const loop_p loop, const basic_block *bbs)
+{
+  gimple *reduction_stmt = NULL;
+
+  for (unsigned i = 0, ninsns = 0; i < loop->num_nodes; ++i)
+    {
+      basic_block bb = bbs[i];
+
+      for (gphi_iterator bsi = gsi_start_phis (bb); !gsi_end_p (bsi);
+	   gsi_next_nondebug (&bsi))
+	{
+	  gphi *phi = bsi.phi ();
+	  if (virtual_operand_p (gimple_phi_result (phi)))
+	    continue;
+	  if (stmt_has_scalar_dependences_outside_loop (loop, phi))
+	    {
+	      if (reduction_stmt)
+		return NULL;
+	      reduction_stmt = phi;
+	    }
+	}
+
+      for (gimple_stmt_iterator bsi = gsi_start_bb (bb); !gsi_end_p (bsi);
+	   gsi_next_nondebug (&bsi), ++ninsns)
+	{
+	  /* Bail out early for loops which are unlikely to match.  */
+	  if (ninsns > 16)
+	    return NULL;
+	  gimple *stmt = gsi_stmt (bsi);
+	  if (gimple_clobber_p (stmt))
+	    continue;
+	  if (gimple_code (stmt) == GIMPLE_LABEL)
+	    continue;
+	  if (gimple_has_volatile_ops (stmt))
+	    return NULL;
+	  if (stmt_has_scalar_dependences_outside_loop (loop, stmt))
+	    {
+	      if (reduction_stmt)
+		return NULL;
+	      reduction_stmt = stmt;
+	    }
+	}
+    }
+
+  return reduction_stmt;
+}
+
+/* If LOOP has a single non-volatile reduction statement, then return a pointer
+   to it.  Otherwise return NULL.  */
+static gimple *
+determine_reduction_stmt (const loop_p loop)
+{
+  basic_block *bbs = get_loop_body (loop);
+  gimple *reduction_stmt = determine_reduction_stmt_1 (loop, bbs);
+  XDELETEVEC (bbs);
+  return reduction_stmt;
+}
+
+/* Transform loops which mimic the effects of builtins rawmemchr or strlen and
+   replace them accordingly.  For example, a loop of the form
+
+     for (; *p != 42; ++p);
+
+   is replaced by
+
+     p = rawmemchr<MODE> (p, 42);
+
+   under the assumption that rawmemchr is available for a particular MODE.
+   Another example is
+
+     int i;
+     for (i = 42; s[i]; ++i);
+
+   which is replaced by
+
+     i = (int)strlen (&s[42]) + 42;
+
+   for some character array S.  In case array S is not of type character array
+   we end up with
+
+     i = (int)(rawmemchr<MODE> (&s[42], 0) - &s[42]) + 42;
+
+   assuming that rawmemchr is available for a particular MODE.  */
+
+bool
+loop_distribution::transform_reduction_loop (loop_p loop)
+{
+  gimple *reduction_stmt;
+  data_reference_p load_dr = NULL, store_dr = NULL;
+
+  edge e = single_exit (loop);
+  gcond *cond = safe_dyn_cast <gcond *> (last_stmt (e->src));
+  if (!cond)
+    return false;
+  /* Ensure loop condition is an (in)equality test and loop is exited either if
+     the inequality test fails or the equality test succeeds.  */
+  if (!(e->flags & EDGE_FALSE_VALUE && gimple_cond_code (cond) == NE_EXPR)
+      && !(e->flags & EDGE_TRUE_VALUE && gimple_cond_code (cond) == EQ_EXPR))
+    return false;
+  /* A limitation of the current implementation is that we only support
+     constant patterns in (in)equality tests.  */
+  tree pattern = gimple_cond_rhs (cond);
+  if (TREE_CODE (pattern) != INTEGER_CST)
+    return false;
+
+  reduction_stmt = determine_reduction_stmt (loop);
+
+  /* A limitation of the current implementation is that we require a reduction
+     statement.  Therefore, loops without a reduction statement as in the
+     following are not recognized:
+     int *p;
+     void foo (void) { for (; *p; ++p); } */
+  if (reduction_stmt == NULL)
+    return false;
+
+  /* Reduction variables are guaranteed to be SSA names.  */
+  tree reduction_var;
+  switch (gimple_code (reduction_stmt))
+    {
+    case GIMPLE_ASSIGN:
+    case GIMPLE_PHI:
+      reduction_var = gimple_get_lhs (reduction_stmt);
+      break;
+    default:
+      /* Bail out e.g. for GIMPLE_CALL.  */
+      return false;
+    }
+
+  struct graph *rdg = build_rdg (loop, NULL);
+  if (rdg == NULL)
+    {
+      if (dump_file && (dump_flags & TDF_DETAILS))
+	fprintf (dump_file,
+		 "Loop %d not transformed: failed to build the RDG.\n",
+		 loop->num);
+
+      return false;
+    }
+  auto_bitmap partition_stmts;
+  bitmap_set_range (partition_stmts, 0, rdg->n_vertices);
+  find_single_drs (loop, rdg, partition_stmts, &store_dr, &load_dr);
+  free_rdg (rdg);
+
+  /* Bail out if there is no single load.  */
+  if (load_dr == NULL)
+    return false;
+
+  /* Reaching this point we have a loop with a single reduction variable,
+     a single load, and an optional single store.  */
+
+  tree load_ref = DR_REF (load_dr);
+  tree load_type = TREE_TYPE (load_ref);
+  tree load_access_base = build_fold_addr_expr (load_ref);
+  tree load_access_size = TYPE_SIZE_UNIT (load_type);
+  affine_iv load_iv, reduction_iv;
+
+  if (!INTEGRAL_TYPE_P (load_type)
+      || !type_has_mode_precision_p (load_type))
+    return false;
+
+  /* We already ensured that the loop condition tests for (in)equality where the
+     rhs is a constant pattern. Now ensure that the lhs is the result of the
+     load.  */
+  if (gimple_cond_lhs (cond) != gimple_assign_lhs (DR_STMT (load_dr)))
+    return false;
+
+  /* Bail out if no affine induction variable with constant step can be
+     determined.  */
+  if (!simple_iv (loop, loop, load_access_base, &load_iv, false))
+    return false;
+
+  /* Bail out if memory accesses are not consecutive or not growing.  */
+  if (!operand_equal_p (load_iv.step, load_access_size, 0))
+    return false;
+
+  if (!simple_iv (loop, loop, reduction_var, &reduction_iv, false))
+    return false;
+
+  /* Handle rawmemchr like loops.  */
+  if (operand_equal_p (load_iv.base, reduction_iv.base)
+      && operand_equal_p (load_iv.step, reduction_iv.step))
+    {
+      if (store_dr)
+	{
+	  /* Ensure that we store to X and load from X+I where I>0.  */
+	  if (TREE_CODE (load_iv.base) != POINTER_PLUS_EXPR
+	      || !integer_onep (TREE_OPERAND (load_iv.base, 1)))
+	    return false;
+	  tree ptr_base = TREE_OPERAND (load_iv.base, 0);
+	  if (TREE_CODE (ptr_base) != SSA_NAME)
+	    return false;
+	  gimple *def = SSA_NAME_DEF_STMT (ptr_base);
+	  if (!gimple_assign_single_p (def)
+	      || gimple_assign_rhs1 (def) != DR_REF (store_dr))
+	    return false;
+	  /* Ensure that the reduction value is stored.  */
+	  if (gimple_assign_rhs1 (DR_STMT (store_dr)) != reduction_var)
+	    return false;
+	}
+      /* Bail out if target does not provide rawmemchr for a certain mode.  */
+      machine_mode mode = TYPE_MODE (load_type);
+      if (direct_optab_handler (rawmemchr_optab, mode) == CODE_FOR_nothing)
+	return false;
+      location_t loc = gimple_location (DR_STMT (load_dr));
+      generate_rawmemchr_builtin (loop, reduction_var, store_dr, load_iv.base,
+				  pattern, loc);
+      return true;
+    }
+
+  /* Handle strlen like loops.  */
+  if (store_dr == NULL
+      && integer_zerop (pattern)
+      && TREE_CODE (reduction_iv.base) == INTEGER_CST
+      && TREE_CODE (reduction_iv.step) == INTEGER_CST
+      && integer_onep (reduction_iv.step))
+    {
+      location_t loc = gimple_location (DR_STMT (load_dr));
+      tree reduction_var_type = TREE_TYPE (reduction_var);
+      /* While determining the length of a string an overflow might occur.
+	 If an overflow only occurs in the loop implementation and not in the
+	 strlen implementation, then either the overflow is undefined or the
+	 truncated result of strlen equals the one of the loop.  Otherwise if
+	 an overflow may also occur in the strlen implementation, then
+	 replacing a loop by a call to strlen is sound whenever we ensure that
+	 if an overflow occurs in the strlen implementation, then also an
+	 overflow occurs in the loop implementation which is undefined.  It
+	 seems reasonable to relax this and assume that the strlen
+	 implementation cannot overflow in case sizetype is big enough in the
+	 sense that an overflow can only happen for string objects which are
+	 bigger than half of the address space; at least for 32-bit targets and
+	 up.
+
+	 For strlen which makes use of rawmemchr the maximal length of a string
+	 which can be determined without an overflow is PTRDIFF_MAX / S where
+	 each character has size S.  Since an overflow for ptrdiff type is
+	 undefined we have to make sure that if an overflow occurs, then an
+	 overflow occurs in the loop implementation, too, and this is
+	 undefined, too.  Similar as before we relax this and assume that no
+	 string object is larger than half of the address space; at least for
+	 32-bit targets and up.  */
+      if (TYPE_MODE (load_type) == TYPE_MODE (char_type_node)
+	  && TYPE_PRECISION (load_type) == TYPE_PRECISION (char_type_node)
+	  && ((TYPE_PRECISION (sizetype) >= TYPE_PRECISION (ptr_type_node) - 1
+	       && TYPE_PRECISION (ptr_type_node) >= 32)
+	      || (TYPE_OVERFLOW_UNDEFINED (reduction_var_type)
+		  && TYPE_PRECISION (reduction_var_type) <= TYPE_PRECISION (sizetype)))
+	  && builtin_decl_implicit (BUILT_IN_STRLEN))
+	generate_strlen_builtin (loop, reduction_var, load_iv.base,
+				 reduction_iv.base, loc);
+      else if (direct_optab_handler (rawmemchr_optab, TYPE_MODE (load_type))
+	       != CODE_FOR_nothing
+	       && ((TYPE_PRECISION (ptrdiff_type_node) == TYPE_PRECISION (ptr_type_node)
+		    && TYPE_PRECISION (ptrdiff_type_node) >= 32)
+		   || (TYPE_OVERFLOW_UNDEFINED (reduction_var_type)
+		       && reduction_var_overflows_first (reduction_var_type, load_type))))
+	generate_strlen_builtin_using_rawmemchr (loop, reduction_var,
+						 load_iv.base,
+						 load_type,
+						 reduction_iv.base, loc);
+      else
+	return false;
+      return true;
+    }
+
+  return false;
 }
 
 /* Given innermost LOOP, return the outermost enclosing loop that forms a
@@ -3280,7 +3759,7 @@ loop_distribution::execute (function *fun)
 
   /* We can at the moment only distribute non-nested loops, thus restrict
      walking to innermost loops.  */
-  FOR_EACH_LOOP (loop, LI_ONLY_INNERMOST)
+  for (auto loop : loops_list (cfun, LI_ONLY_INNERMOST))
     {
       /* Don't distribute multiple exit edges loop, or cold loop when
          not doing pattern detection.  */
@@ -3289,10 +3768,27 @@ loop_distribution::execute (function *fun)
 	      && !optimize_loop_for_speed_p (loop)))
 	continue;
 
-      /* Don't distribute loop if niters is unknown.  */
+      /* If niters is unknown don't distribute loop but rather try to transform
+	 it to a call to a builtin.  */
       tree niters = number_of_latch_executions (loop);
       if (niters == NULL_TREE || niters == chrec_dont_know)
-	continue;
+	{
+	  datarefs_vec.create (20);
+	  if (transform_reduction_loop (loop))
+	    {
+	      changed = true;
+	      loops_to_be_destroyed.safe_push (loop);
+	      if (dump_enabled_p ())
+		{
+		  dump_user_location_t loc = find_loop_location (loop);
+		  dump_printf_loc (MSG_OPTIMIZED_LOCATIONS,
+				   loc, "Loop %d transformed into a builtin.\n",
+				   loop->num);
+		}
+	    }
+	  free_data_refs (datarefs_vec);
+	  continue;
+	}
 
       /* Get the perfect loop nest for distribution.  */
       loop = prepare_perfect_loop_nest (loop);

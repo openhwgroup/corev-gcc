@@ -35,7 +35,7 @@ T (&a[1], asz - 1);
 T (&a[v0], asz);               /* { dg-warning "specified bound 5 may exceed the size of at most 5 of unterminated array" } */
 T (&a[v0] + 1, asz);           /* { dg-warning "specified bound 5 may exceed the size of at most 5 of unterminated array" } */
 
-T (a, asz + 1);                /* { dg-warning "specified bound 6 exceeds the size 5 " } */
+T (a, asz + 1);                /* { dg-warning "specified bound 6 exceeds the size 5 of unterminated array" } */
 T (&a[0], asz + 1);            /* { dg-warning "unterminated" } */
 T (&a[0] + 1, asz - 1);
 T (&a[0] + 1, asz + 1);        /* { dg-warning "unterminated" } */
@@ -110,7 +110,7 @@ T (&b[3][1] + i1, bsz);           /* { dg-warning "unterminated" } */
 T (&b[3][1] + i1, bsz - i1);      /* { dg-warning "unterminated" } */
 T (&b[3][1] + i1, bsz - i2);
 T (&b[3][v0], bsz);
-T (&b[3][1] + v0, bsz);           /* { dg-warning "specified bound 5 may exceed the size of at most 4 of unterminated array" } */
+T (&b[3][1] + v0, bsz);           /* { dg-warning "specified bound 5 exceeds the size of at most 4 of unterminated array" } */
 T (&b[3][v0] + v1, bsz);          /* { dg-warning "specified bound 5 may exceed the size of at most 4 of unterminated array" "pr?????" { xfail *-*-* } } */
 
 T (&b[3][1], bsz + 1);            /* { dg-warning "unterminated" } */
@@ -124,7 +124,7 @@ T (&b[i3][i1], bsz);              /* { dg-warning "unterminated" } */
 T (&b[i3][i1] + 1, bsz);          /* { dg-warning "unterminated" } */
 T (&b[i3][i1] + i1, bsz);         /* { dg-warning "specified bound 5 exceeds the size 3 of unterminated array" } */
 T (&b[i3][v0], bsz);
-T (&b[i3][i1] + v0, bsz);         /* { dg-warning "specified bound 5 may exceed the size of at most 4 of unterminated array" } */
+T (&b[i3][i1] + v0, bsz);         /* { dg-warning "specified bound 5 exceeds the size of at most 4 of unterminated array" } */
 T (&b[i3][v0] + v1, bsz);
 
 T (&b[i3][i1], bsz + 1);          /* { dg-warning "unterminated" } */
@@ -143,14 +143,17 @@ T (v0 ? b[1] : "", bsz);
 T (v0 ? b[2] : "", bsz);
 T (v0 ? b[3] : "", bsz);
 
-T (v0 ? "" : b[0], bsz + 1);
-T (v0 ? "" : b[1], bsz + 1);
-T (v0 ? "" : b[2], bsz + 1);
-T (v0 ? "" : b[3], bsz + 1);      /* { dg-warning "unterminated" "pr86937" { xfail *-*-* } } */
-T (v0 ? b[0] : "", bsz + 1);
-T (v0 ? b[1] : "", bsz + 1);
-T (v0 ? b[2] : "", bsz + 1);
-T (v0 ? b[3] : "", bsz + 1);      /* { dg-warning "unterminated" "pr86937" { xfail *-*-* } } */
+/* The warnings below are strictly correct but the strnlen calls are safe
+   because the reads are bounded by the length of the constant arguments.
+   It might make sense to relax the warning to avoid triggering for them.  */
+T (v0 ? "" : b[0], bsz + 1);      /* { dg-warning "bound 6 exceeds source size 5" } */
+T (v0 ? "" : b[1], bsz + 1);      /* { dg-warning "bound 6 exceeds source size 5" } */
+T (v0 ? "" : b[2], bsz + 1);      /* { dg-warning "bound 6 exceeds source size 5" } */
+T (v0 ? "" : b[3], bsz + 1);      /* { dg-warning "bound 6 exceeds source size 5" } */
+T (v0 ? b[0] : "", bsz + 1);      /* { dg-warning "bound 6 exceeds source size 5" } */
+T (v0 ? b[1] : "", bsz + 1);      /* { dg-warning "bound 6 exceeds source size 5" } */
+T (v0 ? b[2] : "", bsz + 1);      /* { dg-warning "bound 6 exceeds source size 5" } */
+T (v0 ? b[3] : "", bsz + 1);      /* { dg-warning "bound 6 exceeds source size 5" } */
 
 T (v0 ? "" : b[i0], bsz);
 T (v0 ? "" : b[i1], bsz);
@@ -164,11 +167,11 @@ T (v0 ? b[i3] : "", bsz);
 T (v0 ? "" : b[i0], bsz + 1);
 T (v0 ? "" : b[i1], bsz + 1);
 T (v0 ? "" : b[i2], bsz + 1);
-T (v0 ? "" : b[i3], bsz + 1);     /* { dg-warning "unterminated" "pr86937" { xfail *-*-* } } */
+T (v0 ? "" : b[i3], bsz + 1);     /* { dg-warning "bound 6 exceeds source size 5" "pr86937" } */
 T (v0 ? b[i0] : "", bsz + 1);
 T (v0 ? b[i1] : "", bsz + 1);
 T (v0 ? b[i2] : "", bsz + 1);
-T (v0 ? b[i3] : "", bsz + 1);     /* { dg-warning "unterminated" "pr86937" { xfail *-*-* } } */
+T (v0 ? b[i3] : "", bsz + 1);     /* { dg-warning "bound 6 exceeds source size 5" "pr86937" } */
 
 T (v0 ? "1234" : b[3], bsz);
 T (v0 ? "1234" : b[i3], bsz);
@@ -180,15 +183,15 @@ T (v0 ? b[0] : b[2], bsz);
 T (v0 ? b[2] : b[3], bsz);
 T (v0 ? b[3] : b[2], bsz);
 
-T (v0 ? "1234" : b[3], bsz + 1);  /* { dg-warning "unterminated" "pr86937" { xfail *-*-* } } */
-T (v0 ? "1234" : b[i3], bsz + 1); /* { dg-warning "unterminated" "pr86937" { xfail *-*-* } } */
-T (v0 ? b[3] : "1234", bsz + 1);  /* { dg-warning "unterminated" "pr86937" { xfail *-*-* } } */
-T (v0 ? b[i3] : "1234", bsz + 1); /* { dg-warning "unterminated" "pr86937" { xfail *-*-* } } */
+T (v0 ? "1234" : b[3], bsz + 1);  /* { dg-warning "bound 6 exceeds source size 5" } */
+T (v0 ? "1234" : b[i3], bsz + 1); /* { dg-warning "bound 6 exceeds source size 5" } */
+T (v0 ? b[3] : "1234", bsz + 1);  /* { dg-warning "bound 6 exceeds source size 5" } */
+T (v0 ? b[i3] : "1234", bsz + 1); /* { dg-warning "bound 6 exceeds source size 5" } */
 
-T (v0 ? a : b[3], bsz + 1);       /* { dg-warning "unterminated" "pr86937" { xfail *-*-* } } */
-T (v0 ? b[0] : b[2], bsz + 1);
-T (v0 ? b[2] : b[3], bsz + 1);    /* { dg-warning "unterminated" "pr86937" { xfail *-*-* } } */
-T (v0 ? b[3] : b[2], bsz + 1);    /* { dg-warning "unterminated" "pr86937" { xfail *-*-* } } */
+T (v0 ? a : b[3], bsz + 1);       /* { dg-warning "bound 6 exceeds source size 5" } */
+T (v0 ? b[0] : b[2], bsz + 1);    /* { dg-warning "bound 6 exceeds source size 5" } */
+T (v0 ? b[2] : b[3], bsz + 1);    /* { dg-warning "bound 6 exceeds source size 5" } */
+T (v0 ? b[3] : b[2], bsz + 1);    /* { dg-warning "bound 6 exceeds source size 5" } */
 
 struct A { char a[5], b[5]; };
 
@@ -212,10 +215,10 @@ T (&s.a[i1] + v0, asz);
 T (s.a, asz + 1);
 T (&s.a[0], asz + 1);
 T (&s.a[0] + 1, asz + 1);
-T (&s.a[0] + v0, asz + 1);
+T (&s.a[0] + v0, asz + 1);        /* { dg-warning "specified bound 6 exceeds source size 5 " } */
 T (&s.a[1], asz + 1);
 T (&s.a[1] + 1, asz + 1);
-T (&s.a[1] + v0, asz + 1);
+T (&s.a[1] + v0, asz + 1);        /* { dg-bogus "specified bound 6 exceeds source size 5" "pr95794" { xfail *-*-* } } */
 
 T (&s.a[i0], asz + 1);
 T (&s.a[i0] + i1, asz + 1);
@@ -266,10 +269,10 @@ const struct B ba[] = {
 T (ba[0].a[0].a, asz + 1);
 T (&ba[0].a[0].a[0], asz + 1);
 T (&ba[0].a[0].a[0] + 1, asz + 1);
-T (&ba[0].a[0].a[0] + v0, asz + 1);
+T (&ba[0].a[0].a[0] + v0, asz + 1);   /* { dg-bogus "specified bound 6 exceeds source size 5" pr95794" { xfail *-*-* } } */
 T (&ba[0].a[0].a[1], asz + 1);
 T (&ba[0].a[0].a[1] + 1, asz + 1);
-T (&ba[0].a[0].a[1] + v0, asz + 1);
+T (&ba[0].a[0].a[1] + v0, asz + 1);   /* { dg-bogus "specified bound 6 exceeds source size 5" pr95794" { xfail *-*-* } } */
 
 T (ba[0].a[0].b, bsz);
 T (&ba[0].a[0].b[0], bsz);
@@ -302,10 +305,10 @@ T (&ba[0].a[1].a[1] + v0, asz + 1);   /* { dg-warning "unterminated" } */
 T (ba[0].a[1].b, bsz + 1);
 T (&ba[0].a[1].b[0], bsz + 1);
 T (&ba[0].a[1].b[0] + 1, bsz + 1);
-T (&ba[0].a[1].b[0] + v0, bsz + 1);
+T (&ba[0].a[1].b[0] + v0, bsz + 1);   /* { dg-bogus "specified bound 6 exceeds source size 5" pr95794" { xfail *-*-* } } */
 T (&ba[0].a[1].b[1], bsz + 1);
 T (&ba[0].a[1].b[1] + 1, bsz + 1);
-T (&ba[0].a[1].b[1] + v0, bsz + 1);
+T (&ba[0].a[1].b[1] + v0, bsz + 1);   /* { dg-bogus "specified bound 6 exceeds source size 5" pr95794" { xfail *-*-* } } */
 
 T (ba[1].a[0].a, asz);
 T (&ba[1].a[0].a[0], asz);

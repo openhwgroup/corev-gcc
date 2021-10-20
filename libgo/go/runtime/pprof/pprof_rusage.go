@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+//go:build darwin || linux
 // +build darwin linux
 
 package pprof
@@ -19,7 +20,7 @@ func addMaxRSS(w io.Writer) {
 	switch runtime.GOOS {
 	case "linux", "android":
 		rssToBytes = 1024
-	case "darwin":
+	case "darwin", "ios":
 		rssToBytes = 1
 	default:
 		panic("unsupported OS")

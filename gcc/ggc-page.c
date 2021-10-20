@@ -1,5 +1,5 @@
 /* "Bag-of-pages" garbage collector for the GNU compiler.
-   Copyright (C) 1999-2020 Free Software Foundation, Inc.
+   Copyright (C) 1999-2021 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -1164,9 +1164,9 @@ release_pages (void)
     {
       fprintf (stderr, " {GC");
       if (n1)
-	fprintf (stderr, " released %luk", (unsigned long)(n1 / 1024));
+	fprintf (stderr, " released " PRsa (0), SIZE_AMOUNT (n1));
       if (n2)
-	fprintf (stderr, " madv_dontneed %luk", (unsigned long)(n2 / 1024));
+	fprintf (stderr, " madv_dontneed " PRsa (0), SIZE_AMOUNT (n2));
       fprintf (stderr, "}");
     }
 }
@@ -1513,6 +1513,12 @@ gt_ggc_m_S (const void *p)
 
 void
 gt_ggc_mx (const char *& x)
+{
+  gt_ggc_m_S (x);
+}
+
+void
+gt_ggc_mx (char *& x)
 {
   gt_ggc_m_S (x);
 }
@@ -2178,19 +2184,20 @@ validate_free_objects (void)
 /* Top level mark-and-sweep routine.  */
 
 void
-ggc_collect (void)
+ggc_collect (enum ggc_collect mode)
 {
   /* Avoid frequent unnecessary work by skipping collection if the
      total allocations haven't expanded much since the last
      collection.  */
   float allocated_last_gc =
-    MAX (G.allocated_last_gc, (size_t)param_ggc_min_heapsize * 1024);
+    MAX (G.allocated_last_gc, (size_t)param_ggc_min_heapsize * ONE_K);
 
   /* It is also good time to get memory block pool into limits.  */
   memory_block_pool::trim ();
 
   float min_expand = allocated_last_gc * param_ggc_min_expand / 100;
-  if (G.allocated < allocated_last_gc + min_expand && !ggc_force_collect)
+  if (mode == GGC_COLLECT_HEURISTIC
+      && G.allocated < allocated_last_gc + min_expand)
     return;
 
   timevar_push (TV_GC);
@@ -2208,7 +2215,7 @@ ggc_collect (void)
 
   /* Output this later so we do not interfere with release_pages.  */
   if (!quiet_flag)
-    fprintf (stderr, " {GC %luk -> ", (unsigned long) allocated / 1024);
+    fprintf (stderr, " {GC " PRsa (0) " -> ", SIZE_AMOUNT (allocated));
 
   /* Indicate that we've seen collections at this context depth.  */
   G.context_depth_collections = ((unsigned long)1 << (G.context_depth + 1)) - 1;
@@ -2235,7 +2242,7 @@ ggc_collect (void)
   timevar_pop (TV_GC);
 
   if (!quiet_flag)
-    fprintf (stderr, "%luk}", (unsigned long) G.allocated / 1024);
+    fprintf (stderr, PRsa (0) "}", SIZE_AMOUNT (G.allocated));
   if (GGC_DEBUG_LEVEL >= 2)
     fprintf (G.debug_file, "END COLLECTING\n");
 }
@@ -2250,9 +2257,8 @@ ggc_trim ()
   sweep_pages ();
   release_pages ();
   if (!quiet_flag)
-    fprintf (stderr, " {GC trimmed to %luk, %luk mapped}",
-	     (unsigned long) G.allocated / 1024,
-	     (unsigned long) G.bytes_mapped / 1024);
+    fprintf (stderr, " {GC trimmed to " PRsa (0) ", " PRsa (0) " mapped}",
+	     SIZE_AMOUNT (G.allocated), SIZE_AMOUNT (G.bytes_mapped));
   timevar_pop (TV_GC);
 }
 
@@ -2269,7 +2275,7 @@ ggc_grow (void)
   else
     ggc_collect ();
   if (!quiet_flag)
-    fprintf (stderr, " {GC %luk} ", (unsigned long) G.allocated / 1024);
+    fprintf (stderr, " {GC " PRsa (0) "} ", SIZE_AMOUNT (G.allocated));
 }
 
 void

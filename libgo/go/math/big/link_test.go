@@ -7,7 +7,7 @@ package big
 import (
 	"bytes"
 	"internal/testenv"
-	"io/ioutil"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
@@ -27,7 +27,7 @@ func TestLinkerGC(t *testing.T) {
 import _ "math/big"
 func main() {}
 `)
-	if err := ioutil.WriteFile(goFile, file, 0644); err != nil {
+	if err := os.WriteFile(goFile, file, 0644); err != nil {
 		t.Fatal(err)
 	}
 	cmd := exec.Command(goBin, "build", "-o", "x.exe", "x.go")
@@ -42,7 +42,7 @@ func main() {}
 	if err != nil {
 		t.Fatalf("nm: %v, %s", err, nm)
 	}
-	const want = "runtime.(*Frames).Next"
+	const want = "runtime.main"
 	if !bytes.Contains(nm, []byte(want)) {
 		// Test the test.
 		t.Errorf("expected symbol %q not found", want)

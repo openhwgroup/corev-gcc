@@ -1,5 +1,5 @@
 /* decl.cc -- Lower D frontend declarations to GCC trees.
-   Copyright (C) 2006-2020 Free Software Foundation, Inc.
+   Copyright (C) 2006-2021 Free Software Foundation, Inc.
 
 GCC is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -53,8 +53,13 @@ along with GCC; see the file COPYING3.  If not see
 #include "function.h"
 #include "debug.h"
 #include "tree-pretty-print.h"
+#include "tree-nested.h"
+#include "alloc-pool.h"
+#include "symbol-summary.h"
+#include "symtab-thunks.h"
 
 #include "d-tree.h"
+#include "d-target.h"
 
 
 /* Return identifier for the external mangled name of DECL.  */
@@ -104,7 +109,7 @@ gcc_attribute_p (Dsymbol *decl)
   if (md && md->packages && md->packages->length == 1)
     {
       if (!strcmp ((*md->packages)[0]->toChars (), "gcc")
-	  && !strcmp (md->id->toChars (), "attribute"))
+	  && !strcmp (md->id->toChars (), "attributes"))
 	return true;
     }
 
@@ -381,13 +386,9 @@ public:
       create_typeinfo (d->type, NULL);
 
     /* Generate static initializer.  */
-    d->sinit = aggregate_initializer_decl (d);
-    DECL_INITIAL (d->sinit) = layout_struct_initializer (d);
-
-    if (d->isInstantiated ())
-      d_linkonce_linkage (d->sinit);
-
-    d_finish_decl (d->sinit);
+    tree sinit = aggregate_initializer_decl (d);
+    DECL_INITIAL (sinit) = layout_struct_initializer (d);
+    d_finish_decl (sinit);
 
     /* Put out the members.  There might be static constructors in the members
        list, and they cannot be put in separate object files.  */
@@ -495,19 +496,17 @@ public:
     /* Generate C symbols.  */
     d->csym = get_classinfo_decl (d);
     d->vtblsym = get_vtable_decl (d);
-    d->sinit = aggregate_initializer_decl (d);
+    tree sinit = aggregate_initializer_decl (d);
 
     /* Generate static initializer.  */
-    DECL_INITIAL (d->sinit) = layout_class_initializer (d);
-    d_linkonce_linkage (d->sinit);
-    d_finish_decl (d->sinit);
+    DECL_INITIAL (sinit) = layout_class_initializer (d);
+    d_finish_decl (sinit);
 
     /* Put out the TypeInfo.  */
     if (have_typeinfo_p (Type::dtypeinfo))
       create_typeinfo (d->type, NULL);
 
     DECL_INITIAL (d->csym) = layout_classinfo (d);
-    d_linkonce_linkage (d->csym);
     d_finish_decl (d->csym);
 
     /* Put out the vtbl[].  */
@@ -530,7 +529,6 @@ public:
 
     DECL_INITIAL (d->vtblsym)
       = build_constructor (TREE_TYPE (d->vtblsym), elms);
-    d_comdat_linkage (d->vtblsym);
     d_finish_decl (d->vtblsym);
 
     /* Add this decl to the current binding level.  */
@@ -574,7 +572,6 @@ public:
       }
 
     DECL_INITIAL (d->csym) = layout_classinfo (d);
-    d_linkonce_linkage (d->csym);
     d_finish_decl (d->csym);
 
     /* Add this decl to the current binding level.  */
@@ -613,17 +610,13 @@ public:
 	/* Generate static initializer.  */
 	d->sinit = enum_initializer_decl (d);
 	DECL_INITIAL (d->sinit) = build_expr (tc->sym->defaultval, true);
-
-	if (d->isInstantiated ())
-	  d_linkonce_linkage (d->sinit);
-
 	d_finish_decl (d->sinit);
-
-	/* Add this decl to the current binding level.  */
-	tree ctype = build_ctype (d->type);
-	if (TREE_CODE (ctype) == ENUMERAL_TYPE && TYPE_NAME (ctype))
-	  d_pushdecl (TYPE_NAME (ctype));
       }
+
+    /* Add this decl to the current binding level.  */
+    tree ctype = build_ctype (d->type);
+    if (TYPE_NAME (ctype))
+      d_pushdecl (TYPE_NAME (ctype));
 
     d->semanticRun = PASSobj;
   }
@@ -649,31 +642,13 @@ public:
 	return;
       }
 
-    /* Do not store variables we cannot take the address of,
-       but keep the values for purposes of debugging.  */
     if (!d->canTakeAddressOf ())
       {
-	/* Don't know if there is a good way to handle instantiations.  */
-	if (d->isInstantiated ())
-	  return;
-
-	/* Cannot make an expression out of a void initializer.  */
-	if (!d->_init || d->_init->isVoidInitializer ())
-	  return;
-
-	tree decl = get_symbol_decl (d);
-	Expression *ie = initializerToExpression (d->_init);
-
-	/* CONST_DECL was initially intended for enumerals and may be used for
-	   scalars in general, but not for aggregates.  Here a non-constant
-	   value is generated anyway so as the CONST_DECL only serves as a
-	   placeholder for the value, however the DECL itself should never be
-	   referenced in any generated code, or passed to the back-end.  */
+	/* Do not store variables we cannot take the address of,
+	   but keep the values for purposes of debugging.  */
 	if (!d->type->isscalar ())
-	  DECL_INITIAL (decl) = build_expr (ie, false);
-	else
 	  {
-	    DECL_INITIAL (decl) = build_expr (ie, true);
+	    tree decl = get_symbol_decl (d);
 	    d_pushdecl (decl);
 	    rest_of_decl_compilation (decl, 1, 0);
 	  }
@@ -734,33 +709,24 @@ public:
 	   a check for isVarDeclaration() in DeclarationExp codegen.  */
 	declare_local_var (d);
 
-	if (d->_init)
+	if (d->_init && !d->_init->isVoidInitializer ())
 	  {
 	    tree decl = get_symbol_decl (d);
 
-	    if (!d->_init->isVoidInitializer ())
-	      {
-		ExpInitializer *vinit = d->_init->isExpInitializer ();
-		Expression *ie = initializerToExpression (vinit);
-		tree exp = build_expr (ie);
+	    ExpInitializer *vinit = d->_init->isExpInitializer ();
+	    Expression *ie = initializerToExpression (vinit);
+	    tree exp = build_expr (ie);
 
-		/* Maybe put variable on list of things needing destruction.  */
-		if (d->needsScopeDtor ())
-		  {
-		    vec_safe_push (d_function_chain->vars_in_scope, decl);
-		    /* Force a TARGET_EXPR to add the corresponding cleanup.  */
-		    exp = force_target_expr (compound_expr (exp, decl));
-		    TARGET_EXPR_CLEANUP (exp) = build_expr (d->edtor);
-		  }
-
-		add_stmt (exp);
-	      }
-	    else if (d->size (d->loc) != 0)
+	    /* Maybe put variable on list of things needing destruction.  */
+	    if (d->needsScopeDtor ())
 	      {
-		/* Zero-length arrays do not have an initializer.  */
-		warning (OPT_Wuninitialized, "uninitialized variable '%s'",
-			 d->ident ? d->ident->toChars () : "(no name)");
+		vec_safe_push (d_function_chain->vars_in_scope, decl);
+		/* Force a TARGET_EXPR to add the corresponding cleanup.  */
+		exp = force_target_expr (compound_expr (exp, decl));
+		TARGET_EXPR_CLEANUP (exp) = build_expr (d->edtor);
 	      }
+
+	    add_stmt (exp);
 	  }
       }
 
@@ -944,27 +910,24 @@ public:
        Implemented by overriding all the RETURN_EXPRs and replacing all
        occurrences of VAR with the RESULT_DECL for the function.
        This is only worth doing for functions that can return in memory.  */
-    if (d->nrvo_can)
-      {
-	tree restype = TREE_TYPE (DECL_RESULT (fndecl));
+    tree resdecl = DECL_RESULT (fndecl);
 
-	if (!AGGREGATE_TYPE_P (restype))
-	  d->nrvo_can = 0;
+    if (TREE_ADDRESSABLE (TREE_TYPE (resdecl))
+	|| aggregate_value_p (TREE_TYPE (resdecl), fndecl))
+      {
+	/* Return non-trivial structs by invisible reference.  */
+	if (TREE_ADDRESSABLE (TREE_TYPE (resdecl)))
+	  {
+	    TREE_TYPE (resdecl) = build_reference_type (TREE_TYPE (resdecl));
+	    DECL_BY_REFERENCE (resdecl) = 1;
+	    TREE_ADDRESSABLE (resdecl) = 0;
+	    relayout_decl (resdecl);
+	    d->shidden = build_deref (resdecl);
+	  }
 	else
-	  d->nrvo_can = aggregate_value_p (restype, fndecl);
-      }
+	  d->shidden = resdecl;
 
-    if (d->nrvo_can)
-      {
-	tree resdecl = DECL_RESULT (fndecl);
-
-	TREE_TYPE (resdecl)
-	  = build_reference_type (TREE_TYPE (resdecl));
-	DECL_BY_REFERENCE (resdecl) = 1;
-	TREE_ADDRESSABLE (resdecl) = 0;
-	relayout_decl (resdecl);
-
-	if (d->nrvo_var)
+	if (d->nrvo_can && d->nrvo_var)
 	  {
 	    tree var = get_symbol_decl (d->nrvo_var);
 
@@ -972,11 +935,10 @@ public:
 	    DECL_NAME (resdecl) = DECL_NAME (var);
 	    /* Don't forget that we take its address.  */
 	    TREE_ADDRESSABLE (var) = 1;
-	    resdecl = build_deref (resdecl);
 
 	    SET_DECL_VALUE_EXPR (var, resdecl);
 	    DECL_HAS_VALUE_EXPR_P (var) = 1;
-	    SET_DECL_LANG_NRVO (var, resdecl);
+	    SET_DECL_LANG_NRVO (var, d->shidden);
 	  }
       }
 
@@ -1115,6 +1077,25 @@ get_symbol_decl (Declaration *decl)
 
       if (vd->storage_class & STCextern)
 	DECL_EXTERNAL (decl->csym) = 1;
+
+      /* CONST_DECL was initially intended for enumerals and may be used for
+	 scalars in general, but not for aggregates.  Here a non-constant
+	 value is generated anyway so as the CONST_DECL only serves as a
+	 placeholder for the value, however the DECL itself should never be
+	 referenced in any generated code, or passed to the back-end.  */
+      if (vd->storage_class & STCmanifest)
+	{
+	  /* Cannot make an expression out of a void initializer.  */
+	  if (vd->_init && !vd->_init->isVoidInitializer ())
+	    {
+	      Expression *ie = initializerToExpression (vd->_init);
+
+	      if (!vd->type->isscalar ())
+		DECL_INITIAL (decl->csym) = build_expr (ie, false);
+	      else
+		DECL_INITIAL (decl->csym) = build_expr (ie, true);
+	    }
+	}
     }
 
   /* Set the declaration mangled identifier if static.  */
@@ -1140,6 +1121,10 @@ get_symbol_decl (Declaration *decl)
 	  Declaration *other = IDENTIFIER_DSYMBOL (mangled_name);
 	  tree olddecl = decl->csym;
 	  decl->csym = get_symbol_decl (other);
+
+	  /* Update the symbol location to the current definition.  */
+	  if (DECL_EXTERNAL (decl->csym) && !DECL_INITIAL (decl->csym))
+	    DECL_SOURCE_LOCATION (decl->csym) = DECL_SOURCE_LOCATION (olddecl);
 
 	  /* The current declaration is a prototype or marked extern, merge
 	     applied user attributes and return.  */
@@ -1265,25 +1250,29 @@ get_symbol_decl (Declaration *decl)
 	  DECL_NO_INSTRUMENT_FUNCTION_ENTRY_EXIT (decl->csym) = 1;
 	}
 
+      /* Mark compiler generated functions as artificial.  */
+      if (fd->generated)
+	DECL_ARTIFICIAL (decl->csym) = 1;
+
       /* Vector array operations are always compiler generated.  */
       if (fd->isArrayOp)
 	{
-	  TREE_PUBLIC (decl->csym) = 1;
 	  DECL_ARTIFICIAL (decl->csym) = 1;
 	  DECL_DECLARED_INLINE_P (decl->csym) = 1;
-	  d_comdat_linkage (decl->csym);
 	}
 
-      /* And so are ensure and require contracts.  */
+      /* Ensure and require contracts are lexically nested in the function they
+	 part of, but are always publicly callable.  */
       if (fd->ident == Identifier::idPool ("ensure")
 	  || fd->ident == Identifier::idPool ("require"))
-	{
-	  DECL_ARTIFICIAL (decl->csym) = 1;
-	  TREE_PUBLIC (decl->csym) = 1;
-	}
+	TREE_PUBLIC (decl->csym) = 1;
 
       if (decl->storage_class & STCfinal)
 	DECL_FINAL_P (decl->csym) = 1;
+
+      /* Function is of type `noreturn' or `typeof(*null)'.  */
+      if (fd->type->nextOf ()->ty == Tnoreturn)
+	TREE_THIS_VOLATILE (decl->csym) = 1;
 
       /* Check whether this function is expanded by the frontend.  */
       DECL_INTRINSIC_CODE (decl->csym) = INTRINSIC_NONE;
@@ -1293,8 +1282,8 @@ get_symbol_decl (Declaration *decl)
 	 all static chain passing is handled by the front-end.  Do this even
 	 if we are not emitting the body.  */
       struct cgraph_node *node = cgraph_node::get_create (decl->csym);
-      if (node->origin)
-	node->unnest ();
+      if (nested_function_origin (node))
+	unnest_function (node);
     }
 
   /* Mark compiler generated temporaries as artificial.  */
@@ -1340,8 +1329,8 @@ get_symbol_decl (Declaration *decl)
       /* The decl has not been defined -- yet.  */
       DECL_EXTERNAL (decl->csym) = 1;
 
-      if (decl->isInstantiated ())
-	d_linkonce_linkage (decl->csym);
+      DECL_INSTANTIATED (decl->csym) = (decl->isInstantiated () != NULL);
+      set_linkage_for_decl (decl->csym);
     }
 
   /* Symbol is going in thread local storage.  */
@@ -1387,6 +1376,8 @@ declare_extern_var (tree ident, tree type)
 
   /* The decl has not been defined -- yet.  */
   DECL_EXTERNAL (decl) = 1;
+
+  set_linkage_for_decl (decl);
 
   return decl;
 }
@@ -1672,7 +1663,7 @@ finish_thunk (tree thunk, tree function)
 	  resolve_unique_section (thunk, 0, flag_function_sections);
 
 	  /* Output the thunk into the same section as function.  */
-	  set_decl_section_name (thunk, DECL_SECTION_NAME (fn));
+	  set_decl_section_name (thunk, fn);
 	  symtab_node::get (thunk)->implicit_section
 	    = symtab_node::get (fn)->implicit_section;
 	}
@@ -1702,26 +1693,6 @@ finish_thunk (tree thunk, tree function)
 
   if (DECL_ONE_ONLY (function))
     thunk_node->add_to_same_comdat_group (funcn);
-
-  /* Target assemble_mi_thunk doesn't work across section boundaries
-     on many targets, instead force thunk to be expanded in gimple.  */
-  if (DECL_EXTERNAL (function))
-    {
-      /* cgraph::expand_thunk writes over current_function_decl, so if this
-	 could ever be in use by the codegen pass, we want to know about it.  */
-      gcc_assert (current_function_decl == NULL_TREE);
-
-      if (!stdarg_p (TREE_TYPE (thunk)))
-	{
-	  thunk_node->create_edge (funcn, NULL, thunk_node->count);
-	  thunk_node->expand_thunk (false, true);
-	}
-
-      /* Tell the back-end to not bother inlining the function, this is
-	 assumed not to work as it could be referencing symbols outside
-	 of the current compilation unit.  */
-      DECL_UNINLINABLE (function) = 1;
-    }
 }
 
 /* Return a thunk to DECL.  Thunks adjust the incoming `this' pointer by OFFSET.
@@ -1798,12 +1769,11 @@ make_thunk (FuncDeclaration *decl, int offset)
 
   DECL_CONTEXT (thunk) = d_decl_context (decl);
 
-  /* Thunks inherit the public access of the function they are targetting.
-     When the function is outside the current compilation unit however, then the
-     thunk must be kept private to not conflict.  */
-  TREE_PUBLIC (thunk) = TREE_PUBLIC (function) && !DECL_EXTERNAL (function);
-
-  DECL_EXTERNAL (thunk) = 0;
+  /* Thunks inherit the public access of the function they are targeting.
+     Thunks are connected to the definitions of the functions, so thunks are
+     not produced for external functions.  */
+  TREE_PUBLIC (thunk) = TREE_PUBLIC (function);
+  DECL_EXTERNAL (thunk) = DECL_EXTERNAL (function);
 
   /* Thunks are always addressable.  */
   TREE_ADDRESSABLE (thunk) = 1;
@@ -1811,22 +1781,38 @@ make_thunk (FuncDeclaration *decl, int offset)
   DECL_ARTIFICIAL (thunk) = 1;
   DECL_DECLARED_INLINE_P (thunk) = 0;
 
-  DECL_VISIBILITY (thunk) = DECL_VISIBILITY (function);
-  DECL_COMDAT (thunk) = DECL_COMDAT (function);
-  DECL_WEAK (thunk) = DECL_WEAK (function);
+  if (TREE_PUBLIC (thunk))
+    {
+      DECL_VISIBILITY (thunk) = DECL_VISIBILITY (function);
+      DECL_COMDAT (thunk) = DECL_COMDAT (function);
+      DECL_WEAK (thunk) = DECL_WEAK (function);
+    }
 
-  tree target_name = DECL_ASSEMBLER_NAME (function);
-  unsigned identlen = IDENTIFIER_LENGTH (target_name) + 14;
-  const char *ident = XNEWVEC (const char, identlen);
-  snprintf (CONST_CAST (char *, ident), identlen,
-	    "_DT%u%s", offset, IDENTIFIER_POINTER (target_name));
+  /* When the thunk is for an extern C++ function, let C++ do the thunk
+     generation and just reference the symbol as extern, instead of
+     forcing a D local thunk to be emitted.  */
+  const char *ident;
+
+  if (decl->linkage == LINKcpp)
+    ident = target.cpp.thunkMangle (decl, offset);
+  else
+    {
+      tree target_name = DECL_ASSEMBLER_NAME (function);
+      unsigned identlen = IDENTIFIER_LENGTH (target_name) + 14;
+      ident = XNEWVEC (const char, identlen);
+
+      snprintf (CONST_CAST (char *, ident), identlen,
+		"_DTi%u%s", offset, IDENTIFIER_POINTER (target_name));
+    }
 
   DECL_NAME (thunk) = get_identifier (ident);
   SET_DECL_ASSEMBLER_NAME (thunk, DECL_NAME (thunk));
 
   d_keep (thunk);
+  free (CONST_CAST (char *, ident));
 
-  finish_thunk (thunk, function);
+  if (!DECL_EXTERNAL (function))
+    finish_thunk (thunk, function);
 
   /* Add it to the list of thunks associated with the function.  */
   DECL_LANG_THUNKS (thunk) = NULL_TREE;
@@ -1978,8 +1964,8 @@ finish_function (tree old_context)
 /* Mark DECL, which is a VAR_DECL or FUNCTION_DECL as a symbol that
    must be emitted in this, output module.  */
 
-void
-mark_needed (tree decl)
+static void
+d_mark_needed (tree decl)
 {
   TREE_USED (decl) = 1;
 
@@ -1993,42 +1979,6 @@ mark_needed (tree decl)
       struct varpool_node *node = varpool_node::get_create (decl);
       node->forced_by_abi = true;
     }
-}
-
-/* Get the offset to the BC's vtbl[] initializer from the start of CD.
-   Returns "~0u" if the base class is not found in any vtable interfaces.  */
-
-unsigned
-base_vtable_offset (ClassDeclaration *cd, BaseClass *bc)
-{
-  unsigned csymoffset = target.classinfosize;
-  unsigned interfacesize = int_size_in_bytes (vtbl_interface_type_node);
-  csymoffset += cd->vtblInterfaces->length * interfacesize;
-
-  for (size_t i = 0; i < cd->vtblInterfaces->length; i++)
-    {
-      BaseClass *b = (*cd->vtblInterfaces)[i];
-      if (b == bc)
-	return csymoffset;
-      csymoffset += b->sym->vtbl.length * target.ptrsize;
-    }
-
-  /* Check all overriding interface vtbl[]s.  */
-  for (ClassDeclaration *cd2 = cd->baseClass; cd2; cd2 = cd2->baseClass)
-    {
-      for (size_t k = 0; k < cd2->vtblInterfaces->length; k++)
-	{
-	  BaseClass *bs = (*cd2->vtblInterfaces)[k];
-	  if (bs->fillVtbl (cd, NULL, 0))
-	    {
-	      if (bc == bs)
-		return csymoffset;
-	      csymoffset += bs->sym->vtbl.length * target.ptrsize;
-	    }
-	}
-    }
-
-  return ~0u;
 }
 
 /* Get the VAR_DECL of the vtable symbol for DECL.  If this does not yet exist,
@@ -2204,7 +2154,7 @@ tree
 aggregate_initializer_decl (AggregateDeclaration *decl)
 {
   if (decl->sinit)
-    return decl->sinit;
+    return (tree) decl->sinit;
 
   /* Class is a reference, want the record type.  */
   tree type = build_ctype (decl->type);
@@ -2214,20 +2164,21 @@ aggregate_initializer_decl (AggregateDeclaration *decl)
 
   tree ident = mangle_internal_decl (decl, "__init", "Z");
 
-  decl->sinit = declare_extern_var (ident, type);
-  DECL_LANG_SPECIFIC (decl->sinit) = build_lang_decl (NULL);
+  tree sinit = declare_extern_var (ident, type);
+  DECL_LANG_SPECIFIC (sinit) = build_lang_decl (NULL);
 
-  DECL_CONTEXT (decl->sinit) = type;
-  TREE_READONLY (decl->sinit) = 1;
+  DECL_CONTEXT (sinit) = type;
+  TREE_READONLY (sinit) = 1;
 
   /* Honor struct alignment set by user.  */
   if (sd && sd->alignment != STRUCTALIGN_DEFAULT)
     {
-      SET_DECL_ALIGN (decl->sinit, sd->alignment * BITS_PER_UNIT);
-      DECL_USER_ALIGN (decl->sinit) = true;
+      SET_DECL_ALIGN (sinit, sd->alignment * BITS_PER_UNIT);
+      DECL_USER_ALIGN (sinit) = true;
     }
 
-  return decl->sinit;
+  decl->sinit = sinit;
+  return sinit;
 }
 
 /* Generate the data for the static initializer.  */
@@ -2267,13 +2218,10 @@ enum_initializer_decl (EnumDeclaration *decl)
   if (decl->sinit)
     return decl->sinit;
 
-  tree type = build_ctype (decl->type);
+  gcc_assert (decl->ident);
 
-  Identifier *ident_save = decl->ident;
-  if (!decl->ident)
-    decl->ident = Identifier::generateId ("__enum");
+  tree type = build_ctype (decl->type);
   tree ident = mangle_internal_decl (decl, "__init", "Z");
-  decl->ident = ident_save;
 
   decl->sinit = declare_extern_var (ident, type);
   DECL_LANG_SPECIFIC (decl->sinit) = build_lang_decl (NULL);
@@ -2319,8 +2267,6 @@ build_type_decl (tree type, Dsymbol *dsym)
   if (TYPE_STUB_DECL (type))
     return;
 
-  gcc_assert (!POINTER_TYPE_P (type));
-
   /* If a templated type, use the template instance name, as that includes all
      template parameters.  */
   const char *name = dsym->parent->isTemplateInstance ()
@@ -2330,7 +2276,6 @@ build_type_decl (tree type, Dsymbol *dsym)
 			  get_identifier (name), type);
   SET_DECL_ASSEMBLER_NAME (decl, get_identifier (d_mangle_decl (dsym)));
   TREE_PUBLIC (decl) = 1;
-  DECL_ARTIFICIAL (decl) = 1;
   DECL_CONTEXT (decl) = d_decl_context (dsym);
 
   TYPE_CONTEXT (type) = DECL_CONTEXT (decl);
@@ -2339,9 +2284,14 @@ build_type_decl (tree type, Dsymbol *dsym)
   /* Not sure if there is a need for separate TYPE_DECLs in
      TYPE_NAME and TYPE_STUB_DECL.  */
   if (TREE_CODE (type) == ENUMERAL_TYPE || RECORD_OR_UNION_TYPE_P (type))
-    TYPE_STUB_DECL (type) = decl;
+    {
+      DECL_ARTIFICIAL (decl) = 1;
+      TYPE_STUB_DECL (type) = decl;
+    }
+  else if (type != TYPE_MAIN_VARIANT (type))
+    DECL_ORIGINAL_TYPE (decl) = TYPE_MAIN_VARIANT (type);
 
-  rest_of_decl_compilation (decl, SCOPE_FILE_SCOPE_P (decl), 0);
+  rest_of_decl_compilation (decl, DECL_FILE_SCOPE_P (decl), 0);
 }
 
 /* Create a declaration for field NAME of a given TYPE, setting the flags
@@ -2373,12 +2323,15 @@ d_comdat_group (tree decl)
 /* Set DECL up to have the closest approximation of "initialized common"
    linkage available.  */
 
-void
+static void
 d_comdat_linkage (tree decl)
 {
-  if (flag_weak)
+  /* COMDAT definitions have to be public.  */
+  gcc_assert (TREE_PUBLIC (decl));
+
+  if (supports_one_only ())
     make_decl_one_only (decl, d_comdat_group (decl));
-  else if (TREE_CODE (decl) == FUNCTION_DECL
+  else if ((TREE_CODE (decl) == FUNCTION_DECL && DECL_INSTANTIATED (decl))
 	   || (VAR_P (decl) && DECL_ARTIFICIAL (decl)))
     /* We can just emit function and compiler-generated variables statically;
        having multiple copies is (for the most part) only a waste of space.  */
@@ -2388,26 +2341,65 @@ d_comdat_linkage (tree decl)
     /* Fallback, cannot have multiple copies.  */
     DECL_COMMON (decl) = 1;
 
-  if (TREE_PUBLIC (decl))
+  if (TREE_PUBLIC (decl) && DECL_INSTANTIATED (decl))
     DECL_COMDAT (decl) = 1;
 }
 
-/* Set DECL up to have the closest approximation of "linkonce" linkage.  */
+/* Set DECL up to have the closest approximation of "weak" linkage.  */
 
-void
-d_linkonce_linkage (tree decl)
+static void
+d_weak_linkage (tree decl)
 {
   /* Weak definitions have to be public.  */
+  gcc_assert (TREE_PUBLIC (decl));
+
+  /* Allow comdat linkage to be forced with the flag `-fno-weak-templates'.  */
+  if (!flag_weak_templates || !TARGET_SUPPORTS_WEAK)
+    return d_comdat_linkage (decl);
+
+  declare_weak (decl);
+}
+
+/* DECL is a FUNCTION_DECL or a VAR_DECL with static storage.  Set flags to
+   reflect the linkage that DECL will receive in the object file.  */
+
+void
+set_linkage_for_decl (tree decl)
+{
+  gcc_assert (VAR_OR_FUNCTION_DECL_P (decl) && TREE_STATIC (decl));
+
+  /* Non-public decls keep their internal linkage. */
   if (!TREE_PUBLIC (decl))
     return;
 
-  /* Necessary to allow DECL_ONE_ONLY or DECL_WEAK functions to be inlined.  */
-  if (TREE_CODE (decl) == FUNCTION_DECL)
-    DECL_DECLARED_INLINE_P (decl) = 1;
+  /* Don't need to give private or protected symbols a special linkage.  */
+  if ((TREE_PRIVATE (decl) || TREE_PROTECTED (decl))
+      && !DECL_INSTANTIATED (decl))
+    return;
 
-  /* No weak support, fallback to COMDAT linkage.  */
-  if (!flag_weak)
-   return d_comdat_linkage (decl);
+  /* Functions declared as `pragma(inline, true)' can appear in multiple
+     translation units.  */
+  if (TREE_CODE (decl) == FUNCTION_DECL && DECL_DECLARED_INLINE_P (decl))
+    return d_comdat_linkage (decl);
 
-  make_decl_one_only (decl, d_comdat_group (decl));
+  /* If all instantiations must go in COMDAT, give them that linkage.
+     This also applies to other extern declarations, so that it is possible
+     for them to override template declarations.  */
+  if (targetdm.d_templates_always_comdat)
+    {
+      /* Make sure that instantiations are not removed.  */
+      if (flag_weak_templates && DECL_INSTANTIATED (decl))
+	d_mark_needed (decl);
+
+      return d_comdat_linkage (decl);
+    }
+
+  /* Instantiated variables and functions need to be overridable by any other
+     symbol with the same name, so give them weak linkage.  */
+  if (DECL_INSTANTIATED (decl))
+    return d_weak_linkage (decl);
+
+  /* Compiler generated public symbols can appear in multiple contexts.  */
+  if (DECL_ARTIFICIAL (decl))
+    return d_weak_linkage (decl);
 }

@@ -32,9 +32,9 @@ func Unwrap(err error) error {
 // An error type might provide an Is method so it can be treated as equivalent
 // to an existing error. For example, if MyError defines
 //
-//	func (m MyError) Is(target error) bool { return target == os.ErrExist }
+//	func (m MyError) Is(target error) bool { return target == fs.ErrExist }
 //
-// then Is(MyError{}, os.ErrExist) returns true. See syscall.Errno.Is for
+// then Is(MyError{}, fs.ErrExist) returns true. See syscall.Errno.Is for
 // an example in the standard library.
 func Is(err, target error) bool {
 	if target == nil {
@@ -83,10 +83,10 @@ func As(err error, target interface{}) bool {
 	if typ.Kind() != reflectlite.Ptr || val.IsNil() {
 		panic("errors: target must be a non-nil pointer")
 	}
-	if e := typ.Elem(); e.Kind() != reflectlite.Interface && !e.Implements(errorType) {
+	targetType := typ.Elem()
+	if targetType.Kind() != reflectlite.Interface && !targetType.Implements(errorType) {
 		panic("errors: *target must be interface or implement error")
 	}
-	targetType := typ.Elem()
 	for err != nil {
 		if reflectlite.TypeOf(err).AssignableTo(targetType) {
 			val.Elem().Set(reflectlite.ValueOf(err))

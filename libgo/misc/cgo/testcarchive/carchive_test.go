@@ -10,7 +10,6 @@ import (
 	"debug/elf"
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
@@ -53,7 +52,7 @@ func testMain(m *testing.M) int {
 	// We need a writable GOPATH in which to run the tests.
 	// Construct one in a temporary directory.
 	var err error
-	GOPATH, err = ioutil.TempDir("", "carchive_test")
+	GOPATH, err = os.MkdirTemp("", "carchive_test")
 	if err != nil {
 		log.Panic(err)
 	}
@@ -74,7 +73,7 @@ func testMain(m *testing.M) int {
 		log.Panic(err)
 	}
 	os.Setenv("PWD", modRoot)
-	if err := ioutil.WriteFile("go.mod", []byte("module testcarchive\n"), 0666); err != nil {
+	if err := os.WriteFile("go.mod", []byte("module testcarchive\n"), 0666); err != nil {
 		log.Panic(err)
 	}
 
@@ -118,11 +117,6 @@ func testMain(m *testing.M) int {
 		cc = append(cc, s[start:])
 	}
 
-	if GOOS == "darwin" {
-		// For Darwin/ARM.
-		// TODO(crawshaw): can we do better?
-		cc = append(cc, []string{"-framework", "CoreFoundation", "-framework", "Foundation"}...)
-	}
 	if GOOS == "aix" {
 		// -Wl,-bnoobjreorder is mandatory to keep the same layout
 		// in .text section.
@@ -133,7 +127,7 @@ func testMain(m *testing.M) int {
 		libbase = "gccgo_" + libbase + "_fPIC"
 	} else {
 		switch GOOS {
-		case "darwin":
+		case "darwin", "ios":
 			if GOARCH == "arm64" {
 				libbase += "_shared"
 			}
@@ -181,7 +175,7 @@ func genHeader(t *testing.T, header, dir string) {
 	// The 'cgo' command generates a number of additional artifacts,
 	// but we're only interested in the header.
 	// Shunt the rest of the outputs to a temporary directory.
-	objDir, err := ioutil.TempDir(GOPATH, "_obj")
+	objDir, err := os.MkdirTemp(GOPATH, "_obj")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,7 +251,7 @@ var badLineRegexp = regexp.MustCompile(`(?m)^#line [0-9]+ "/.*$`)
 // the user and make the files change based on details of the location
 // of GOPATH.
 func checkLineComments(t *testing.T, hdrname string) {
-	hdr, err := ioutil.ReadFile(hdrname)
+	hdr, err := os.ReadFile(hdrname)
 	if err != nil {
 		if !os.IsNotExist(err) {
 			t.Error(err)
@@ -303,7 +297,7 @@ func TestInstall(t *testing.T) {
 
 func TestEarlySignalHandler(t *testing.T) {
 	switch GOOS {
-	case "darwin":
+	case "darwin", "ios":
 		switch GOARCH {
 		case "arm64":
 			t.Skipf("skipping on %s/%s; see https://golang.org/issue/13701", GOOS, GOARCH)
@@ -384,7 +378,7 @@ func TestSignalForwarding(t *testing.T) {
 	expectSignal(t, err, syscall.SIGSEGV)
 
 	// SIGPIPE is never forwarded on darwin. See golang.org/issue/33384.
-	if runtime.GOOS != "darwin" {
+	if runtime.GOOS != "darwin" && runtime.GOOS != "ios" {
 		// Test SIGPIPE forwarding
 		cmd = exec.Command(bin[0], append(bin[1:], "3")...)
 
@@ -485,7 +479,7 @@ func TestSignalForwardingExternal(t *testing.T) {
 // doesn't work on this platform.
 func checkSignalForwardingTest(t *testing.T) {
 	switch GOOS {
-	case "darwin":
+	case "darwin", "ios":
 		switch GOARCH {
 		case "arm64":
 			t.Skipf("skipping on %s/%s; see https://golang.org/issue/13701", GOOS, GOARCH)
@@ -603,7 +597,7 @@ func TestExtar(t *testing.T) {
 	if runtime.Compiler == "gccgo" {
 		t.Skip("skipping -extar test when using gccgo")
 	}
-	if runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" {
+	if runtime.GOOS == "ios" {
 		t.Skip("shell scripts are not executable on iOS hosts")
 	}
 
@@ -623,7 +617,7 @@ func TestExtar(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := strings.Replace(testar, "PWD", dir, 1)
-	if err := ioutil.WriteFile("testar", []byte(s), 0777); err != nil {
+	if err := os.WriteFile("testar", []byte(s), 0777); err != nil {
 		t.Fatal(err)
 	}
 
@@ -645,7 +639,7 @@ func TestExtar(t *testing.T) {
 
 func TestPIE(t *testing.T) {
 	switch GOOS {
-	case "windows", "darwin", "plan9":
+	case "windows", "darwin", "ios", "plan9":
 		t.Skipf("skipping PIE test on %s", GOOS)
 	}
 
@@ -738,7 +732,7 @@ func TestSIGPROF(t *testing.T) {
 	switch GOOS {
 	case "windows", "plan9":
 		t.Skipf("skipping SIGPROF test on %s", GOOS)
-	case "darwin":
+	case "darwin", "ios":
 		t.Skipf("skipping SIGPROF test on %s; see https://golang.org/issue/19320", GOOS)
 	}
 
@@ -781,7 +775,7 @@ func TestSIGPROF(t *testing.T) {
 // tool with -buildmode=c-archive, it passes -shared to the compiler,
 // so we override that. The go tool doesn't work this way, but Bazel
 // will likely do it in the future. And it ought to work. This test
-// was added because at one time it did not work on PPC GNU/Linux.
+// was added because at one time it did not work on PPC Linux.
 func TestCompileWithoutShared(t *testing.T) {
 	// For simplicity, reuse the signal forwarding test.
 	checkSignalForwardingTest(t)
@@ -841,7 +835,7 @@ func TestCompileWithoutShared(t *testing.T) {
 	expectSignal(t, err, syscall.SIGSEGV)
 
 	// SIGPIPE is never forwarded on darwin. See golang.org/issue/33384.
-	if runtime.GOOS != "darwin" {
+	if runtime.GOOS != "darwin" && runtime.GOOS != "ios" {
 		binArgs := append(cmdToRun(exe), "3")
 		t.Log(binArgs)
 		out, err = exec.Command(binArgs[0], binArgs[1:]...).CombinedOutput()

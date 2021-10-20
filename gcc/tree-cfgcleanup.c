@@ -1,5 +1,5 @@
 /* CFG cleanup for trees.
-   Copyright (C) 2001-2020 Free Software Foundation, Inc.
+   Copyright (C) 2001-2021 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -209,10 +209,14 @@ cleanup_control_expr_graph (basic_block bb, gimple_stmt_iterator gsi)
    to updated gimple_call_flags.  */
 
 static void
-cleanup_call_ctrl_altering_flag (gimple *bb_end)
+cleanup_call_ctrl_altering_flag (basic_block bb, gimple *bb_end)
 {
   if (!is_gimple_call (bb_end)
-      || !gimple_call_ctrl_altering_p (bb_end))
+      || !gimple_call_ctrl_altering_p (bb_end)
+      || (/* IFN_UNIQUE should be the last insn, to make checking for it
+	     as cheap as possible.  */
+	  gimple_call_internal_p (bb_end)
+	  && gimple_call_internal_unique_p (bb_end)))
     return;
 
   int flags = gimple_call_flags (bb_end);
@@ -220,6 +224,24 @@ cleanup_call_ctrl_altering_flag (gimple *bb_end)
        && !(flags & ECF_LOOPING_CONST_OR_PURE))
       || (flags & ECF_LEAF))
     gimple_call_set_ctrl_altering (bb_end, false);
+  else
+    {
+      edge_iterator ei;
+      edge e;
+      bool found = false;
+      FOR_EACH_EDGE (e, ei, bb->succs)
+	if (e->flags & EDGE_FALLTHRU)
+	  found = true;
+	else if (e->flags & EDGE_ABNORMAL)
+	  {
+	    found = false;
+	    break;
+	  }
+      /* If there's no abnormal edge and a fallthru edge the call
+	 isn't control-altering anymore.  */
+      if (found)
+	gimple_call_set_ctrl_altering (bb_end, false);
+    }
 }
 
 /* Try to remove superfluous control structures in basic block BB.  Returns
@@ -243,7 +265,7 @@ cleanup_control_flow_bb (basic_block bb)
   stmt = gsi_stmt (gsi);
 
   /* Try to cleanup ctrl altering flag for call which ends bb.  */
-  cleanup_call_ctrl_altering_flag (stmt);
+  cleanup_call_ctrl_altering_flag (bb, stmt);
 
   if (gimple_code (stmt) == GIMPLE_COND
       || gimple_code (stmt) == GIMPLE_SWITCH)
@@ -928,9 +950,7 @@ cleanup_control_flow_pre ()
   /* If we've marked .ABNORMAL_DISPATCHER basic block(s) as visited
      above, but haven't marked any of their successors as visited,
      unmark them now, so that they can be removed as useless.  */
-  basic_block dispatcher_bb;
-  unsigned int k;
-  FOR_EACH_VEC_ELT (abnormal_dispatchers, k, dispatcher_bb)
+  for (basic_block dispatcher_bb : abnormal_dispatchers)
     {
       edge e;
       edge_iterator ei;
@@ -993,9 +1013,7 @@ cleanup_tree_cfg_noloop (unsigned ssa_update_flags)
       if (!dom_info_available_p (CDI_DOMINATORS))
 	mark_dfs_back_edges ();
 
-      loop_p loop;
-      unsigned i;
-      FOR_EACH_VEC_ELT (*get_loops (cfun), i, loop)
+      for (loop_p loop : *get_loops (cfun))
 	if (loop && loop->header)
 	  {
 	    basic_block bb = loop->header;

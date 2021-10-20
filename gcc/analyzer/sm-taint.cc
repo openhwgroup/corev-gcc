@@ -1,7 +1,7 @@
 /* An experimental state machine, for tracking "taint": unsanitized uses
    of data potentially under an attacker's control.
 
-   Copyright (C) 2019-2020 Free Software Foundation, Inc.
+   Copyright (C) 2019-2021 Free Software Foundation, Inc.
    Contributed by David Malcolm <dmalcolm@redhat.com>.
 
 This file is part of GCC.
@@ -31,6 +31,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "diagnostic-path.h"
 #include "diagnostic-metadata.h"
 #include "function.h"
+#include "json.h"
 #include "analyzer/analyzer.h"
 #include "diagnostic-event-id.h"
 #include "analyzer/analyzer-logging.h"
@@ -60,14 +61,11 @@ public:
   void on_condition (sm_context *sm_ctxt,
 		     const supernode *node,
 		     const gimple *stmt,
-		     tree lhs,
+		     const svalue *lhs,
 		     enum tree_code op,
-		     tree rhs) const FINAL OVERRIDE;
+		     const svalue *rhs) const FINAL OVERRIDE;
 
   bool can_purge_p (state_t s) const FINAL OVERRIDE;
-
-  /* Start state.  */
-  state_t m_start;
 
   /* State for a "tainted" value: unsanitized data potentially under an
      attacker's control.  */
@@ -188,7 +186,6 @@ private:
 taint_state_machine::taint_state_machine (logger *logger)
 : state_machine ("taint", logger)
 {
-  m_start = add_state ("start");
   m_tainted = add_state ("tainted");
   m_has_lb = add_state ("has_lb");
   m_has_ub = add_state ("has_ub");
@@ -208,7 +205,6 @@ taint_state_machine::on_stmt (sm_context *sm_ctxt,
 	if (is_named_call_p (callee_fndecl, "fread", call, 4))
 	  {
 	    tree arg = gimple_call_arg (call, 0);
-	    arg = sm_ctxt->get_readable_tree (arg);
 
 	    sm_ctxt->on_transition (node, stmt, arg, m_start, m_tainted);
 
@@ -231,34 +227,45 @@ taint_state_machine::on_stmt (sm_context *sm_ctxt,
       if (op == ARRAY_REF)
 	{
 	  tree arg = TREE_OPERAND (rhs1, 1);
-	  arg = sm_ctxt->get_readable_tree (arg);
 
 	  /* Unsigned types have an implicit lower bound.  */
 	  bool is_unsigned = false;
 	  if (INTEGRAL_TYPE_P (TREE_TYPE (arg)))
 	    is_unsigned = TYPE_UNSIGNED (TREE_TYPE (arg));
 
-	  /* Complain about missing bounds.  */
-	  sm_ctxt->warn_for_state
-	    (node, stmt, arg, m_tainted,
-	     new tainted_array_index (*this, arg,
-				      is_unsigned
-				      ? BOUNDS_LOWER : BOUNDS_NONE));
-	  sm_ctxt->on_transition (node, stmt, arg, m_tainted, m_stop);
-
-	  /* Complain about missing upper bound.  */
-	  sm_ctxt->warn_for_state  (node, stmt, arg, m_has_lb,
-				    new tainted_array_index (*this, arg,
-							     BOUNDS_LOWER));
-	  sm_ctxt->on_transition (node, stmt, arg, m_has_lb, m_stop);
-
-	  /* Complain about missing lower bound.  */
-	  if (!is_unsigned)
+	  state_t state = sm_ctxt->get_state (stmt, arg);
+	  /* Can't use a switch as the states are non-const.  */
+	  if (state == m_tainted)
 	    {
-	      sm_ctxt->warn_for_state  (node, stmt, arg, m_has_ub,
-					new tainted_array_index (*this, arg,
-								 BOUNDS_UPPER));
-	      sm_ctxt->on_transition (node, stmt, arg, m_has_ub, m_stop);
+	      /* Complain about missing bounds.  */
+	      tree diag_arg = sm_ctxt->get_diagnostic_tree (arg);
+	      pending_diagnostic *d
+		= new tainted_array_index (*this, diag_arg,
+					   is_unsigned
+					   ? BOUNDS_LOWER : BOUNDS_NONE);
+	      sm_ctxt->warn (node, stmt, arg, d);
+	      sm_ctxt->set_next_state (stmt, arg, m_stop);
+	    }
+	  else if (state == m_has_lb)
+	    {
+	      /* Complain about missing upper bound.  */
+	      tree diag_arg = sm_ctxt->get_diagnostic_tree (arg);
+	      sm_ctxt->warn (node, stmt, arg,
+			      new tainted_array_index (*this, diag_arg,
+						       BOUNDS_LOWER));
+	      sm_ctxt->set_next_state (stmt, arg, m_stop);
+	    }
+	  else if (state == m_has_ub)
+	    {
+	      /* Complain about missing lower bound.  */
+	      if (!is_unsigned)
+		{
+		  tree diag_arg = sm_ctxt->get_diagnostic_tree (arg);
+		  sm_ctxt->warn  (node, stmt, arg,
+				  new tainted_array_index (*this, diag_arg,
+							   BOUNDS_UPPER));
+		  sm_ctxt->set_next_state (stmt, arg, m_stop);
+		}
 	    }
 	}
     }
@@ -274,9 +281,9 @@ void
 taint_state_machine::on_condition (sm_context *sm_ctxt,
 				   const supernode *node,
 				   const gimple *stmt,
-				   tree lhs,
+				   const svalue *lhs,
 				   enum tree_code op,
-				   tree rhs ATTRIBUTE_UNUSED) const
+				   const svalue *rhs ATTRIBUTE_UNUSED) const
 {
   if (stmt == NULL)
     return;

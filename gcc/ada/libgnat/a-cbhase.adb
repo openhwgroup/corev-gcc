@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 2004-2020, Free Software Foundation, Inc.         --
+--          Copyright (C) 2004-2021, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -38,10 +38,12 @@ with Ada.Containers.Helpers; use Ada.Containers.Helpers;
 with Ada.Containers.Prime_Numbers; use Ada.Containers.Prime_Numbers;
 
 with System; use type System.Address;
+with System.Put_Images;
 
 package body Ada.Containers.Bounded_Hashed_Sets with
   SPARK_Mode => Off
 is
+   use Ada.Finalization;
 
    pragma Warnings (Off, "variable ""Busy*"" is not referenced");
    pragma Warnings (Off, "variable ""Lock*"" is not referenced");
@@ -230,7 +232,7 @@ is
            Container.TC'Unrestricted_Access;
       begin
          return R : constant Constant_Reference_Type :=
-           (Element => N.Element'Access,
+           (Element => N.Element'Unchecked_Access,
             Control => (Controlled with TC))
          do
             Busy (TC.all);
@@ -453,6 +455,17 @@ is
          return N.Element;
       end;
    end Element;
+
+   -----------
+   -- Empty --
+   -----------
+
+   function Empty (Capacity : Count_Type := 10) return Set is
+   begin
+      return Result : Set (Capacity, 0) do
+         Reserve_Capacity (Result, Capacity);
+      end return;
+   end Empty;
 
    ---------------------
    -- Equivalent_Sets --
@@ -1107,6 +1120,31 @@ is
       end;
    end Query_Element;
 
+   ---------------
+   -- Put_Image --
+   ---------------
+
+   procedure Put_Image
+     (S : in out Ada.Strings.Text_Buffers.Root_Buffer_Type'Class; V : Set)
+   is
+      First_Time : Boolean := True;
+      use System.Put_Images;
+   begin
+      Array_Before (S);
+
+      for X of V loop
+         if First_Time then
+            First_Time := False;
+         else
+            Simple_Array_Between (S);
+         end if;
+
+         Element_Type'Put_Image (S, X);
+      end loop;
+
+      Array_After (S);
+   end Put_Image;
+
    ----------
    -- Read --
    ----------
@@ -1605,7 +1643,7 @@ is
               Container.TC'Unrestricted_Access;
          begin
             return R : constant Constant_Reference_Type :=
-              (Element => N.Element'Access,
+              (Element => N.Element'Unchecked_Access,
                Control => (Controlled with TC))
             do
                Busy (TC.all);
@@ -1745,7 +1783,7 @@ is
       -- Read --
       ----------
 
-      procedure  Read
+      procedure Read
         (Stream : not null access Root_Stream_Type'Class;
          Item   : out Reference_Type)
       is

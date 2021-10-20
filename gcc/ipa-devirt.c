@@ -1,6 +1,6 @@
 /* Basic IPA utilities for type inheritance graph construction and
    devirtualization.
-   Copyright (C) 2013-2020 Free Software Foundation, Inc.
+   Copyright (C) 2013-2021 Free Software Foundation, Inc.
    Contributed by Jan Hubicka
 
 This file is part of GCC.
@@ -1521,6 +1521,7 @@ odr_types_equivalent_p (tree t1, tree t2, bool warn, bool *warned,
 	break;
       }
     case VOID_TYPE:
+    case OPAQUE_TYPE:
     case NULLPTR_TYPE:
       break;
 
@@ -2031,6 +2032,8 @@ bool
 odr_based_tbaa_p (const_tree type)
 {
   if (!RECORD_OR_UNION_TYPE_P (type))
+    return false;
+  if (!odr_hash)
     return false;
   odr_type t = get_odr_type (const_cast <tree> (type), false);
   if (!t || !t->tbaa_enabled)
@@ -2987,7 +2990,7 @@ final_warning_record::grow_type_warnings (unsigned newlen)
   unsigned len = type_warnings.length ();
   if (newlen > len)
     {
-      type_warnings.safe_grow_cleared (newlen);
+      type_warnings.safe_grow_cleared (newlen, true);
       for (unsigned i = len; i < newlen; i++)
 	type_warnings[i].dyn_count = profile_count::zero ();
     }
@@ -4146,7 +4149,7 @@ ipa_odr_read_section (struct lto_file_decl_data *file_data, const char *data,
       /* If this is first time we see the enum, remember its definition.  */
       if (!existed_p)
 	{
-	  this_enum.vals.safe_grow_cleared (nvals);
+	  this_enum.vals.safe_grow_cleared (nvals, true);
 	  this_enum.warned = false;
 	  if (dump_file)
 	    fprintf (dump_file, "enum %s\n{\n", name);
@@ -4190,6 +4193,8 @@ ipa_odr_read_section (struct lto_file_decl_data *file_data, const char *data,
 	      if (do_warning != -1 || j >= this_enum.vals.length ())
 		continue;
 	      if (strcmp (id, this_enum.vals[j].name)
+		  || (val.get_precision() !=
+		      this_enum.vals[j].val.get_precision())
 		  || val != this_enum.vals[j].val)
 		{
 		  warn_name = xstrdup (id);
@@ -4257,14 +4262,20 @@ ipa_odr_read_section (struct lto_file_decl_data *file_data, const char *data,
 			    "name %qs differs from name %qs defined"
 			    " in another translation unit",
 			    this_enum.vals[j].name, warn_name);
+		  else if (this_enum.vals[j].val.get_precision() !=
+			   warn_value.get_precision())
+		    inform (this_enum.vals[j].locus,
+			    "name %qs is defined as %u-bit while another "
+			    "translation unit defines it as %u-bit",
+			    warn_name, this_enum.vals[j].val.get_precision(),
+			    warn_value.get_precision());
 		  /* FIXME: In case there is easy way to print wide_ints,
-		     perhaps we could do it here instead of overlfow checpl.  */
+		     perhaps we could do it here instead of overflow check.  */
 		  else if (wi::fits_shwi_p (this_enum.vals[j].val)
 			   && wi::fits_shwi_p (warn_value))
 		    inform (this_enum.vals[j].locus,
-			    "name %qs is defined to " HOST_WIDE_INT_PRINT_DEC
-			    " while another translation unit defines "
-			    "it as " HOST_WIDE_INT_PRINT_DEC,
+			    "name %qs is defined to %wd while another "
+			    "translation unit defines it as %wd",
 			    warn_name, this_enum.vals[j].val.to_shwi (),
 			    warn_value.to_shwi ());
 		  else

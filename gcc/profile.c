@@ -1,5 +1,5 @@
 /* Calculate branch probabilities, and basic block execution counts.
-   Copyright (C) 1990-2020 Free Software Foundation, Inc.
+   Copyright (C) 1990-2021 Free Software Foundation, Inc.
    Contributed by James E. Wilson, UC Berkeley/Cygnus Support;
    based on some ideas from Dain Samples of UC Berkeley.
    Further mangling by Bob Manson, Cygnus Support.
@@ -412,7 +412,7 @@ compute_branch_probabilities (unsigned cfg_checksum, unsigned lineno_checksum)
       return;
     }
 
-  bb_gcov_counts.safe_grow_cleared (last_basic_block_for_fn (cfun));
+  bb_gcov_counts.safe_grow_cleared (last_basic_block_for_fn (cfun), true);
   edge_gcov_counts = new hash_map<edge,gcov_type>;
 
   /* Attach extra info block to each bb.  */
@@ -771,7 +771,7 @@ sort_hist_values (histogram_value hist)
   int counters = hist->hvalue.counters[1];
   for (int i = 0; i < counters - 1; i++)
   /* Hist value is organized as:
-     [total_executions, N, counter1, ..., valueN, counterN]
+     [total_executions, N, value1, counter1, ..., valueN, counterN]
      Use decrease bubble sort to rearrange it.  The sort starts from <value1,
      counter1> and compares counter first.  If counter is same, compares the
      value, exchange it if small to keep stable.  */
@@ -897,8 +897,16 @@ compute_value_histograms (histogram_values values, unsigned cfg_checksum,
 	      node->tp_first_run = 0;
 	    }
 
-          if (dump_file)
-            fprintf (dump_file, "Read tp_first_run: %d\n", node->tp_first_run);
+	  /* Drop profile for -fprofile-reproducible=multithreaded.  */
+	  bool drop
+	    = (flag_profile_reproducible == PROFILE_REPRODUCIBILITY_MULTITHREADED);
+	  if (drop)
+	    node->tp_first_run = 0;
+
+	  if (dump_file)
+	    fprintf (dump_file, "Read tp_first_run: %d%s\n", node->tp_first_run,
+		     drop ? "; ignored because profile reproducibility is "
+		     "multi-threaded" : "");
         }
     }
 
@@ -1294,6 +1302,11 @@ branch_prob (bool thunk)
   if (dump_file)
     fprintf (dump_file, "%d instrumentation edges\n", num_instrumented);
 
+  /* Dump function body before it's instrumented.
+     It helps to debug gcov tool.  */
+  if (dump_file && (dump_flags & TDF_DETAILS))
+    dump_function_to_file (cfun->decl, dump_file, dump_flags);
+
   /* Compute two different checksums. Note that we want to compute
      the checksum in only once place, since it depends on the shape
      of the control flow which can change during 
@@ -1375,7 +1388,7 @@ branch_prob (bool thunk)
 	      seen_locations.add (loc);
 	      expanded_location curr_location = expand_location (loc);
 	      output_location (&streamed_locations, curr_location.file,
-			       curr_location.line, &offset, bb);
+			       MAX (1, curr_location.line), &offset, bb);
 	    }
 
 	  for (gsi = gsi_start_bb (bb); !gsi_end_p (gsi); gsi_next (&gsi))
@@ -1386,7 +1399,7 @@ branch_prob (bool thunk)
 		{
 		  seen_locations.add (loc);
 		  output_location (&streamed_locations, gimple_filename (stmt),
-				   gimple_lineno (stmt), &offset, bb);
+				   MAX (1, gimple_lineno (stmt)), &offset, bb);
 		}
 	    }
 
@@ -1401,7 +1414,7 @@ branch_prob (bool thunk)
 	    {
 	      expanded_location curr_location = expand_location (loc);
 	      output_location (&streamed_locations, curr_location.file,
-			       curr_location.line, &offset, bb);
+			       MAX (1, curr_location.line), &offset, bb);
 	    }
 
 	  if (offset)
@@ -1453,13 +1466,12 @@ branch_prob (bool thunk)
   if (flag_branch_probabilities
       && (profile_status_for_fn (cfun) == PROFILE_READ))
     {
-      class loop *loop;
       if (dump_file && (dump_flags & TDF_DETAILS))
 	report_predictor_hitrates ();
 
       /* At this moment we have precise loop iteration count estimates.
 	 Record them to loop structure before the profile gets out of date. */
-      FOR_EACH_LOOP (loop, 0)
+      for (auto loop : loops_list (cfun, 0))
 	if (loop->header->count > 0 && loop->header->count.reliable_p ())
 	  {
 	    gcov_type nit = expected_loop_iterations_unbounded (loop);

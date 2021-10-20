@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---          Copyright (C) 2009-2020, Free Software Foundation, Inc.         --
+--          Copyright (C) 2009-2021, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -218,7 +218,9 @@ package GNAT.Secure_Hashes is
          --  HMAC key
       end record;
 
+      pragma Warnings (Off, "aggregate not fully initialized");
       Initial_Context : constant Context (KL => 0) := (others => <>);
+      pragma Warnings (On, "aggregate not fully initialized");
       --  Initial values are provided by default initialization of Context
 
       type Hash_Stream (C : access Context) is

@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 2004-2020, Free Software Foundation, Inc.         --
+--          Copyright (C) 2004-2021, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -41,6 +41,7 @@ pragma Elaborate_All
   (Ada.Containers.Red_Black_Trees.Generic_Bounded_Set_Operations);
 
 with System; use type System.Address;
+with System.Put_Images;
 
 package body Ada.Containers.Bounded_Ordered_Sets with
   SPARK_Mode => Off
@@ -419,7 +420,7 @@ is
            Container.TC'Unrestricted_Access;
       begin
          return R : constant Constant_Reference_Type :=
-           (Element => N.Element'Access,
+           (Element => N.Element'Unchecked_Access,
             Control => (Controlled with TC))
          do
             Busy (TC.all);
@@ -547,6 +548,17 @@ is
 
       return Position.Container.Nodes (Position.Node).Element;
    end Element;
+
+   -----------
+   -- Empty --
+   -----------
+
+   function Empty (Capacity : Count_Type := 10) return Set is
+   begin
+      return Result : Set (Capacity) do
+         null;
+      end return;
+   end Empty;
 
    -------------------------
    -- Equivalent_Elements --
@@ -740,7 +752,7 @@ is
               Container.TC'Unrestricted_Access;
          begin
             return R : constant Constant_Reference_Type :=
-              (Element => N.Element'Access,
+              (Element => N.Element'Unchecked_Access,
                Control => (Controlled with TC))
             do
                Busy (TC.all);
@@ -896,7 +908,7 @@ is
       -- Read --
       ----------
 
-      procedure  Read
+      procedure Read
         (Stream : not null access Root_Stream_Type'Class;
          Item   : out Reference_Type)
       is
@@ -931,7 +943,7 @@ is
             N : Node_Type renames Container.Nodes (Position.Node);
          begin
             return R : constant Reference_Type :=
-                         (Element => N.Element'Access,
+                         (Element => N.Element'Unchecked_Access,
                           Control =>
                             (Controlled with
                               Container.TC'Unrestricted_Access,
@@ -959,7 +971,7 @@ is
             N : Node_Type renames Container.Nodes (Node);
          begin
             return R : constant Reference_Type :=
-                         (Element => N.Element'Access,
+                         (Element => N.Element'Unchecked_Access,
                           Control =>
                             (Controlled with
                               Container.TC'Unrestricted_Access,
@@ -1627,6 +1639,31 @@ is
          Process (S.Nodes (Position.Node).Element);
       end;
    end Query_Element;
+
+   ---------------
+   -- Put_Image --
+   ---------------
+
+   procedure Put_Image
+     (S : in out Ada.Strings.Text_Buffers.Root_Buffer_Type'Class; V : Set)
+   is
+      First_Time : Boolean := True;
+      use System.Put_Images;
+   begin
+      Array_Before (S);
+
+      for X of V loop
+         if First_Time then
+            First_Time := False;
+         else
+            Simple_Array_Between (S);
+         end if;
+
+         Element_Type'Put_Image (S, X);
+      end loop;
+
+      Array_After (S);
+   end Put_Image;
 
    ----------
    -- Read --

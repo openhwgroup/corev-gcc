@@ -1,5 +1,5 @@
 ;;- Machine description for ARM for GNU compiler
-;;  Copyright (C) 1991-2020 Free Software Foundation, Inc.
+;;  Copyright (C) 1991-2021 Free Software Foundation, Inc.
 ;;  Contributed by Pieter `Tiggr' Schoenmakers (rcpieter@win.tue.nl)
 ;;  and Martin Simmons (@harleqn.co.uk).
 ;;  More major hacks by Richard Earnshaw (rearnsha@arm.com).
@@ -132,9 +132,12 @@
 ; TARGET_32BIT, "t1" or "t2" to specify a specific Thumb mode.  "v6"
 ; for ARM or Thumb-2 with arm_arch6, and nov6 for ARM without
 ; arm_arch6.  "v6t2" for Thumb-2 with arm_arch6 and "v8mb" for ARMv8-M
-; Baseline.  This attribute is used to compute attribute "enabled",
+; Baseline.  "fix_vlldm" is for fixing the v8-m/v8.1-m VLLDM erratum.
+; This attribute is used to compute attribute "enabled",
 ; use type "any" to enable an alternative in all cases.
-(define_attr "arch" "any,a,t,32,t1,t2,v6,nov6,v6t2,v8mb,iwmmxt,iwmmxt2,armv6_or_vfpv3,neon,mve"
+(define_attr "arch" "any, a, t, 32, t1, t2, v6,nov6, v6t2, \
+		     v8mb, fix_vlldm, iwmmxt, iwmmxt2, armv6_or_vfpv3, \
+		     neon, mve"
   (const_string "any"))
 
 (define_attr "arch_enabled" "no,yes"
@@ -175,6 +178,10 @@
 
 	 (and (eq_attr "arch" "v8mb")
 	      (match_test "TARGET_THUMB1 && arm_arch8"))
+	 (const_string "yes")
+
+	 (and (eq_attr "arch" "fix_vlldm")
+	      (match_test "fix_vlldm"))
 	 (const_string "yes")
 
 	 (and (eq_attr "arch" "iwmmxt2")
@@ -336,7 +343,8 @@
 (define_attr "core_cycles" "single,multi"
   (if_then_else (eq_attr "type"
     "adc_imm, adc_reg, adcs_imm, adcs_reg, adr, alu_ext, alu_imm, alu_sreg,\
-    alu_shift_imm, alu_shift_reg, alu_dsp_reg, alus_ext, alus_imm, alus_sreg,\
+    alu_shift_imm_lsl_1to4, alu_shift_imm_other, alu_shift_reg, alu_dsp_reg,\
+    alus_ext, alus_imm, alus_sreg,\
     alus_shift_imm, alus_shift_reg, bfm, csel, rev, logic_imm, logic_reg,\
     logic_shift_imm, logic_shift_reg, logics_imm, logics_reg,\
     logics_shift_imm, logics_shift_reg, extend, shift_imm, float, fcsel,\
@@ -1370,7 +1378,7 @@
    (set_attr "arch" "32,a")
    (set_attr "shift" "3")
    (set_attr "predicable" "yes")
-   (set_attr "type" "alu_shift_imm,alu_shift_reg")]
+   (set_attr "autodetect_type" "alu_shift_operator2")] 
 )
 
 (define_insn "*addsi3_carryin_clobercc"
@@ -1679,7 +1687,7 @@
   [(set_attr "conds" "use")
    (set_attr "arch" "*,a,t2")
    (set_attr "predicable" "yes")
-   (set_attr "type" "adc_reg,adc_imm,alu_shift_imm")]
+   (set_attr "type" "adc_reg,adc_imm,alu_shift_imm_lsl_1to4")]
 )
 
 ;; Special canonicalization of the above when operand1 == (const_int 1):
@@ -1727,7 +1735,7 @@
   "rsc%?\\t%0, %4, %1%S3"
   [(set_attr "conds" "use")
    (set_attr "predicable" "yes")
-   (set_attr "type" "alu_shift_imm,alu_shift_reg")]
+   (set_attr "autodetect_type" "alu_shift_operator3")]
 )
 
 (define_insn "cmpsi3_carryin_<CC_EXTEND>out"
@@ -1811,7 +1819,7 @@
    (set_attr "arch" "32,a")
    (set_attr "shift" "3")
    (set_attr "predicable" "yes")
-   (set_attr "type" "alu_shift_imm,alu_shift_reg")]
+   (set_attr "autodetect_type" "alu_shift_operator2")]
 )
 
 (define_insn "*subsi3_carryin_shift_alt"
@@ -1828,7 +1836,7 @@
    (set_attr "arch" "32,a")
    (set_attr "shift" "3")
    (set_attr "predicable" "yes")
-   (set_attr "type" "alu_shift_imm,alu_shift_reg")]
+   (set_attr "autodetect_type" "alu_shift_operator2")]
 )
 
 ;; No RSC in Thumb2
@@ -1844,7 +1852,7 @@
   "rsc%?\\t%0, %1, %3%S2"
   [(set_attr "conds" "use")
    (set_attr "predicable" "yes")
-   (set_attr "type" "alu_shift_imm,alu_shift_reg")]
+   (set_attr "autodetect_type" "alu_shift_operator2")]
 )
 
 (define_insn "*rsbsi3_carryin_shift_alt"
@@ -1859,7 +1867,7 @@
   "rsc%?\\t%0, %1, %3%S2"
   [(set_attr "conds" "use")
    (set_attr "predicable" "yes")
-   (set_attr "type" "alu_shift_imm,alu_shift_reg")]
+   (set_attr "autodetect_type" "alu_shift_operator2")]
 )
 
 ; transform ((x << y) - 1) to ~(~(x-1) << y)  Where X is a constant.
@@ -4646,7 +4654,7 @@
    (set_attr "predicable_short_it" "yes,yes,no,no")
    (set_attr "length" "4")
    (set_attr "shift" "1")
-   (set_attr "type" "alu_shift_reg,alu_shift_imm,alu_shift_imm,alu_shift_reg")]
+   (set_attr "autodetect_type" "alu_shift_operator3")]
 )
 
 (define_insn "*shiftsi3_compare0"
@@ -7289,7 +7297,9 @@
 (define_insn "*arm32_mov<mode>"
   [(set (match_operand:HFBF 0 "nonimmediate_operand" "=r,m,r,r")
 	(match_operand:HFBF 1 "general_operand"	   " m,r,r,F"))]
-  "TARGET_32BIT && !TARGET_HARD_FLOAT
+  "TARGET_32BIT
+   && !TARGET_HARD_FLOAT
+   && !TARGET_HAVE_MVE
    && (	  s_register_operand (operands[0], <MODE>mode)
        || s_register_operand (operands[1], <MODE>mode))"
   "*
@@ -7355,7 +7365,7 @@
   if (arm_disable_literal_pool
       && (REG_P (operands[0]) || SUBREG_P (operands[0]))
       && CONST_DOUBLE_P (operands[1])
-      && TARGET_HARD_FLOAT
+      && TARGET_VFP_BASE
       && !vfp3_const_double_rtx (operands[1]))
     {
       rtx clobreg = gen_reg_rtx (SFmode);
@@ -7452,7 +7462,7 @@
   if (arm_disable_literal_pool
       && (REG_P (operands[0]) || SUBREG_P (operands[0]))
       && CONSTANT_P (operands[1])
-      && TARGET_HARD_FLOAT
+      && TARGET_VFP_BASE
       && !arm_const_double_rtx (operands[1])
       && !(TARGET_VFP_DOUBLE && vfp3_const_double_rtx (operands[1])))
     {
@@ -8577,18 +8587,21 @@
 	      (use (match_operand 2 "" ""))
 	      (clobber (reg:SI LR_REGNUM))])]
   "use_cmse"
-  "
   {
+    rtx addr = XEXP (operands[0], 0);
+    rtx tmp = REG_P (addr) ? addr : force_reg (SImode, addr);
+
     if (!TARGET_HAVE_FPCXT_CMSE)
       {
-	rtx tmp =
-	  copy_to_suggested_reg (XEXP (operands[0], 0),
-				 gen_rtx_REG (SImode, R4_REGNUM),
-				 SImode);
-
-	operands[0] = replace_equiv_address (operands[0], tmp);
+	rtx r4 = gen_rtx_REG (SImode, R4_REGNUM);
+	emit_move_insn (r4, tmp);
+	tmp = r4;
       }
-  }")
+
+    if (tmp != addr)
+      operands[0] = replace_equiv_address (operands[0], tmp);
+  }
+)
 
 (define_insn "*call_reg_armv5"
   [(call (mem:SI (match_operand:SI 0 "s_register_operand" "r"))
@@ -9212,7 +9225,12 @@
 	operands[2] = operands[1];
       else
 	{
-	  rtx mem = XEXP (force_const_mem (SImode, operands[1]), 0);
+	  rtx mem = force_const_mem (SImode, operands[1]);
+	  if (!general_operand (mem, SImode))
+	    {
+	      emit_move_insn (operands[2], XEXP (mem, 0));
+	      mem = replace_equiv_address (mem, operands[2], false);
+	    }
 	  emit_move_insn (operands[2], mem);
 	}
     }
@@ -9295,7 +9313,12 @@
 	operands[3] = operands[1];
       else
 	{
-	  rtx mem = XEXP (force_const_mem (SImode, operands[1]), 0);
+	  rtx mem = force_const_mem (SImode, operands[1]);
+	  if (!general_operand (mem, SImode))
+	    {
+	      emit_move_insn (operands[3], XEXP (mem, 0));
+	      mem = replace_equiv_address (mem, operands[3], false);
+	    }
 	  emit_move_insn (operands[3], mem);
 	}
     }
@@ -9501,7 +9524,7 @@
   [(set_attr "predicable" "yes")
    (set_attr "shift" "2")
    (set_attr "arch" "a,t2")
-   (set_attr "type" "alu_shift_imm")])
+   (set_attr "autodetect_type" "alu_shift_mul_op3")])
 
 (define_insn "*<arith_shift_insn>_shiftsi"
   [(set (match_operand:SI 0 "s_register_operand" "=r,r,r")
@@ -9515,7 +9538,7 @@
   [(set_attr "predicable" "yes")
    (set_attr "shift" "3")
    (set_attr "arch" "a,t2,a")
-   (set_attr "type" "alu_shift_imm,alu_shift_imm,alu_shift_reg")])
+   (set_attr "autodetect_type" "alu_shift_operator2")])
 
 (define_split
   [(set (match_operand:SI 0 "s_register_operand" "")
@@ -10854,7 +10877,9 @@
    (set_attr "length" "4,8")
    (set_attr_alternative "type"
                          [(if_then_else (match_operand 3 "const_int_operand" "")
-                                        (const_string "alu_shift_imm" )
+                                (if_then_else (match_operand 5 "alu_shift_operator_lsl_1_to_4")
+                                              (const_string "alu_shift_imm_lsl_1to4")
+                                              (const_string "alu_shift_imm_other"))
                                         (const_string "alu_shift_reg"))
                           (const_string "multiple")])]
 )
@@ -10919,7 +10944,9 @@
    (set_attr "length" "4,8")
    (set_attr_alternative "type"
                          [(if_then_else (match_operand 3 "const_int_operand" "")
-                                        (const_string "alu_shift_imm" )
+                                (if_then_else (match_operand 5 "alu_shift_operator_lsl_1_to_4")
+                                              (const_string "alu_shift_imm_lsl_1to4")
+                                              (const_string "alu_shift_imm_other"))
                                         (const_string "alu_shift_reg"))
                           (const_string "multiple")])]
 )
@@ -11213,7 +11240,7 @@
 	  [(match_operand 3 "cc_register" "") (const_int 0)])
 	 (neg:SI (match_operand:SI 2 "s_register_operand" "l,r"))
 	 (match_operand:SI 1 "s_register_operand" "0,0")))]
-  "TARGET_32BIT"
+  "TARGET_32BIT && !TARGET_COND_ARITH"
   "#"
   "&& reload_completed"
   [(cond_exec (match_op_dup 4 [(match_dup 3) (const_int 0)])
@@ -12589,6 +12616,22 @@
      DONE;
   }"
 )
+
+;; movmisalign for DImode
+(define_expand "movmisaligndi"
+  [(match_operand:DI 0 "general_operand")
+   (match_operand:DI 1 "general_operand")]
+  "unaligned_access"
+{
+  rtx lo_op0 = gen_lowpart (SImode, operands[0]);
+  rtx lo_op1 = gen_lowpart (SImode, operands[1]);
+  rtx hi_op0 = gen_highpart_mode (SImode, DImode, operands[0]);
+  rtx hi_op1 = gen_highpart_mode (SImode, DImode, operands[1]);
+
+  emit_insn (gen_movmisalignsi (lo_op0, lo_op1));
+  emit_insn (gen_movmisalignsi (hi_op0, hi_op1));
+  DONE;
+})
 
 ;; movmisalign patterns for HImode and SImode.
 (define_expand "movmisalign<mode>"

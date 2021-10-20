@@ -1,5 +1,5 @@
 /* Read and write coverage files, and associated functionality.
-   Copyright (C) 1990-2020 Free Software Foundation, Inc.
+   Copyright (C) 1990-2021 Free Software Foundation, Inc.
    Contributed by James E. Wilson, UC Berkeley/Cygnus Support;
    based on some ideas from Dain Samples of UC Berkeley.
    Further mangling by Bob Manson, Cygnus Support.
@@ -50,6 +50,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "auto-profile.h"
 #include "profile.h"
 #include "diagnostic.h"
+#include "varasm.h"
 
 #include "gcov-io.c"
 
@@ -128,16 +129,7 @@ static const char *const ctr_names[GCOV_COUNTERS] = {
 #undef DEF_GCOV_COUNTER
 
 /* Forward declarations.  */
-static void read_counts_file (void);
 static tree build_var (tree, tree, int);
-static void build_fn_info_type (tree, unsigned, tree);
-static void build_info_type (tree, tree);
-static tree build_fn_info (const struct coverage_data *, tree, tree);
-static tree build_info (tree, tree);
-static bool coverage_obj_init (void);
-static vec<constructor_elt, va_gc> *coverage_obj_fn
-(vec<constructor_elt, va_gc> *, tree, struct coverage_data const *);
-static void coverage_obj_finish (vec<constructor_elt, va_gc> *);
 
 /* Return the type node for gcov_type.  */
 
@@ -145,7 +137,7 @@ tree
 get_gcov_type (void)
 {
   scalar_int_mode mode
-    = smallest_int_mode_for_size (LONG_LONG_TYPE_SIZE > 32 ? 64 : 32);
+    = smallest_int_mode_for_size (targetm.gcov_type_size ());
   return lang_hooks.types.type_for_mode (mode, false);
 }
 
@@ -216,6 +208,9 @@ read_counts_file (void)
   /* Read the stamp, used for creating a generation count.  */
   tag = gcov_read_unsigned ();
   bbg_file_stamp = crc32_unsigned (bbg_file_stamp, tag);
+
+  /* Read checksum.  */
+  gcov_read_unsigned ();
 
   counts_hash = new hash_table<counts_entry> (10);
   while ((tag = gcov_read_unsigned ()))
@@ -488,9 +483,9 @@ coverage_checksum_string (unsigned chksum, const char *string)
   for (i = 0; string[i]; i++)
     {
       int offset = 0;
-      if (!strncmp (string + i, "_GLOBAL__N_", 11))
+      if (startswith (string + i, "_GLOBAL__N_"))
       offset = 11;
-      if (!strncmp (string + i, "_GLOBAL__", 9))
+      if (startswith (string + i, "_GLOBAL__"))
       offset = 9;
 
       /* C++ namespaces do have scheme:
@@ -622,18 +617,16 @@ coverage_compute_cfg_checksum (struct function *fn)
 int
 coverage_begin_function (unsigned lineno_checksum, unsigned cfg_checksum)
 {
-  expanded_location xloc;
-  unsigned long offset;
-
   /* We don't need to output .gcno file unless we're under -ftest-coverage
      (e.g. -fprofile-arcs/generate/use don't need .gcno to work). */
   if (no_coverage || !bbg_file_name)
     return 0;
 
-  xloc = expand_location (DECL_SOURCE_LOCATION (current_function_decl));
+  expanded_location startloc
+    = expand_location (DECL_SOURCE_LOCATION (current_function_decl));
 
   /* Announce function */
-  offset = gcov_write_tag (GCOV_TAG_FUNCTION);
+  unsigned long offset = gcov_write_tag (GCOV_TAG_FUNCTION);
   if (param_profile_func_internal_id)
     gcov_write_unsigned (current_function_funcdef_no + 1);
   else
@@ -650,16 +643,27 @@ coverage_begin_function (unsigned lineno_checksum, unsigned cfg_checksum)
   gcov_write_unsigned (DECL_ARTIFICIAL (current_function_decl)
 		       && !DECL_FUNCTION_VERSIONED (current_function_decl)
 		       && !DECL_LAMBDA_FUNCTION_P (current_function_decl));
-  gcov_write_filename (xloc.file);
-  gcov_write_unsigned (xloc.line);
-  gcov_write_unsigned (xloc.column);
+  gcov_write_filename (startloc.file);
+  gcov_write_unsigned (startloc.line);
+  gcov_write_unsigned (startloc.column);
 
   expanded_location endloc = expand_location (cfun->function_end_locus);
 
   /* Function can start in a single file and end in another one.  */
-  int end_line = endloc.file == xloc.file ? endloc.line : xloc.line;
-  int end_column = endloc.file == xloc.file ? endloc.column: xloc.column;
-  gcc_assert (xloc.line <= end_line);
+  int end_line
+    = endloc.file == startloc.file ? endloc.line : startloc.line;
+  int end_column
+    = endloc.file == startloc.file ? endloc.column: startloc.column;
+
+  if (startloc.line > end_line)
+    {
+      warning_at (DECL_SOURCE_LOCATION (current_function_decl),
+		  OPT_Wcoverage_invalid_line_number,
+		  "function starts on a higher line number than it ends");
+      end_line = startloc.line;
+      end_column = startloc.column;
+    }
+
   gcov_write_unsigned (end_line);
   gcov_write_unsigned (end_column);
   gcov_write_length (offset);
@@ -925,6 +929,12 @@ build_info_type (tree type, tree fn_info_ptr_type)
   DECL_CHAIN (field) = fields;
   fields = field;
 
+  /* Checksum.  */
+  field = build_decl (BUILTINS_LOCATION, FIELD_DECL, NULL_TREE,
+		      get_gcov_unsigned_t ());
+  DECL_CHAIN (field) = fields;
+  fields = field;
+
   /* Filename */
   field = build_decl (BUILTINS_LOCATION, FIELD_DECL, NULL_TREE,
 		      build_pointer_type (build_qualified_type
@@ -967,7 +977,7 @@ build_info_type (tree type, tree fn_info_ptr_type)
    function info objects.  */
 
 static tree
-build_info (tree info_type, tree fn_ary)
+build_info (tree info_type, tree fn_ary, unsigned object_checksum)
 {
   tree info_fields = TYPE_FIELDS (info_type);
   tree merge_fn_type, n_funcs;
@@ -986,11 +996,17 @@ build_info (tree info_type, tree fn_ary)
   /* next -- NULL */
   CONSTRUCTOR_APPEND_ELT (v1, info_fields, null_pointer_node);
   info_fields = DECL_CHAIN (info_fields);
-  
+
   /* stamp */
   CONSTRUCTOR_APPEND_ELT (v1, info_fields,
 			  build_int_cstu (TREE_TYPE (info_fields),
 					  bbg_file_stamp));
+  info_fields = DECL_CHAIN (info_fields);
+
+  /* Checksum.  */
+  CONSTRUCTOR_APPEND_ELT (v1, info_fields,
+			  build_int_cstu (TREE_TYPE (info_fields),
+					  object_checksum));
   info_fields = DECL_CHAIN (info_fields);
 
   /* Filename */
@@ -1097,6 +1113,26 @@ build_gcov_exit_decl (void)
   cgraph_build_static_cdtor ('D', dtor, priority);
 }
 
+/* Generate the pointer to the gcov_info_var in a dedicated section.  */
+
+static void
+build_gcov_info_var_registration (tree gcov_info_type)
+{
+  tree var = build_decl (BUILTINS_LOCATION,
+			 VAR_DECL, NULL_TREE,
+			 build_pointer_type (gcov_info_type));
+  TREE_STATIC (var) = 1;
+  TREE_READONLY (var) = 1;
+  char name_buf[32];
+  ASM_GENERATE_INTERNAL_LABEL (name_buf, "LPBX", 2);
+  DECL_NAME (var) = get_identifier (name_buf);
+  get_section (profile_info_section, SECTION_UNNAMED, NULL);
+  set_decl_section_name (var, profile_info_section);
+  mark_decl_referenced (var);
+  DECL_INITIAL (var) = build_fold_addr_expr (gcov_info_var);
+  varpool_node::finalize_decl (var);
+}
+
 /* Create the gcov_info types and object.  Generate the constructor
    function to call __gcov_init.  Does not generate the initializer
    for the object.  Returns TRUE if coverage data is being emitted.  */
@@ -1151,8 +1187,13 @@ coverage_obj_init (void)
   ASM_GENERATE_INTERNAL_LABEL (name_buf, "LPBX", 0);
   DECL_NAME (gcov_info_var) = get_identifier (name_buf);
 
-  build_init_ctor (gcov_info_type);
-  build_gcov_exit_decl ();
+  if (profile_info_section)
+    build_gcov_info_var_registration (gcov_info_type);
+  else
+    {
+      build_init_ctor (gcov_info_type);
+      build_gcov_exit_decl ();
+    }
 
   return true;
 }
@@ -1179,7 +1220,8 @@ coverage_obj_fn (vec<constructor_elt, va_gc> *ctor, tree fn,
    function objects from CTOR.  Generate the gcov_info initializer.  */
 
 static void
-coverage_obj_finish (vec<constructor_elt, va_gc> *ctor)
+coverage_obj_finish (vec<constructor_elt, va_gc> *ctor,
+		     unsigned object_checksum)
 {
   unsigned n_functions = vec_safe_length (ctor);
   tree fn_info_ary_type = build_array_type
@@ -1196,7 +1238,7 @@ coverage_obj_finish (vec<constructor_elt, va_gc> *ctor)
   varpool_node::finalize_decl (fn_info_ary);
   
   DECL_INITIAL (gcov_info_var)
-    = build_info (TREE_TYPE (gcov_info_var), fn_info_ary);
+    = build_info (TREE_TYPE (gcov_info_var), fn_info_ary, object_checksum);
   varpool_node::finalize_decl (gcov_info_var);
 }
 
@@ -1206,6 +1248,8 @@ coverage_obj_finish (vec<constructor_elt, va_gc> *ctor)
 void
 coverage_init (const char *filename)
 {
+  const char *original_filename = filename;
+  int original_len = strlen (original_filename);
 #if HAVE_DOS_BASED_FILE_SYSTEM
   const char *separator = "\\";
 #else
@@ -1230,8 +1274,7 @@ coverage_init (const char *filename)
 	  filename = concat (getpwd (), separator, filename, NULL);
 	  if (profile_prefix_path)
 	    {
-	      if (!strncmp (filename, profile_prefix_path,
-			    strlen (profile_prefix_path)))
+	      if (startswith (filename, profile_prefix_path))
 		{
 		  filename += strlen (profile_prefix_path);
 		  while (*filename == *separator)
@@ -1264,7 +1307,6 @@ coverage_init (const char *filename)
   strcpy (da_file_name + prefix_len + len, GCOV_DATA_SUFFIX);
 
   bbg_file_stamp = local_tick;
-  
   if (flag_auto_profile)
     read_autofdo_file ();
   else if (flag_branch_probabilities)
@@ -1277,9 +1319,9 @@ coverage_init (const char *filename)
 	bbg_file_name = xstrdup (profile_note_location);
       else
 	{
-	  bbg_file_name = XNEWVEC (char, len + strlen (GCOV_NOTE_SUFFIX) + 1);
-	  memcpy (bbg_file_name, filename, len);
-	  strcpy (bbg_file_name + len, GCOV_NOTE_SUFFIX);
+	  bbg_file_name = XNEWVEC (char, original_len + strlen (GCOV_NOTE_SUFFIX) + 1);
+	  memcpy (bbg_file_name, original_filename, original_len);
+	  strcpy (bbg_file_name + original_len, GCOV_NOTE_SUFFIX);
 	}
 
       if (!gcov_open (bbg_file_name, -1))
@@ -1292,6 +1334,8 @@ coverage_init (const char *filename)
 	  gcov_write_unsigned (GCOV_NOTE_MAGIC);
 	  gcov_write_unsigned (GCOV_VERSION);
 	  gcov_write_unsigned (bbg_file_stamp);
+	  /* Use an arbitrary checksum */
+	  gcov_write_unsigned (0);
 	  gcov_write_string (getpwd ());
 
 	  /* Do not support has_unexecuted_blocks for Ada.  */
@@ -1317,14 +1361,24 @@ coverage_finish (void)
        cannot uniquely stamp it.  If we can stamp it, libgcov will DTRT.  */
     unlink (da_file_name);
 
+  /* Global GCDA checksum that aggregates all functions.  */
+  unsigned object_checksum = 0;
+
   if (coverage_obj_init ())
     {
       vec<constructor_elt, va_gc> *fn_ctor = NULL;
       struct coverage_data *fn;
       
       for (fn = functions_head; fn; fn = fn->next)
-	fn_ctor = coverage_obj_fn (fn_ctor, fn->fn_decl, fn);
-      coverage_obj_finish (fn_ctor);
+	{
+	  fn_ctor = coverage_obj_fn (fn_ctor, fn->fn_decl, fn);
+
+	  object_checksum = crc32_unsigned (object_checksum, fn->ident);
+	  object_checksum = crc32_unsigned (object_checksum,
+					    fn->lineno_checksum);
+	  object_checksum = crc32_unsigned (object_checksum, fn->cfg_checksum);
+	}
+      coverage_obj_finish (fn_ctor, object_checksum);
     }
 
   XDELETEVEC (da_file_name);

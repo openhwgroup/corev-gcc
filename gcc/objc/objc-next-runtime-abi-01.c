@@ -1,5 +1,5 @@
 /* Next Runtime (ABI-0/1) private.
-   Copyright (C) 2011-2020 Free Software Foundation, Inc.
+   Copyright (C) 2011-2021 Free Software Foundation, Inc.
    Contributed by Iain Sandoe (split from objc-act.c)
 
 This file is part of GCC.
@@ -39,6 +39,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "langhooks.h"
 #include "c-family/c-objc.h"
 #include "objc-act.h"
+#include "opts.h"
 
 /* When building Objective-C++, we are not linking against the C
    front-end and so need to replicate the C tree-construction
@@ -259,7 +260,7 @@ static void next_runtime_01_initialize (void)
 #ifdef OBJCPLUS
   /* For all NeXT objc ABIs -fobjc-call-cxx-cdtors is on by
      default.  */
-  if (!global_options_set.x_flag_objc_call_cxx_cdtors)
+  if (!OPTION_SET_P (flag_objc_call_cxx_cdtors))
     global_options.x_flag_objc_call_cxx_cdtors = 1;
 #endif
 
@@ -276,6 +277,13 @@ static void next_runtime_01_initialize (void)
   /* `struct objc_selector *' */
   objc_selector_type = build_pointer_type (xref_tag (RECORD_TYPE,
 					   get_identifier (TAG_SELECTOR)));
+
+  /* SEL typedef.  */
+  type = lang_hooks.decls.pushdecl (build_decl (input_location,
+						TYPE_DECL,
+						objc_selector_name,
+						objc_selector_type));
+  suppress_warning (type);
 
   build_v1_class_template ();
   build_super_template ();
@@ -938,7 +946,7 @@ next_runtime_abi_01_get_class_super_ref (location_t loc ATTRIBUTE_UNUSED,
 	ucls_super_ref =
 		objc_build_component_ref (imp->class_decl,
 					  get_identifier ("super_class"));
-	return ucls_super_ref;
+      return ucls_super_ref;
     }
   else
     {
@@ -946,7 +954,7 @@ next_runtime_abi_01_get_class_super_ref (location_t loc ATTRIBUTE_UNUSED,
 	uucls_super_ref =
 		objc_build_component_ref (imp->meta_decl,
 					  get_identifier ("super_class"));
-	return uucls_super_ref;
+      return uucls_super_ref;
     }
 }
 

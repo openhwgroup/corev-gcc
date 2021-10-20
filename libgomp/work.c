@@ -1,4 +1,4 @@
-/* Copyright (C) 2005-2020 Free Software Foundation, Inc.
+/* Copyright (C) 2005-2021 Free Software Foundation, Inc.
    Contributed by Richard Henderson <rth@redhat.com>.
 
    This file is part of the GNU Offloading and Multi Processing Library
@@ -191,7 +191,12 @@ gomp_work_share_start (size_t ordered)
   /* Work sharing constructs can be orphaned.  */
   if (team == NULL)
     {
+#ifdef GOMP_HAVE_EFFICIENT_ALIGNED_ALLOC
+      ws = gomp_aligned_alloc (__alignof (struct gomp_work_share),
+			       sizeof (*ws));
+#else
       ws = gomp_malloc (sizeof (*ws));
+#endif
       gomp_init_work_share (ws, ordered, 1);
       thr->ts.work_share = ws;
       return true;

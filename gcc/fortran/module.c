@@ -1,6 +1,6 @@
 /* Handle modules, which amounts to loading and saving symbols and
    their attendant structures.
-   Copyright (C) 2000-2020 Free Software Foundation, Inc.
+   Copyright (C) 2000-2021 Free Software Foundation, Inc.
    Contributed by Andy Vaught
 
 This file is part of GCC.
@@ -1234,6 +1234,13 @@ get_module_locus (module_locus *m)
   m->pos = module_pos;
 }
 
+/* Peek at the next character in the module.  */
+
+static int
+module_peek_char (void)
+{
+  return module_content[module_pos];
+}
 
 /* Get the next character in the module, updating our reckoning of
    where we are.  */
@@ -1314,7 +1321,19 @@ parse_string (void)
 static void
 parse_integer (int c)
 {
-  atom_int = c - '0';
+  int sign = 1;
+
+  atom_int = 0;
+  switch (c)
+    {
+    case ('-'):
+      sign = -1;
+    case ('+'):
+      break;
+    default:
+      atom_int = c - '0';
+      break;
+    }
 
   for (;;)
     {
@@ -1328,6 +1347,7 @@ parse_integer (int c)
       atom_int = 10 * atom_int + c - '0';
     }
 
+  atom_int *= sign; 
 }
 
 
@@ -1400,6 +1420,16 @@ parse_atom (void)
     case '9':
       parse_integer (c);
       return ATOM_INTEGER;
+
+    case '+':
+    case '-':
+      if (ISDIGIT (module_peek_char ()))
+	{
+	  parse_integer (c);
+	  return ATOM_INTEGER;
+	}
+      else
+	bad_module ("Bad name");
 
     case 'a':
     case 'b':
@@ -1503,6 +1533,16 @@ peek_atom (void)
     case '9':
       module_unget_char ();
       return ATOM_INTEGER;
+
+    case '+':
+    case '-':
+      if (ISDIGIT (module_peek_char ()))
+	{
+	  module_unget_char ();
+	  return ATOM_INTEGER;
+	}
+      else
+	bad_module ("Bad name");
 
     case 'a':
     case 'b':
@@ -2048,10 +2088,12 @@ enum ab_attribute
   AB_PDT_TEMPLATE, AB_PDT_ARRAY, AB_PDT_STRING,
   AB_OACC_ROUTINE_LOP_GANG, AB_OACC_ROUTINE_LOP_WORKER,
   AB_OACC_ROUTINE_LOP_VECTOR, AB_OACC_ROUTINE_LOP_SEQ,
+  AB_OACC_ROUTINE_NOHOST,
   AB_OMP_REQ_REVERSE_OFFLOAD, AB_OMP_REQ_UNIFIED_ADDRESS,
   AB_OMP_REQ_UNIFIED_SHARED_MEMORY, AB_OMP_REQ_DYNAMIC_ALLOCATORS,
   AB_OMP_REQ_MEM_ORDER_SEQ_CST, AB_OMP_REQ_MEM_ORDER_ACQ_REL,
-  AB_OMP_REQ_MEM_ORDER_RELAXED
+  AB_OMP_REQ_MEM_ORDER_RELAXED, AB_OMP_DEVICE_TYPE_NOHOST,
+  AB_OMP_DEVICE_TYPE_HOST, AB_OMP_DEVICE_TYPE_ANY
 };
 
 static const mstring attr_bits[] =
@@ -2125,6 +2167,7 @@ static const mstring attr_bits[] =
     minit ("OACC_ROUTINE_LOP_WORKER", AB_OACC_ROUTINE_LOP_WORKER),
     minit ("OACC_ROUTINE_LOP_VECTOR", AB_OACC_ROUTINE_LOP_VECTOR),
     minit ("OACC_ROUTINE_LOP_SEQ", AB_OACC_ROUTINE_LOP_SEQ),
+    minit ("OACC_ROUTINE_NOHOST", AB_OACC_ROUTINE_NOHOST),
     minit ("OMP_REQ_REVERSE_OFFLOAD", AB_OMP_REQ_REVERSE_OFFLOAD),
     minit ("OMP_REQ_UNIFIED_ADDRESS", AB_OMP_REQ_UNIFIED_ADDRESS),
     minit ("OMP_REQ_UNIFIED_SHARED_MEMORY", AB_OMP_REQ_UNIFIED_SHARED_MEMORY),
@@ -2132,6 +2175,9 @@ static const mstring attr_bits[] =
     minit ("OMP_REQ_MEM_ORDER_SEQ_CST", AB_OMP_REQ_MEM_ORDER_SEQ_CST),
     minit ("OMP_REQ_MEM_ORDER_ACQ_REL", AB_OMP_REQ_MEM_ORDER_ACQ_REL),
     minit ("OMP_REQ_MEM_ORDER_RELAXED", AB_OMP_REQ_MEM_ORDER_RELAXED),
+    minit ("OMP_DEVICE_TYPE_HOST", AB_OMP_DEVICE_TYPE_HOST),
+    minit ("OMP_DEVICE_TYPE_NOHOST", AB_OMP_DEVICE_TYPE_NOHOST),
+    minit ("OMP_DEVICE_TYPE_ANYHOST", AB_OMP_DEVICE_TYPE_ANY),
     minit (NULL, -1)
 };
 
@@ -2376,6 +2422,8 @@ mio_symbol_attribute (symbol_attribute *attr)
 	default:
 	  gcc_unreachable ();
 	}
+      if (attr->oacc_routine_nohost)
+	MIO_NAME (ab_attribute) (AB_OACC_ROUTINE_NOHOST, attr_bits);
 
       if (attr->flavor == FL_MODULE && gfc_current_ns->omp_requires)
 	{
@@ -2396,6 +2444,22 @@ mio_symbol_attribute (symbol_attribute *attr)
 	  if ((gfc_current_ns->omp_requires & OMP_REQ_ATOMIC_MEM_ORDER_MASK)
 	      == OMP_REQ_ATOMIC_MEM_ORDER_RELAXED)
 	    MIO_NAME (ab_attribute) (AB_OMP_REQ_MEM_ORDER_RELAXED, attr_bits);
+	}
+      switch (attr->omp_device_type)
+	{
+	case OMP_DEVICE_TYPE_UNSET:
+	  break;
+	case OMP_DEVICE_TYPE_HOST:
+	  MIO_NAME (ab_attribute) (AB_OMP_DEVICE_TYPE_HOST, attr_bits);
+	  break;
+	case OMP_DEVICE_TYPE_NOHOST:
+	  MIO_NAME (ab_attribute) (AB_OMP_DEVICE_TYPE_NOHOST, attr_bits);
+	  break;
+	case OMP_DEVICE_TYPE_ANY:
+	  MIO_NAME (ab_attribute) (AB_OMP_DEVICE_TYPE_ANY, attr_bits);
+	  break;
+	default:
+	  gcc_unreachable ();
 	}
       mio_rparen ();
     }
@@ -2622,6 +2686,9 @@ mio_symbol_attribute (symbol_attribute *attr)
 	      verify_OACC_ROUTINE_LOP_NONE (attr->oacc_routine_lop);
 	      attr->oacc_routine_lop = OACC_ROUTINE_LOP_SEQ;
 	      break;
+	    case AB_OACC_ROUTINE_NOHOST:
+	      attr->oacc_routine_nohost = 1;
+	      break;
 	    case AB_OMP_REQ_REVERSE_OFFLOAD:
 	      gfc_omp_requires_add_clause (OMP_REQ_REVERSE_OFFLOAD,
 					   "reverse_offload",
@@ -2660,6 +2727,15 @@ mio_symbol_attribute (symbol_attribute *attr)
 	      gfc_omp_requires_add_clause (OMP_REQ_ATOMIC_MEM_ORDER_RELAXED,
 					   "relaxed", &gfc_current_locus,
 					   module_name);
+	      break;
+	    case AB_OMP_DEVICE_TYPE_HOST:
+	      attr->omp_device_type = OMP_DEVICE_TYPE_HOST;
+	      break;
+	    case AB_OMP_DEVICE_TYPE_NOHOST:
+	      attr->omp_device_type = OMP_DEVICE_TYPE_NOHOST;
+	      break;
+	    case AB_OMP_DEVICE_TYPE_ANY:
+	      attr->omp_device_type = OMP_DEVICE_TYPE_ANY;
 	      break;
 	    }
 	}
@@ -4480,6 +4556,9 @@ mio_symbol (gfc_symbol *sym)
 
   mio_symbol_attribute (&sym->attr);
 
+  if (sym->attr.pdt_type)
+    sym->name = gfc_dt_upper_string (sym->name);
+
   /* Note that components are always saved, even if they are supposed
      to be private.  Component access is checked during searching.  */
   mio_component_list (&sym->components, sym->attr.vtype);
@@ -4849,6 +4928,7 @@ load_commons (void)
 	p->saved = 1;
       if (flags & 2)
 	p->threadprivate = 1;
+      p->omp_device_type = (gfc_omp_device_type) ((flags >> 2) & 3);
       p->use_assoc = 1;
 
       /* Get whether this was a bind(c) common or not.  */
@@ -4956,7 +5036,7 @@ load_omp_udrs (void)
       mio_pool_string (&name);
       gfc_clear_ts (&ts);
       mio_typespec (&ts);
-      if (gfc_str_startswith (name, "operator "))
+      if (startswith (name, "operator "))
 	{
 	  const char *p = name + sizeof ("operator ") - 1;
 	  if (strcmp (p, "+") == 0)
@@ -5404,8 +5484,8 @@ read_module (void)
 
 	  /* Exception: Always import vtabs & vtypes.  */
 	  if (p == NULL && name[0] == '_'
-	      && (gfc_str_startswith (name, "__vtab_")
-		  || gfc_str_startswith (name, "__vtype_")))
+	      && (startswith (name, "__vtab_")
+		  || startswith (name, "__vtype_")))
 	    p = name;
 
 	  /* Skip symtree nodes not in an ONLY clause, unless there
@@ -5490,8 +5570,8 @@ read_module (void)
 		sym->attr.use_rename = 1;
 
 	      if (name[0] != '_'
-		  || (!gfc_str_startswith (name, "__vtab_")
-		      && !gfc_str_startswith (name, "__vtype_")))
+		  || (!startswith (name, "__vtab_")
+		      && !startswith (name, "__vtype_")))
 		sym->attr.use_only = only_flag;
 
 	      /* Store the symtree pointing to this symbol.  */
@@ -5512,6 +5592,9 @@ read_module (void)
 
   for (i = GFC_INTRINSIC_BEGIN; i != GFC_INTRINSIC_END; i++)
     {
+      gfc_use_rename *u = NULL, *v = NULL;
+      int j = i;
+
       if (i == INTRINSIC_USER)
 	continue;
 
@@ -5519,18 +5602,73 @@ read_module (void)
 	{
 	  u = find_use_operator ((gfc_intrinsic_op) i);
 
-	  if (u == NULL)
+	  /* F2018:10.1.5.5.1 requires same interpretation of old and new-style
+	     relational operators.  Special handling for USE, ONLY.  */
+	  switch (i)
+	    {
+	    case INTRINSIC_EQ:
+	      j = INTRINSIC_EQ_OS;
+	      break;
+	    case INTRINSIC_EQ_OS:
+	      j = INTRINSIC_EQ;
+	      break;
+	    case INTRINSIC_NE:
+	      j = INTRINSIC_NE_OS;
+	      break;
+	    case INTRINSIC_NE_OS:
+	      j = INTRINSIC_NE;
+	      break;
+	    case INTRINSIC_GT:
+	      j = INTRINSIC_GT_OS;
+	      break;
+	    case INTRINSIC_GT_OS:
+	      j = INTRINSIC_GT;
+	      break;
+	    case INTRINSIC_GE:
+	      j = INTRINSIC_GE_OS;
+	      break;
+	    case INTRINSIC_GE_OS:
+	      j = INTRINSIC_GE;
+	      break;
+	    case INTRINSIC_LT:
+	      j = INTRINSIC_LT_OS;
+	      break;
+	    case INTRINSIC_LT_OS:
+	      j = INTRINSIC_LT;
+	      break;
+	    case INTRINSIC_LE:
+	      j = INTRINSIC_LE_OS;
+	      break;
+	    case INTRINSIC_LE_OS:
+	      j = INTRINSIC_LE;
+	      break;
+	    default:
+	      break;
+	    }
+
+	  if (j != i)
+	    v = find_use_operator ((gfc_intrinsic_op) j);
+
+	  if (u == NULL && v == NULL)
 	    {
 	      skip_list ();
 	      continue;
 	    }
 
-	  u->found = 1;
+	  if (u)
+	    u->found = 1;
+	  if (v)
+	    v->found = 1;
 	}
 
       mio_interface (&gfc_current_ns->op[i]);
-      if (u && !gfc_current_ns->op[i])
-	u->found = 0;
+      if (!gfc_current_ns->op[i] && !gfc_current_ns->op[j])
+	{
+	  if (u)
+	    u->found = 0;
+	  if (v)
+	    v->found = 0;
+	}
     }
 
   mio_rparen ();
@@ -5713,6 +5851,7 @@ write_common_0 (gfc_symtree *st, bool this_module)
       flags = p->saved ? 1 : 0;
       if (p->threadprivate)
 	flags |= 2;
+      flags |= p->omp_device_type << 2;
       mio_integer (&flags);
 
       /* Write out whether the common block is bind(c) or not.  */
@@ -6142,6 +6281,17 @@ write_symtree (gfc_symtree *st)
     return;
 
   if (check_unique_name (st->name))
+    return;
+
+  /* From F2003 onwards, intrinsic procedures are no longer subject to
+     the restriction, "that an elemental intrinsic function here be of
+     type integer or character and each argument must be an initialization
+     expr of type integer or character" is lifted so that intrinsic
+     procedures can be over-ridden. This requires that the intrinsic
+     symbol not appear in the module file, thereby preventing ambiguity
+     when USEd.  */
+  if (strcmp (sym->module, "(intrinsic)") == 0
+      && (gfc_option.allow_std & GFC_STD_F2003))
     return;
 
   p = find_pointer (sym);

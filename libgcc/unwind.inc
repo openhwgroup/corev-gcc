@@ -1,5 +1,5 @@
 /* Exception handling and frame unwind runtime interface routines. -*- C -*-
-   Copyright (C) 2001-2020 Free Software Foundation, Inc.
+   Copyright (C) 2001-2021 Free Software Foundation, Inc.
 
    This file is part of GCC.
 
@@ -300,14 +300,24 @@ _Unwind_Backtrace(_Unwind_Trace_Fn trace, void * trace_argument)
 
       /* Set up fs to describe the FDE for the caller of context.  */
       code = uw_frame_state_for (&context, &fs);
-      if (code != _URC_NO_REASON && code != _URC_END_OF_STACK)
+      if (code != _URC_NO_REASON && code != _URC_END_OF_STACK
+          && code != _URC_NORMAL_STOP)
 	return _URC_FATAL_PHASE1_ERROR;
 
       /* Call trace function.  */
       if ((*trace) (&context, trace_argument) != _URC_NO_REASON)
 	return _URC_FATAL_PHASE1_ERROR;
 
-      /* We're done at end of stack.  */	
+#ifdef MD_BACKCHAIN_FALLBACK
+      /* Do a backchain if there is no DWARF data.  */
+      if (code == _URC_NORMAL_STOP)
+	{
+	  MD_BACKCHAIN_FALLBACK(&context, trace_argument);
+	  break;
+	}
+#endif
+
+      /* We're done at end of stack.  */
       if (code == _URC_END_OF_STACK)
 	break;
 

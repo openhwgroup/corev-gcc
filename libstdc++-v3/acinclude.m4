@@ -49,7 +49,7 @@ AC_DEFUN([GLIBCXX_CONFIGURE], [
   # Keep these sync'd with the list in Makefile.am.  The first provides an
   # expandable list at autoconf time; the second provides an expandable list
   # (i.e., shell variable) at configure time.
-  m4_define([glibcxx_SUBDIRS],[include libsupc++ src src/c++98 src/c++11 src/c++17 src/filesystem doc po testsuite python])
+  m4_define([glibcxx_SUBDIRS],[include libsupc++ src src/c++98 src/c++11 src/c++17 src/c++20 src/filesystem doc po testsuite python])
   SUBDIRS='glibcxx_SUBDIRS'
 
   # These need to be absolute paths, yet at the same time need to
@@ -273,13 +273,22 @@ AC_DEFUN([GLIBCXX_CHECK_LINKER_FEATURES], [
   # Note this is only for shared objects.
   ac_ld_relro=no
   if test x"$with_gnu_ld" = x"yes"; then
-    AC_MSG_CHECKING([for ld that supports -Wl,-z,relro])
-    cxx_z_relo=`$LD -v --help 2>/dev/null | grep "z relro"`
-    if test -n "$cxx_z_relo"; then
-      OPT_LDFLAGS="-Wl,-z,relro"
-      ac_ld_relro=yes
-    fi
-    AC_MSG_RESULT($ac_ld_relro)
+    # cygwin and mingw uses PE, which has no ELF relro support,
+    # multi target ld may confuse configure machinery
+    case "$host" in
+    *-*-cygwin*)
+     ;;
+    *-*-mingw*)
+     ;;
+    *)
+      AC_MSG_CHECKING([for ld that supports -Wl,-z,relro])
+      cxx_z_relo=`$LD -v --help 2>/dev/null | grep "z relro"`
+      if test -n "$cxx_z_relo"; then
+        OPT_LDFLAGS="-Wl,-z,relro"
+        ac_ld_relro=yes
+      fi
+      AC_MSG_RESULT($ac_ld_relro)
+    esac
   fi
 
   # Set linker optimization flags.
@@ -461,63 +470,6 @@ AC_DEFUN([GLIBCXX_CHECK_WRITEV], [
   AC_MSG_RESULT($glibcxx_cv_WRITEV)
 
   CXXFLAGS="$ac_save_CXXFLAGS"
-  AC_LANG_RESTORE
-])
-
-
-dnl
-dnl Check whether int64_t is available in <stdint.h>, and define HAVE_INT64_T.
-dnl Also check whether int64_t is actually a typedef to long or long long.
-dnl
-AC_DEFUN([GLIBCXX_CHECK_INT64_T], [
-
-  AC_LANG_SAVE
-  AC_LANG_CPLUSPLUS
-
-  AC_MSG_CHECKING([for int64_t])
-  AC_CACHE_VAL(glibcxx_cv_INT64_T, [
-    AC_TRY_COMPILE(
-      [#include <stdint.h>],
-      [int64_t var;],
-      [glibcxx_cv_INT64_T=yes],
-      [glibcxx_cv_INT64_T=no])
-  ])
-
-  if test $glibcxx_cv_INT64_T = yes; then
-    AC_DEFINE(HAVE_INT64_T, 1, [Define if int64_t is available in <stdint.h>.])
-    AC_MSG_RESULT($glibcxx_cv_INT64_T)
-
-    AC_MSG_CHECKING([for int64_t as long])
-    AC_CACHE_VAL(glibcxx_cv_int64_t_long, [
-      AC_TRY_COMPILE(
-	[#include <stdint.h>
-	template<typename, typename> struct same { enum { value = -1 }; };
-	template<typename Tp> struct same<Tp, Tp> { enum { value = 1 }; };
-	int array[same<int64_t, long>::value];], [],
-	[glibcxx_cv_int64_t_long=yes], [glibcxx_cv_int64_t_long=no])
-    ])
-
-    if test $glibcxx_cv_int64_t_long = yes; then
-      AC_DEFINE(HAVE_INT64_T_LONG, 1, [Define if int64_t is a long.])
-      AC_MSG_RESULT($glibcxx_cv_int64_t_long)
-    fi
-
-    AC_MSG_CHECKING([for int64_t as long long])
-    AC_CACHE_VAL(glibcxx_cv_int64_t_long_long, [
-      AC_TRY_COMPILE(
-	[#include <stdint.h>
-	template<typename, typename> struct same { enum { value = -1 }; };
-	template<typename Tp> struct same<Tp, Tp> { enum { value = 1 }; };
-	int array[same<int64_t, long long>::value];], [],
-	[glibcxx_cv_int64_t_long_long=yes], [glibcxx_cv_int64_t_long_long=no])
-    ])
-
-    if test $glibcxx_cv_int64_t_long_long = yes; then
-      AC_DEFINE(HAVE_INT64_T_LONG_LONG, 1, [Define if int64_t is a long long.])
-      AC_MSG_RESULT($glibcxx_cv_int64_t_long_long)
-    fi
-  fi
-
   AC_LANG_RESTORE
 ])
 
@@ -1372,8 +1324,7 @@ dnl
 dnl --enable-libstdcxx-time
 dnl --enable-libstdcxx-time=yes
 dnl        checks for the availability of monotonic and realtime clocks,
-dnl        nanosleep and sched_yield in libc and libposix4 and, if needed,
-dnl        links in the latter.
+dnl        nanosleep and sched_yield in libc.
 dnl --enable-libstdcxx-time=rt
 dnl        also searches (and, if needed, links) librt.  Note that this is
 dnl        not always desirable because, in glibc 2.16 and earlier, for
@@ -1446,7 +1397,6 @@ AC_DEFUN([GLIBCXX_ENABLE_LIBSTDCXX_TIME], [
         ac_has_nanosleep=yes
         ;;
       solaris*)
-        GLIBCXX_LIBS="$GLIBCXX_LIBS -lrt"
         ac_has_clock_monotonic=yes
         ac_has_clock_realtime=yes
         ac_has_nanosleep=yes
@@ -1460,11 +1410,11 @@ AC_DEFUN([GLIBCXX_ENABLE_LIBSTDCXX_TIME], [
   elif test x"$enable_libstdcxx_time" != x"no"; then
 
     if test x"$enable_libstdcxx_time" = x"rt"; then
-      AC_SEARCH_LIBS(clock_gettime, [rt posix4])
-      AC_SEARCH_LIBS(nanosleep, [rt posix4])
+      AC_SEARCH_LIBS(clock_gettime, [rt])
+      AC_SEARCH_LIBS(nanosleep, [rt])
     else
-      AC_SEARCH_LIBS(clock_gettime, [posix4])
-      AC_SEARCH_LIBS(nanosleep, [posix4])
+      AC_CHECK_FUNC(clock_gettime)
+      AC_CHECK_FUNC(nanosleep)
     fi
 
     case "$ac_cv_search_clock_gettime" in
@@ -1476,13 +1426,9 @@ AC_DEFUN([GLIBCXX_ENABLE_LIBSTDCXX_TIME], [
       ;;
     esac
 
-    AC_SEARCH_LIBS(sched_yield, [rt posix4])
+    AC_SEARCH_LIBS(sched_yield, [rt])
 
     case "$ac_cv_search_sched_yield" in
-      -lposix4*)
-      GLIBCXX_LIBS="$GLIBCXX_LIBS $ac_cv_search_sched_yield"
-      ac_has_sched_yield=yes
-      ;;
       -lrt*)
       if test x"$enable_libstdcxx_time" = x"rt"; then
 	GLIBCXX_LIBS="$GLIBCXX_LIBS $ac_cv_search_sched_yield"
@@ -1552,13 +1498,34 @@ AC_DEFUN([GLIBCXX_ENABLE_LIBSTDCXX_TIME], [
 	   #endif
 	   syscall(SYS_clock_gettime, CLOCK_MONOTONIC, &tp);
 	   syscall(SYS_clock_gettime, CLOCK_REALTIME, &tp);
-	  ], [ac_has_clock_monotonic_syscall=yes], [ac_has_clock_monotonic_syscall=no])
-	AC_MSG_RESULT($ac_has_clock_monotonic_syscall)
-	if test x"$ac_has_clock_monotonic_syscall" = x"yes"; then
+	  ], [ac_has_clock_gettime_syscall=yes], [ac_has_clock_gettime_syscall=no])
+	AC_MSG_RESULT($ac_has_clock_gettime_syscall)
+	if test x"$ac_has_clock_gettime_syscall" = x"yes"; then
 	  AC_DEFINE(_GLIBCXX_USE_CLOCK_GETTIME_SYSCALL, 1,
-	  [ Defined if clock_gettime syscall has monotonic and realtime clock support. ])
+	  [Defined if clock_gettime syscall has monotonic and realtime clock support. ])
 	  ac_has_clock_monotonic=yes
 	  ac_has_clock_realtime=yes
+	  AC_MSG_CHECKING([for struct timespec that matches syscall])
+	  AC_TRY_COMPILE(
+	    [#include <time.h>
+	     #include <sys/syscall.h>
+	    ],
+	    [#ifdef SYS_clock_gettime64
+	     #if SYS_clock_gettime64 != SYS_clock_gettime
+	     // We need to use SYS_clock_gettime and libc appears to
+	     // also know about the SYS_clock_gettime64 syscall.
+	     // Check that userspace doesn't use time64 version of timespec.
+	     static_assert(sizeof(timespec::tv_sec) == sizeof(long),
+	       "struct timespec must be compatible with SYS_clock_gettime");
+	     #endif
+	     #endif
+	    ],
+	    [ac_timespec_matches_syscall=yes],
+	    [ac_timespec_matches_syscall=no])
+	  AC_MSG_RESULT($ac_timespec_matches_syscall)
+	  if test x"$ac_timespec_matches_syscall" = no; then
+	    AC_MSG_ERROR([struct timespec is not compatible with SYS_clock_gettime, please report a bug to http://gcc.gnu.org/bugzilla])
+	  fi
 	fi;;
     esac
   fi
@@ -1602,14 +1569,20 @@ AC_DEFUN([GLIBCXX_ENABLE_LIBSTDCXX_TIME], [
   fi
 
   if test x"$ac_has_nanosleep$ac_has_sleep" = x"nono"; then
+      ac_no_sleep=yes
       AC_MSG_CHECKING([for Sleep])
       AC_TRY_COMPILE([#include <windows.h>],
                      [Sleep(1)],
                      [ac_has_win32_sleep=yes],[ac_has_win32_sleep=no])
       if test x"$ac_has_win32_sleep" = x"yes"; then
         AC_DEFINE(HAVE_WIN32_SLEEP,1, [Defined if Sleep exists.])
+	ac_no_sleep=no
       fi
       AC_MSG_RESULT($ac_has_win32_sleep)
+  fi
+
+  if test x"$ac_no_sleep" = x"yes"; then
+    AC_DEFINE(NO_SLEEP,1, [Defined if no way to sleep is available.])
   fi
 
   AC_SUBST(GLIBCXX_LIBS)
@@ -2343,35 +2316,6 @@ AC_DEFUN([GLIBCXX_CHECK_MATH11_PROTO], [
 ])
 
 dnl
-dnl Check whether macros, etc are present for <system_error>
-dnl
-AC_DEFUN([GLIBCXX_CHECK_SYSTEM_ERROR], [
-
-m4_pushdef([n_syserr], [1])dnl
-m4_foreach([syserr], [EOWNERDEAD, ENOTRECOVERABLE, ENOLINK, EPROTO, ENODATA,
-		      ENOSR, ENOSTR, ETIME, EBADMSG, ECANCELED,
-		      EOVERFLOW, ENOTSUP, EIDRM, ETXTBSY,
-		      ECHILD, ENOSPC, EPERM,
-		      ETIMEDOUT, EWOULDBLOCK],
-[m4_pushdef([SYSERR], m4_toupper(syserr))dnl
-AC_MSG_CHECKING([for syserr])
-AC_CACHE_VAL([glibcxx_cv_system_error[]n_syserr], [
-AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[#include <errno.h>]],
-				   [int i = syserr;])],
-		  [glibcxx_cv_system_error[]n_syserr=yes],
-		  [glibcxx_cv_system_error[]n_syserr=no])
-])
-AC_MSG_RESULT([$glibcxx_cv_system_error[]n_syserr])
-if test x"$glibcxx_cv_system_error[]n_syserr" = x"yes"; then
-  AC_DEFINE([HAVE_]SYSERR, 1, [Define if ]syserr[ exists.])
-fi
-m4_define([n_syserr], m4_incr(n_syserr))dnl
-m4_popdef([SYSERR])dnl
-])
-m4_popdef([n_syserr])dnl
-])
-
-dnl
 dnl Check for what type of C headers to use.
 dnl
 dnl --enable-cheaders= [does stuff].
@@ -2446,6 +2390,9 @@ AC_DEFUN([GLIBCXX_ENABLE_CLOCALE], [
 	;;
       darwin*)
 	enable_clocale_flag=darwin
+	;;
+      vxworks*)
+	enable_clocale_flag=vxworks
 	;;
       dragonfly* | freebsd*)
 	enable_clocale_flag=dragonfly
@@ -2541,7 +2488,22 @@ AC_DEFUN([GLIBCXX_ENABLE_CLOCALE], [
       CTIME_CC=config/locale/generic/time_members.cc
       CLOCALE_INTERNAL_H=config/locale/generic/c++locale_internal.h
       ;;
+    vxworks)
+      AC_MSG_RESULT(vxworks)
 
+      CLOCALE_H=config/locale/generic/c_locale.h
+      CLOCALE_CC=config/locale/generic/c_locale.cc
+      CCODECVT_CC=config/locale/generic/codecvt_members.cc
+      CCOLLATE_CC=config/locale/generic/collate_members.cc
+      CCTYPE_CC=config/locale/vxworks/ctype_members.cc
+      CMESSAGES_H=config/locale/generic/messages_members.h
+      CMESSAGES_CC=config/locale/generic/messages_members.cc
+      CMONEY_CC=config/locale/generic/monetary_members.cc
+      CNUMERIC_CC=config/locale/generic/numeric_members.cc
+      CTIME_H=config/locale/generic/time_members.h
+      CTIME_CC=config/locale/generic/time_members.cc
+      CLOCALE_INTERNAL_H=config/locale/generic/c++locale_internal.h
+      ;;
     dragonfly)
       AC_MSG_RESULT(dragonfly or freebsd)
 
@@ -2838,24 +2800,30 @@ AC_DEFUN([GLIBCXX_ENABLE_PARALLEL], [
 
 
 dnl
-dnl Check for which I/O library to use:  stdio, or something specific.
+dnl Check for which I/O library to use:  stdio and POSIX, or pure stdio.
 dnl
-dnl Default is stdio.
+dnl Default is stdio_posix.
 dnl
 AC_DEFUN([GLIBCXX_ENABLE_CSTDIO], [
   AC_MSG_CHECKING([for underlying I/O to use])
   GLIBCXX_ENABLE(cstdio,stdio,[[[=PACKAGE]]],
-    [use target-specific I/O package], [permit stdio])
+    [use target-specific I/O package], [permit stdio|stdio_posix|stdio_pure])
 
-  # Now that libio has been removed, you can have any color you want as long
-  # as it's black.  This is one big no-op until other packages are added, but
-  # showing the framework never hurts.
+  # The only available I/O model is based on stdio, via basic_file_stdio.
+  # The default "stdio" is actually "stdio + POSIX" because it uses fdopen(3)
+  # to get a file descriptor and then uses read(3) and write(3) with it.
+  # The "stdio_pure" model doesn't use fdopen and only uses FILE* for I/O.
   case ${enable_cstdio} in
-    stdio)
+    stdio*)
       CSTDIO_H=config/io/c_io_stdio.h
       BASIC_FILE_H=config/io/basic_file_stdio.h
       BASIC_FILE_CC=config/io/basic_file_stdio.cc
       AC_MSG_RESULT(stdio)
+
+      if test "x$enable_cstdio" = "xstdio_pure" ; then
+	AC_DEFINE(_GLIBCXX_USE_STDIO_PURE, 1,
+		  [Define to restrict std::__basic_file<> to stdio APIs.])
+      fi
       ;;
   esac
 
@@ -3099,15 +3067,14 @@ EOF
 ])
 
 dnl
-dnl Check for GNU 128-bit integer and floating point types.
+dnl Check for GNU 128-bit floating point type.
 dnl
-dnl Note: also checks that the types aren't standard types.
+dnl Note: also checks that the type isn't a standard types.
 dnl
 dnl Defines:
-dnl  _GLIBCXX_USE_INT128
 dnl  ENABLE_FLOAT128
 dnl
-AC_DEFUN([GLIBCXX_ENABLE_INT128_FLOAT128], [
+AC_DEFUN([GLIBCXX_ENABLE_FLOAT128], [
 
   AC_LANG_SAVE
   AC_LANG_CPLUSPLUS
@@ -3115,34 +3082,7 @@ AC_DEFUN([GLIBCXX_ENABLE_INT128_FLOAT128], [
   # Fake what AC_TRY_COMPILE does, without linking as this is
   # unnecessary for this test.
 
-    cat > conftest.$ac_ext << EOF
-[#]line __oline__ "configure"
-template<typename T1, typename T2>
-  struct same
-  { typedef T2 type; };
-
-template<typename T>
-  struct same<T, T>;
-
-int main()
-{
-  typename same<long, __int128>::type                i1;
-  typename same<long long, __int128>::type           i2;
-}
-EOF
-
-    AC_MSG_CHECKING([for __int128])
-    if AC_TRY_EVAL(ac_compile); then
-      AC_DEFINE(_GLIBCXX_USE_INT128, 1,
-      [Define if __int128 is supported on this host.])
-      enable_int128=yes
-    else
-      enable_int128=no
-    fi
-    AC_MSG_RESULT($enable_int128)
-    rm -f conftest*
-
-    cat > conftest.$ac_ext << EOF
+  cat > conftest.$ac_ext << EOF
 [#]line __oline__ "configure"
 template<typename T1, typename T2>
   struct same
@@ -4058,6 +3998,43 @@ AC_DEFUN([GLIBCXX_CHECK_GTHREADS], [
              [#include "gthr.h"])
     fi
   fi
+
+  AC_CHECK_HEADER(semaphore.h, [
+    AC_MSG_CHECKING([for POSIX Semaphores and sem_timedwait])
+    AC_TRY_COMPILE([
+	#include <unistd.h>
+	#include <semaphore.h>
+	#include <limits.h>
+      ],
+      [
+	#if !defined _POSIX_TIMEOUTS || _POSIX_TIMEOUTS <= 0
+	# error "POSIX Timeouts option not supported"
+	#elif !defined _POSIX_SEMAPHORES || _POSIX_SEMAPHORES <= 0
+	# error "POSIX Semaphores option not supported"
+	#else
+	#if defined SEM_VALUE_MAX
+	constexpr int sem_value_max = SEM_VALUE_MAX;
+	#elif defined _POSIX_SEM_VALUE_MAX
+	constexpr int sem_value_max = _POSIX_SEM_VALUE_MAX;
+	#else
+	# error "SEM_VALUE_MAX not available"
+	#endif
+	sem_t sem;
+	sem_init(&sem, 0, sem_value_max);
+	struct timespec ts = { 0 };
+	sem_timedwait(&sem, &ts);
+	#endif
+      ],
+      [ac_have_posix_semaphore=yes],
+      [ac_have_posix_semaphore=no])],
+      [ac_have_posix_semaphore=no])
+
+  if test $ac_have_posix_semaphore = yes ; then
+    AC_DEFINE(HAVE_POSIX_SEMAPHORE,
+	      1,
+	      [Define to 1 if POSIX Semaphores with sem_timedwait are available in <semaphore.h>.])
+  fi
+  AC_MSG_RESULT([$ac_have_posix_semaphore])
 
   CXXFLAGS="$ac_save_CXXFLAGS"
   AC_LANG_RESTORE

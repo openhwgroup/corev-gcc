@@ -6,7 +6,7 @@
  *                                                                          *
  *                          C Implementation File                           *
  *                                                                          *
- *            Copyright (C) 2000-2020, Free Software Foundation, Inc.       *
+ *            Copyright (C) 2000-2021, Free Software Foundation, Inc.       *
  *                                                                          *
  * GNAT is free software;  you can  redistribute it  and/or modify it under *
  * terms of the  GNU General Public License as published  by the Free Soft- *
@@ -308,6 +308,13 @@ __gnat_backtrace (void **array,
 #if ((_WRS_VXWORKS_MAJOR >= 7) && (_VX_CPU != ARMARCH8A))
 #define USING_ARM_UNWINDING 1
 #endif
+
+/*---------------------- ARM Linux ------------------------------------ -*/
+#elif (defined (__ARMEL__) && defined (__linux))
+
+#define USE_GCC_UNWINDER
+#define PC_ADJUST -2
+#define USING_ARM_UNWINDING 1
 
 /*---------------------- PPC AIX/PPC Lynx 178/Older Darwin --------------*/
 #elif ((defined (_POWER) && defined (_AIX)) || \

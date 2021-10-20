@@ -98,6 +98,13 @@
 #undef create_code
 #undef verify_code
 
+/* test-cast.c */
+#define create_code create_code_cast
+#define verify_code verify_code_cast
+#include "test-cast.c"
+#undef create_code
+#undef verify_code
+
 /* test-compound-assignment.c */
 #define create_code create_code_compound_assignment
 #define verify_code verify_code_compound_assignment
@@ -171,6 +178,13 @@
 #define create_code create_code_functions
 #define verify_code verify_code_functions
 #include "test-functions.c"
+#undef create_code
+#undef verify_code
+
+/* test-global-set-initializer.c */
+#define create_code create_code_global_set_initializer
+#define verify_code verify_code_global_set_initializer
+#include "test-global-set-initializer.c"
 #undef create_code
 #undef verify_code
 
@@ -354,6 +368,9 @@ const struct testcase testcases[] = {
   {"calling_internal_function",
    create_code_calling_internal_function,
    verify_code_calling_internal_function},
+  {"cast",
+   create_code_cast,
+   verify_code_cast},
   {"compound_assignment",
    create_code_compound_assignment,
    verify_code_compound_assignment},

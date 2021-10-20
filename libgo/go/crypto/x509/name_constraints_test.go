@@ -14,7 +14,6 @@ import (
 	"encoding/hex"
 	"encoding/pem"
 	"fmt"
-	"io/ioutil"
 	"math/big"
 	"net"
 	"net/url"
@@ -615,7 +614,8 @@ var nameConstraintsTests = []nameConstraintsTest{
 		},
 	},
 
-	// #30: without SANs, a certificate with a CN is rejected in a constrained chain.
+	// #30: without SANs, a certificate with a CN is still accepted in a
+	// constrained chain, since we ignore the CN in VerifyHostname.
 	{
 		roots: []constraintsSpec{
 			{
@@ -631,7 +631,6 @@ var nameConstraintsTests = []nameConstraintsTest{
 			sans: []string{},
 			cn:   "foo.com",
 		},
-		expectedError: "leaf doesn't have a SAN extension",
 	},
 
 	// #31: IPv6 addresses work in constraints: roots can permit them as
@@ -1596,26 +1595,6 @@ var nameConstraintsTests = []nameConstraintsTest{
 			cn:   "foo.bar",
 		},
 	},
-
-	// #85: without SANs, a certificate with a valid CN is accepted in a
-	// constrained chain if x509ignoreCN is set.
-	{
-		roots: []constraintsSpec{
-			{
-				ok: []string{"dns:foo.com", "dns:.foo.com"},
-			},
-		},
-		intermediates: [][]constraintsSpec{
-			{
-				{},
-			},
-		},
-		leaf: leafSpec{
-			sans: []string{},
-			cn:   "foo.com",
-		},
-		ignoreCN: true,
-	},
 }
 
 func makeConstraintsCACert(constraints constraintsSpec, name string, key *ecdsa.PrivateKey, parent *Certificate, parentKey *ecdsa.PrivateKey) (*Certificate, error) {
@@ -1866,10 +1845,6 @@ func parseEKUs(ekuStrs []string) (ekus []ExtKeyUsage, unknowns []asn1.ObjectIden
 }
 
 func TestConstraintCases(t *testing.T) {
-	defer func(savedIgnoreCN bool) {
-		ignoreCN = savedIgnoreCN
-	}(ignoreCN)
-
 	privateKeys := sync.Pool{
 		New: func() interface{} {
 			priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -1941,7 +1916,7 @@ func TestConstraintCases(t *testing.T) {
 		// Skip tests with CommonName set because OpenSSL will try to match it
 		// against name constraints, while we ignore it when it's not hostname-looking.
 		if !test.noOpenSSL && testNameConstraintsAgainstOpenSSL && test.leaf.cn == "" {
-			output, err := testChainAgainstOpenSSL(leafCert, intermediatePool, rootPool)
+			output, err := testChainAgainstOpenSSL(t, leafCert, intermediatePool, rootPool)
 			if err == nil && len(test.expectedError) > 0 {
 				t.Errorf("#%d: unexpectedly succeeded against OpenSSL", i)
 				if debugOpenSSLFailure {
@@ -1961,7 +1936,6 @@ func TestConstraintCases(t *testing.T) {
 			}
 		}
 
-		ignoreCN = test.ignoreCN
 		verifyOpts := VerifyOptions{
 			Roots:         rootPool,
 			Intermediates: intermediatePool,
@@ -1993,19 +1967,18 @@ func TestConstraintCases(t *testing.T) {
 				pem.Encode(&buf, &pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw})
 				return buf.String()
 			}
-			t.Errorf("#%d: root:\n%s", i, certAsPEM(rootPool.certs[0]))
+			t.Errorf("#%d: root:\n%s", i, certAsPEM(rootPool.mustCert(t, 0)))
 			t.Errorf("#%d: leaf:\n%s", i, certAsPEM(leafCert))
 		}
 
 		for _, key := range keys {
 			privateKeys.Put(key)
 		}
-		keys = keys[:0]
 	}
 }
 
 func writePEMsToTempFile(certs []*Certificate) *os.File {
-	file, err := ioutil.TempFile("", "name_constraints_test")
+	file, err := os.CreateTemp("", "name_constraints_test")
 	if err != nil {
 		panic("cannot create tempfile")
 	}
@@ -2019,10 +1992,10 @@ func writePEMsToTempFile(certs []*Certificate) *os.File {
 	return file
 }
 
-func testChainAgainstOpenSSL(leaf *Certificate, intermediates, roots *CertPool) (string, error) {
+func testChainAgainstOpenSSL(t *testing.T, leaf *Certificate, intermediates, roots *CertPool) (string, error) {
 	args := []string{"verify", "-no_check_time"}
 
-	rootsFile := writePEMsToTempFile(roots.certs)
+	rootsFile := writePEMsToTempFile(allCerts(t, roots))
 	if debugOpenSSLFailure {
 		println("roots file:", rootsFile.Name())
 	} else {
@@ -2030,8 +2003,8 @@ func testChainAgainstOpenSSL(leaf *Certificate, intermediates, roots *CertPool) 
 	}
 	args = append(args, "-CAfile", rootsFile.Name())
 
-	if len(intermediates.certs) > 0 {
-		intermediatesFile := writePEMsToTempFile(intermediates.certs)
+	if intermediates.len() > 0 {
+		intermediatesFile := writePEMsToTempFile(allCerts(t, intermediates))
 		if debugOpenSSLFailure {
 			println("intermediates file:", intermediatesFile.Name())
 		} else {

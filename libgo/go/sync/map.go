@@ -73,7 +73,8 @@ var expunged = unsafe.Pointer(new(interface{}))
 type entry struct {
 	// p points to the interface{} value stored for the entry.
 	//
-	// If p == nil, the entry has been deleted and m.dirty == nil.
+	// If p == nil, the entry has been deleted, and either m.dirty == nil or
+	// m.dirty[key] is e.
 	//
 	// If p == expunged, the entry has been deleted, m.dirty != nil, and the entry
 	// is missing from m.dirty.
@@ -274,6 +275,7 @@ func (m *Map) LoadAndDelete(key interface{}) (value interface{}, loaded bool) {
 		e, ok = read.m[key]
 		if !ok && read.amended {
 			e, ok = m.dirty[key]
+			delete(m.dirty, key)
 			// Regardless of whether the entry was present, record a miss: this key
 			// will take the slow path until the dirty map is promoted to the read
 			// map.

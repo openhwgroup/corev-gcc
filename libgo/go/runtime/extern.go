@@ -78,10 +78,23 @@ It is a comma-separated list of name=val pairs setting these named variables:
 	If the line ends with "(forced)", this GC was forced by a
 	runtime.GC() call.
 
-	madvdontneed: setting madvdontneed=1 will use MADV_DONTNEED
-	instead of MADV_FREE on Linux when returning memory to the
-	kernel. This is less efficient, but causes RSS numbers to drop
-	more quickly.
+	inittrace: setting inittrace=1 causes the runtime to emit a single line to standard
+	error for each package with init work, summarizing the execution time and memory
+	allocation. No information is printed for inits executed as part of plugin loading
+	and for packages without both user defined and compiler generated init work.
+	The format of this line is subject to change. Currently, it is:
+		init # @#ms, # ms clock, # bytes, # allocs
+	where the fields are as follows:
+		init #      the package name
+		@# ms       time in milliseconds when the init started since program start
+		# clock     wall-clock time for package initialization work
+		# bytes     memory allocated on the heap
+		# allocs    number of heap allocations
+
+	madvdontneed: setting madvdontneed=0 will use MADV_FREE
+	instead of MADV_DONTNEED on Linux when returning memory to the
+	kernel. This is more efficient, but means RSS numbers will
+	drop only when the OS is under memory pressure.
 
 	memprofilerate: setting memprofilerate=X will update the value of runtime.MemProfileRate.
 	When set to 0 memory profiling is disabled.  Refer to the description of
@@ -96,8 +109,6 @@ It is a comma-separated list of name=val pairs setting these named variables:
 	sbrk: setting sbrk=1 replaces the memory allocator and garbage collector
 	with a trivial allocator that obtains memory from the operating system and
 	never reclaims any memory.
-
-	scavenge: scavenge=1 enables debugging mode of heap scavenger.
 
 	scavtrace: setting scavtrace=1 causes the runtime to emit a single line to standard
 	error, roughly once per GC cycle, summarizing the amount of work done by the
@@ -208,14 +219,24 @@ func GOROOT() string {
 	if s != "" {
 		return s
 	}
-	return sys.DefaultGoroot
+	return defaultGOROOT
 }
+
+// buildVersion is the Go tree's version string at build time.
+//
+// If any GOEXPERIMENTs are set to non-default values, it will include
+// "X:<GOEXPERIMENT>".
+//
+// This is set by the linker.
+//
+// This is accessed by "go version <binary>".
+var buildVersion string
 
 // Version returns the Go tree's version string.
 // It is either the commit hash and date at the time of the build or,
 // when possible, a release tag like "go1.3".
 func Version() string {
-	return sys.TheVersion
+	return buildVersion
 }
 
 // GOOS is the running program's operating system target:

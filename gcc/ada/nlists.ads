@@ -6,23 +6,17 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---          Copyright (C) 1992-2020, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2021, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
 -- ware  Foundation;  either version 3,  or (at your option) any later ver- --
 -- sion.  GNAT is distributed in the hope that it will be useful, but WITH- --
 -- OUT ANY WARRANTY;  without even the  implied warranty of MERCHANTABILITY --
--- or FITNESS FOR A PARTICULAR PURPOSE.                                     --
---                                                                          --
--- As a special exception under Section 7 of GPL version 3, you are granted --
--- additional permissions described in the GCC Runtime Library Exception,   --
--- version 3.1, as published by the Free Software Foundation.               --
---                                                                          --
--- You should have received a copy of the GNU General Public License and    --
--- a copy of the GCC Runtime Library Exception along with this program;     --
--- see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see    --
--- <http://www.gnu.org/licenses/>.                                          --
+-- or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License --
+-- for  more details.  You should have  received  a copy of the GNU General --
+-- Public License  distributed with GNAT; see file COPYING3.  If not, go to --
+-- http://www.gnu.org/licenses for a complete copy of the license.          --
 --                                                                          --
 -- GNAT was originally developed  by the GNAT team at  New York University. --
 -- Extensive contributions were provided by Ada Core Technologies Inc.      --
@@ -152,9 +146,9 @@ package Nlists is
    --  No_List. (No_List is not considered to be the same as an empty list).
 
    function List_Length (List : List_Id) return Nat;
-   --  Returns number of items in the given list. It is an error to call
-   --  this function with No_List (No_List is not considered to be the same
-   --  as an empty list).
+   --  Returns number of items in the given list. If called on No_List it
+   --  returns 0, even though No_List is not considered to be the same as an
+   --  empty list.
 
    function Next (Node : Node_Or_Entity_Id) return Node_Or_Entity_Id;
    pragma Inline (Next);
@@ -377,6 +371,7 @@ package Nlists is
    --  "if Present (Statements)" as opposed to "if Statements /= No_List".
 
    procedure Allocate_List_Tables (N : Node_Or_Entity_Id);
+   pragma Inline (Allocate_List_Tables);
    --  Called when nodes table is expanded to include node N. This call
    --  makes sure that list structures internal to Nlists are adjusted
    --  appropriately to reflect this increase in the size of the nodes table.

@@ -1,6 +1,6 @@
 /* Internal to rs6000 type, variable, and function declarations and
    definitons shared between the various rs6000 source files.
-   Copyright (C) 1991-2020 Free Software Foundation, Inc.
+   Copyright (C) 1991-2021 Free Software Foundation, Inc.
    Contributed by Richard Kenner (kenner@vlsi1.ultra.nyu.edu)
 
    This file is part of GCC.
@@ -32,13 +32,14 @@ typedef struct rs6000_stack {
   int cr_save_p;		/* true if the CR reg needs to be saved */
   unsigned int vrsave_mask;	/* mask of vec registers to save */
   int push_p;			/* true if we need to allocate stack space */
-  int calls_p;			/* true if the function makes any calls */
+  int calls_p;			/* true if there are non-sibling calls */
   int world_save_p;		/* true if we're saving *everything*:
 				   r13-r31, cr, f14-f31, vrsave, v20-v31  */
   enum rs6000_abi abi;		/* which ABI to use */
   int gp_save_offset;		/* offset to save GP regs from initial SP */
   int fp_save_offset;		/* offset to save FP regs from initial SP */
   int altivec_save_offset;	/* offset to save AltiVec regs from initial SP */
+  int rop_hash_save_offset;	/* offset to save ROP hash from initial SP */
   int lr_save_offset;		/* offset to save LR from initial SP */
   int cr_save_offset;		/* offset to save CR from initial SP */
   int vrsave_save_offset;	/* offset to save VRSAVE from initial SP */
@@ -53,6 +54,7 @@ typedef struct rs6000_stack {
   int gp_size;			/* size of saved GP registers */
   int fp_size;			/* size of saved FP registers */
   int altivec_size;		/* size of saved AltiVec registers */
+  int rop_hash_size;		/* size of ROP hash slot */
   int cr_size;			/* size to hold CR if not in fixed area */
   int vrsave_size;		/* size to hold VRSAVE */
   int altivec_padding_size;	/* size of altivec alignment padding */

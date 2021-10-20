@@ -232,7 +232,7 @@ again:
 	if h.growing() {
 		growWork_faststr(t, h, bucket)
 	}
-	b := (*bmap)(unsafe.Pointer(uintptr(h.buckets) + bucket*uintptr(t.bucketsize)))
+	b := (*bmap)(add(h.buckets, bucket*uintptr(t.bucketsize)))
 	top := tophash(hash)
 
 	var insertb *bmap
@@ -262,6 +262,9 @@ bucketloop:
 			// already have a mapping for key. Update it.
 			inserti = i
 			insertb = b
+			// Overwrite existing key, so it can be garbage collected.
+			// The size is already guaranteed to be set correctly.
+			k.str = key.str
 			goto done
 		}
 		ovf := b.overflow(t)
@@ -281,7 +284,7 @@ bucketloop:
 	}
 
 	if insertb == nil {
-		// all current buckets are full, allocate a new one.
+		// The current bucket and all the overflow buckets connected to it are full, allocate a new one.
 		insertb = h.newoverflow(t, b)
 		inserti = 0 // not necessary, but avoids needlessly spilling inserti
 	}
@@ -376,6 +379,11 @@ search:
 			}
 		notLast:
 			h.count--
+			// Reset the hash seed to make it more difficult for attackers to
+			// repeatedly trigger hash collisions. See issue 25237.
+			if h.count == 0 {
+				h.hash0 = fastrand()
+			}
 			break search
 		}
 	}

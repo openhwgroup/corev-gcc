@@ -1,5 +1,5 @@
 /* Coalesce SSA_NAMES together for the out-of-ssa pass.
-   Copyright (C) 2004-2020 Free Software Foundation, Inc.
+   Copyright (C) 2004-2021 Free Software Foundation, Inc.
    Contributed by Andrew MacLeod <amacleod@redhat.com>
 
 This file is part of GCC.
@@ -541,7 +541,7 @@ ssa_conflicts_new (unsigned size)
   ptr = XNEW (ssa_conflicts);
   bitmap_obstack_initialize (&ptr->obstack);
   ptr->conflicts.create (size);
-  ptr->conflicts.safe_grow_cleared (size);
+  ptr->conflicts.safe_grow_cleared (size, true);
   return ptr;
 }
 

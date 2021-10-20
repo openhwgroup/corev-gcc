@@ -1,5 +1,5 @@
 /* Target machine subroutines for TI PRU.
-   Copyright (C) 2014-2020 Free Software Foundation, Inc.
+   Copyright (C) 2014-2021 Free Software Foundation, Inc.
    Dimitar Dimitrov <dimitar@dinux.eu>
 
    This file is part of GCC.
@@ -621,7 +621,7 @@ pru_option_override (void)
   /* Save the initial options in case the user does function specific
      options.  */
   target_option_default_node = target_option_current_node
-    = build_target_option_node (&global_options);
+    = build_target_option_node (&global_options, &global_options_set);
 
   /* Due to difficulties in implementing the TI ABI with GCC,
      at least check and error-out if GCC cannot compile a
@@ -1403,11 +1403,42 @@ pru_valid_addr_expr_p (machine_mode mode, rtx base, rtx offset, bool strict_p)
     return false;
 }
 
-/* Implement TARGET_LEGITIMATE_ADDRESS_P.  */
-static bool
-pru_legitimate_address_p (machine_mode mode,
-			    rtx operand, bool strict_p)
+/* Return register number (either for r30 or r31) which maps to the
+   corresponding symbol OP's name in the __regio_symbol address namespace.
+
+   If no mapping can be established (i.e. symbol name is invalid), then
+   return -1.  */
+int pru_symref2ioregno (rtx op)
 {
+  if (!SYMBOL_REF_P (op))
+    return -1;
+
+  const char *name = XSTR (op, 0);
+  if (!strcmp (name, "__R30"))
+    return R30_REGNUM;
+  else if (!strcmp (name, "__R31"))
+    return R31_REGNUM;
+  else
+    return -1;
+}
+
+/* Implement TARGET_ADDR_SPACE_LEGITIMATE_ADDRESS_P.  */
+static bool
+pru_addr_space_legitimate_address_p (machine_mode mode, rtx operand,
+				     bool strict_p, addr_space_t as)
+{
+  if (as == ADDR_SPACE_REGIO)
+    {
+      /*  Address space constraints for __regio_symbol have been checked in
+	  TARGET_INSERT_ATTRIBUTES, and some more checks will be done
+	  during RTL expansion of "mov<mode>".  */
+      return true;
+    }
+  else if (as != ADDR_SPACE_GENERIC)
+    {
+      gcc_unreachable ();
+    }
+
   switch (GET_CODE (operand))
     {
     /* Direct.  */
@@ -2001,6 +2032,117 @@ pru_file_start (void)
   /* Compiler will take care of placing %label, so there is no
      need to confuse users with this warning.  */
   fprintf (asm_out_file, "\t.set no_warn_regname_label\n");
+}
+
+/* Scan type TYP for pointer references to address space other than
+   ADDR_SPACE_GENERIC.  Return true if such reference is found.
+   Much of this code was taken from the avr port.  */
+
+static bool
+pru_nongeneric_pointer_addrspace (tree typ)
+{
+  while (ARRAY_TYPE == TREE_CODE (typ))
+    typ = TREE_TYPE (typ);
+
+  if (POINTER_TYPE_P (typ))
+    {
+      addr_space_t as;
+      tree target = TREE_TYPE (typ);
+
+      /* Pointer to function: Test the function's return type.  */
+      if (FUNCTION_TYPE == TREE_CODE (target))
+	return pru_nongeneric_pointer_addrspace (TREE_TYPE (target));
+
+      /* "Ordinary" pointers... */
+
+      while (TREE_CODE (target) == ARRAY_TYPE)
+	target = TREE_TYPE (target);
+
+      as = TYPE_ADDR_SPACE (target);
+
+      if (!ADDR_SPACE_GENERIC_P (as))
+	return true;
+
+      /* Scan pointer's target type.  */
+      return pru_nongeneric_pointer_addrspace (target);
+    }
+
+  return false;
+}
+
+/* Implement `TARGET_INSERT_ATTRIBUTES'.  For PRU it's used as a hook to
+   provide better diagnostics for some invalid usages of the __regio_symbol
+   address space.
+
+   Any escapes of the following checks are supposed to be caught
+   during the "mov<mode>" pattern expansion.  */
+
+static void
+pru_insert_attributes (tree node, tree *attributes ATTRIBUTE_UNUSED)
+{
+
+  /* Validate __regio_symbol variable declarations.  */
+  if (VAR_P (node))
+    {
+      const char *name = DECL_NAME (node)
+			  ? IDENTIFIER_POINTER (DECL_NAME (node))
+			  : "<unknown>";
+      tree typ = TREE_TYPE (node);
+      addr_space_t as = TYPE_ADDR_SPACE (typ);
+
+      if (as == ADDR_SPACE_GENERIC)
+	return;
+
+      if (AGGREGATE_TYPE_P (typ))
+	{
+	  error ("aggregate types are prohibited in "
+		 "%<__regio_symbol%> address space");
+	  /* Don't bother anymore.  Below checks would pile
+	     meaningless errors, which would confuse user.  */
+	  return;
+	}
+      if (DECL_INITIAL (node) != NULL_TREE)
+	error ("variables in %<__regio_symbol%> address space "
+	       "cannot have initial value");
+      if (DECL_REGISTER (node))
+	error ("variables in %<__regio_symbol%> address space "
+	       "cannot be declared %<register%>");
+      if (!TYPE_VOLATILE (typ))
+	error ("variables in %<__regio_symbol%> address space "
+	       "must be declared %<volatile%>");
+      if (!DECL_EXTERNAL (node))
+	error ("variables in %<__regio_symbol%> address space "
+	       "must be declared %<extern%>");
+      if (TYPE_MODE (typ) != SImode)
+	error ("only 32-bit access is supported "
+	       "for %<__regio_symbol%> address space");
+      if (strcmp (name, "__R30") != 0 && strcmp (name, "__R31") != 0)
+	error ("register name %<%s%> not recognized "
+	       "in %<__regio_symbol%> address space", name);
+    }
+
+  tree typ = NULL_TREE;
+
+  switch (TREE_CODE (node))
+    {
+    case FUNCTION_DECL:
+      typ = TREE_TYPE (TREE_TYPE (node));
+      break;
+    case TYPE_DECL:
+    case RESULT_DECL:
+    case VAR_DECL:
+    case FIELD_DECL:
+    case PARM_DECL:
+      typ = TREE_TYPE (node);
+      break;
+    case POINTER_TYPE:
+      typ = node;
+      break;
+    default:
+      break;
+    }
+  if (typ != NULL_TREE && pru_nongeneric_pointer_addrspace (typ))
+    error ("pointers to %<__regio_symbol%> address space are prohibited");
 }
 
 /* Function argument related.  */
@@ -2705,6 +2847,8 @@ pru_reorg (void)
 enum pru_builtin
 {
   PRU_BUILTIN_DELAY_CYCLES,
+  PRU_BUILTIN_HALT,
+  PRU_BUILTIN_LMBD,
   PRU_BUILTIN_max
 };
 
@@ -2719,10 +2863,30 @@ pru_init_builtins (void)
     = build_function_type_list (void_type_node,
 				long_long_integer_type_node,
 				NULL);
+  tree uint_ftype_uint_uint
+    = build_function_type_list (unsigned_type_node,
+				unsigned_type_node,
+				unsigned_type_node,
+				NULL);
+
+  tree void_ftype_void
+    = build_function_type_list (void_type_node,
+				void_type_node,
+				NULL);
 
   pru_builtins[PRU_BUILTIN_DELAY_CYCLES]
     = add_builtin_function ("__delay_cycles", void_ftype_longlong,
 			    PRU_BUILTIN_DELAY_CYCLES, BUILT_IN_MD, NULL,
+			    NULL_TREE);
+
+  pru_builtins[PRU_BUILTIN_HALT]
+    = add_builtin_function ("__halt", void_ftype_void,
+			    PRU_BUILTIN_HALT, BUILT_IN_MD, NULL,
+			    NULL_TREE);
+
+  pru_builtins[PRU_BUILTIN_LMBD]
+    = add_builtin_function ("__lmbd", uint_ftype_uint_uint,
+			    PRU_BUILTIN_LMBD, BUILT_IN_MD, NULL,
 			    NULL_TREE);
 }
 
@@ -2734,6 +2898,8 @@ pru_builtin_decl (unsigned code, bool initialize_p ATTRIBUTE_UNUSED)
   switch (code)
     {
     case PRU_BUILTIN_DELAY_CYCLES:
+    case PRU_BUILTIN_HALT:
+    case PRU_BUILTIN_LMBD:
       return pru_builtins[code];
     default:
       return error_mark_node;
@@ -2806,19 +2972,45 @@ pru_expand_delay_cycles (rtx arg)
    IGNORE is nonzero if the value is to be ignored.  */
 
 static rtx
-pru_expand_builtin (tree exp, rtx target ATTRIBUTE_UNUSED,
+pru_expand_builtin (tree exp, rtx target,
 		    rtx subtarget ATTRIBUTE_UNUSED,
-		    machine_mode mode ATTRIBUTE_UNUSED,
+		    machine_mode mode,
 		    int ignore ATTRIBUTE_UNUSED)
 {
   tree fndecl = TREE_OPERAND (CALL_EXPR_FN (exp), 0);
   unsigned int fcode = DECL_MD_FUNCTION_CODE (fndecl);
-  rtx arg1 = expand_normal (CALL_EXPR_ARG (exp, 0));
 
-  if (fcode == PRU_BUILTIN_DELAY_CYCLES)
-    return pru_expand_delay_cycles (arg1);
+  switch (fcode)
+    {
+    case PRU_BUILTIN_DELAY_CYCLES:
+	{
+	  rtx arg1 = expand_normal (CALL_EXPR_ARG (exp, 0));
+	  return pru_expand_delay_cycles (arg1);
+	}
+      break;
+    case PRU_BUILTIN_HALT:
+	{
+	  emit_insn (gen_pru_halt ());
+	  return NULL_RTX;
+	}
+      break;
+    case PRU_BUILTIN_LMBD:
+	{
+	  rtx arg1 = expand_normal (CALL_EXPR_ARG (exp, 0));
+	  rtx arg2 = expand_normal (CALL_EXPR_ARG (exp, 1));
 
-  internal_error ("bad builtin code");
+	  if (target == NULL_RTX || GET_MODE (target) != mode)
+	    {
+	      target = gen_reg_rtx (mode);
+	    }
+
+	  emit_insn (gen_pru_lmbd (mode, target, arg1, arg2));
+	  return target;
+	}
+      break;
+    default:
+      internal_error ("bad builtin code");
+    }
 
   return NULL_RTX;
 }
@@ -2848,7 +3040,7 @@ pru_set_current_function (tree fndecl)
 
       else if (new_tree)
 	{
-	  cl_target_option_restore (&global_options,
+	  cl_target_option_restore (&global_options, &global_options_set,
 				    TREE_TARGET_OPTION (new_tree));
 	  target_reinit ();
 	}
@@ -2858,7 +3050,7 @@ pru_set_current_function (tree fndecl)
 	  struct cl_target_option *def
 	    = TREE_TARGET_OPTION (target_option_current_node);
 
-	  cl_target_option_restore (&global_options, def);
+	  cl_target_option_restore (&global_options, &global_options_set, def);
 	  target_reinit ();
 	}
     }
@@ -2882,6 +3074,9 @@ pru_unwind_word_mode (void)
 
 #undef TARGET_ASM_FILE_START
 #define TARGET_ASM_FILE_START pru_file_start
+
+#undef  TARGET_INSERT_ATTRIBUTES
+#define TARGET_INSERT_ATTRIBUTES pru_insert_attributes
 
 #undef TARGET_INIT_BUILTINS
 #define TARGET_INIT_BUILTINS pru_init_builtins
@@ -2929,8 +3124,9 @@ pru_unwind_word_mode (void)
 #undef TARGET_MUST_PASS_IN_STACK
 #define TARGET_MUST_PASS_IN_STACK must_pass_in_stack_var_size
 
-#undef TARGET_LEGITIMATE_ADDRESS_P
-#define TARGET_LEGITIMATE_ADDRESS_P pru_legitimate_address_p
+#undef TARGET_ADDR_SPACE_LEGITIMATE_ADDRESS_P
+#define TARGET_ADDR_SPACE_LEGITIMATE_ADDRESS_P \
+  pru_addr_space_legitimate_address_p
 
 #undef TARGET_INIT_LIBFUNCS
 #define TARGET_INIT_LIBFUNCS pru_init_libfuncs

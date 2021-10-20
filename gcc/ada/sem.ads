@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---          Copyright (C) 1992-2020, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2021, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -202,7 +202,6 @@
 --  called Preanalyze_And_Resolve and is in Sem_Res.
 
 with Alloc;
-with Einfo;  use Einfo;
 with Opt;    use Opt;
 with Table;
 with Types;  use Types;
@@ -291,6 +290,10 @@ package Sem is
    --  indications from entities in the current scope. Only the expansion of
    --  freezing nodes can modify the status of this flag, any other client
    --  should regard it as read-only.
+
+   Inside_Class_Condition_Preanalysis : Boolean := False;
+   --  Flag indicating whether we are preanalyzing a class-wide precondition
+   --  or postcondition.
 
    Inside_Preanalysis_Without_Freezing : Nat := 0;
    --  Flag indicating whether we are preanalyzing an expression performing no
@@ -534,7 +537,7 @@ package Sem is
       --  See Sem_Ch10 (Install_Parents, Remove_Parents).
 
       Node_To_Be_Wrapped : Node_Id;
-      --  Only used in transient scopes. Records the node which will be wrapped
+      --  Only used in transient scopes. Records the node that will be wrapped
       --  by the transient block.
 
       Actions_To_Be_Wrapped : Scope_Actions;
@@ -670,6 +673,13 @@ package Sem is
    --  this analysis. If the node is empty, the call has no effect. If the
    --  Suppress argument is present, then the analysis is done with the
    --  specified check suppressed (can be All_Checks to suppress all checks).
+
+   procedure Insert_Before_First_Source_Declaration
+     (Stmt  : Node_Id;
+      Decls : List_Id);
+   --  Insert node Stmt before the first source declaration of the related
+   --  subprogram's body. If no such declaration exists, Stmt becomes the last
+   --  declaration.
 
    function External_Ref_In_Generic (E : Entity_Id) return Boolean;
    --  Return True if we are in the context of a generic and E is

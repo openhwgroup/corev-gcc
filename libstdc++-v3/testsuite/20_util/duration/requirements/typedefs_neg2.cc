@@ -1,7 +1,7 @@
 // { dg-do compile { target c++11 } }
 // 2008-07-31 Chris Fairles <chris.fairles@gmail.com>
 
-// Copyright (C) 2008-2020 Free Software Foundation, Inc.
+// Copyright (C) 2008-2021 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -31,4 +31,6 @@ void test01()
 }
 
 // { dg-error "must be a specialization of ratio" "" { target *-*-* } 0 }
-// { dg-prune-output "not a member" }
+// { dg-prune-output "'num' is not a member of 'int'" }
+// { dg-prune-output "'den' is not a member of 'int'" }
+// { dg-prune-output "'int' is not a class, struct, or union type" }

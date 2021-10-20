@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2020, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2021, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -23,18 +23,21 @@
 --                                                                          --
 ------------------------------------------------------------------------------
 
-with Atree;    use Atree;
-with Einfo;    use Einfo;
-with Elists;   use Elists;
-with Exp_Util; use Exp_Util;
-with Nlists;   use Nlists;
-with Lib;      use Lib;
-with Restrict; use Restrict;
-with Rident;   use Rident;
-with Sem_Aux;  use Sem_Aux;
-with Sem_Ch6;  use Sem_Ch6;
-with Sem_Util; use Sem_Util;
-with Sinfo;    use Sinfo;
+with Atree;          use Atree;
+with Einfo;          use Einfo;
+with Einfo.Entities; use Einfo.Entities;
+with Einfo.Utils;    use Einfo.Utils;
+with Elists;         use Elists;
+with Exp_Util;       use Exp_Util;
+with Nlists;         use Nlists;
+with Lib;            use Lib;
+with Restrict;       use Restrict;
+with Rident;         use Rident;
+with Sem_Aux;        use Sem_Aux;
+with Sem_Ch6;        use Sem_Ch6;
+with Sem_Util;       use Sem_Util;
+with Sinfo;          use Sinfo;
+with Sinfo.Nodes;    use Sinfo.Nodes;
 
 package body Exp_Tss is
 
@@ -164,7 +167,13 @@ package body Exp_Tss is
       --  If Typ is a derived type, it may inherit attributes from an ancestor
 
       if No (Proc) and then Is_Derived_Type (Btyp) then
-         Proc := Find_Inherited_TSS (Etype (Btyp), Nam);
+         if not Derivation_Too_Early_To_Inherit (Btyp, Nam) then
+            Proc := Find_Inherited_TSS (Etype (Btyp), Nam);
+         elsif Is_Derived_Type (Etype (Btyp)) then
+            --  Skip one link in the derivation chain
+            Proc := Find_Inherited_TSS
+                      (Etype (Base_Type (Etype (Btyp))), Nam);
+         end if;
       end if;
 
       --  If nothing else, use the TSS of the root type
@@ -490,48 +499,6 @@ package body Exp_Tss is
          Elmt := First_Elmt (TSS_Elist (FN));
          while Present (Elmt) loop
             if Is_TSS (Node (Elmt), Nam) then
-               Subp := Node (Elmt);
-
-               --  For stream subprograms, the TSS entity may be a renaming-
-               --  as-body of an already generated entity. Use that one rather
-               --  the one introduced by the renaming, which is an artifact of
-               --  current stream handling.
-
-               if Nkind (Parent (Parent (Subp))) =
-                                           N_Subprogram_Renaming_Declaration
-                 and then
-                   Present (Corresponding_Spec (Parent (Parent (Subp))))
-               then
-                  return Corresponding_Spec (Parent (Parent (Subp)));
-               else
-                  return Subp;
-               end if;
-
-            else
-               Next_Elmt (Elmt);
-            end if;
-         end loop;
-      end if;
-
-      return Empty;
-   end TSS;
-
-   function TSS (Typ : Entity_Id; Nam : Name_Id) return Entity_Id is
-      FN   : constant Node_Id := Freeze_Node (Typ);
-      Elmt : Elmt_Id;
-      Subp : Entity_Id;
-
-   begin
-      if No (FN) then
-         return Empty;
-
-      elsif No (TSS_Elist (FN)) then
-         return Empty;
-
-      else
-         Elmt := First_Elmt (TSS_Elist (FN));
-         while Present (Elmt) loop
-            if Chars (Node (Elmt)) = Nam then
                Subp := Node (Elmt);
 
                --  For stream subprograms, the TSS entity may be a renaming-

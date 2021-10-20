@@ -1,5 +1,5 @@
 /* read-rtl-function.c - Reader for RTL function dumps
-   Copyright (C) 2016-2020 Free Software Foundation, Inc.
+   Copyright (C) 2016-2021 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -632,7 +632,7 @@ function_reader::parse_block ()
 
   size_t new_size = m_highest_bb_idx + 1;
   if (basic_block_info_for_fn (cfun)->length () < new_size)
-    vec_safe_grow_cleared (basic_block_info_for_fn (cfun), new_size);
+    vec_safe_grow_cleared (basic_block_info_for_fn (cfun), new_size, true);
 
   last_basic_block_for_fn (cfun) = new_size;
 
@@ -1082,7 +1082,7 @@ function_reader::read_rtx_operand_r (rtx x)
 	 "orig:%i", ORIGINAL_REGNO (rtx).
 	 Consume it, we don't set ORIGINAL_REGNO, since we can
 	 get that from the 2nd copy later.  */
-      if (strncmp (desc, "orig:", 5) == 0)
+      if (startswith (desc, "orig:"))
 	{
 	  expect_original_regno = true;
 	  desc_start += 5;
@@ -1491,7 +1491,6 @@ function_reader::consolidate_singletons (rtx x)
     case PC: return pc_rtx;
     case RETURN: return ret_rtx;
     case SIMPLE_RETURN: return simple_return_rtx;
-    case CC0: return cc0_rtx;
 
     case REG:
       return consolidate_reg (x);
@@ -1862,7 +1861,7 @@ test_loading_labels ()
 
   /* Ensure that label names read from a dump are GC-managed
      and are found through the insn.  */
-  forcibly_ggc_collect ();
+  ggc_collect (GGC_COLLECT_FORCE);
   ASSERT_TRUE (ggc_marked_p (insn_200));
   ASSERT_TRUE (ggc_marked_p (LABEL_NAME (insn_200)));
 }

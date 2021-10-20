@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+//go:build ignore
 // +build ignore
 
 // This is a test program that verifies that it can read from
@@ -15,7 +16,7 @@ package main
 import (
 	"fmt"
 	"internal/poll"
-	"io/ioutil"
+	"io"
 	"os"
 	"os/exec"
 	"runtime"
@@ -24,7 +25,7 @@ import (
 
 func main() {
 	fd3 := os.NewFile(3, "fd3")
-	bs, err := ioutil.ReadAll(fd3)
+	bs, err := io.ReadAll(fd3)
 	if err != nil {
 		fmt.Printf("ReadAll from fd 3: %v\n", err)
 		os.Exit(1)
@@ -56,7 +57,7 @@ func main() {
 			switch runtime.GOOS {
 			case "plan9":
 				args = []string{fmt.Sprintf("/proc/%d/fd", os.Getpid())}
-			case "aix":
+			case "aix", "solaris", "illumos":
 				args = []string{fmt.Sprint(os.Getpid())}
 			default:
 				args = []string{"-p", fmt.Sprint(os.Getpid())}
@@ -71,6 +72,8 @@ func main() {
 				ofcmd = "/bin/cat"
 			case "aix":
 				ofcmd = "procfiles"
+			case "solaris", "illumos":
+				ofcmd = "pfiles"
 			}
 
 			cmd := exec.Command(ofcmd, args...)

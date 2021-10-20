@@ -1,7 +1,7 @@
 /* Bits of OpenMP and OpenACC handling that is specific to device offloading
    and a lowering pass for OpenACC device directives.
 
-   Copyright (C) 2005-2020 Free Software Foundation, Inc.
+   Copyright (C) 2005-2021 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -53,6 +53,8 @@ along with GCC; see the file COPYING3.  If not see
 #include "attribs.h"
 #include "cfgloop.h"
 #include "context.h"
+#include "convert.h"
+#include "opts.h"
 
 /* Describe the OpenACC looping structure of a function.  The entire
    function is held in a 'NULL' loop.  */
@@ -196,21 +198,73 @@ omp_declare_target_var_p (tree decl)
 static tree
 omp_discover_declare_target_tgt_fn_r (tree *tp, int *walk_subtrees, void *data)
 {
-  if (TREE_CODE (*tp) == FUNCTION_DECL
-      && !omp_declare_target_fn_p (*tp)
-      && !lookup_attribute ("omp declare target host", DECL_ATTRIBUTES (*tp)))
+  if (TREE_CODE (*tp) == CALL_EXPR
+      && CALL_EXPR_FN (*tp)
+      && TREE_CODE (CALL_EXPR_FN (*tp)) == ADDR_EXPR
+      && TREE_CODE (TREE_OPERAND (CALL_EXPR_FN (*tp), 0)) == FUNCTION_DECL
+      && lookup_attribute ("omp declare variant base",
+			   DECL_ATTRIBUTES (TREE_OPERAND (CALL_EXPR_FN (*tp),
+							  0))))
     {
+      tree fn = TREE_OPERAND (CALL_EXPR_FN (*tp), 0);
+      for (tree attr = DECL_ATTRIBUTES (fn); attr; attr = TREE_CHAIN (attr))
+	{
+	  attr = lookup_attribute ("omp declare variant base", attr);
+	  if (attr == NULL_TREE)
+	    break;
+	  tree purpose = TREE_PURPOSE (TREE_VALUE (attr));
+	  if (TREE_CODE (purpose) == FUNCTION_DECL)
+	    omp_discover_declare_target_tgt_fn_r (&purpose, walk_subtrees, data);
+	}
+    }
+  else if (TREE_CODE (*tp) == FUNCTION_DECL)
+    {
+      tree decl = *tp;
       tree id = get_identifier ("omp declare target");
-      if (!DECL_EXTERNAL (*tp) && DECL_SAVED_TREE (*tp))
-	((vec<tree> *) data)->safe_push (*tp);
-      DECL_ATTRIBUTES (*tp) = tree_cons (id, NULL_TREE, DECL_ATTRIBUTES (*tp));
       symtab_node *node = symtab_node::get (*tp);
       if (node != NULL)
 	{
+	  while (node->alias_target
+		 && TREE_CODE (node->alias_target) == FUNCTION_DECL)
+	    {
+	      if (!omp_declare_target_fn_p (node->decl)
+		  && !lookup_attribute ("omp declare target host",
+					DECL_ATTRIBUTES (node->decl)))
+		{
+		  node->offloadable = 1;
+		  DECL_ATTRIBUTES (node->decl)
+		    = tree_cons (id, NULL_TREE, DECL_ATTRIBUTES (node->decl));
+		}
+	      node = symtab_node::get (node->alias_target);
+	    }
+	  symtab_node *new_node = node->ultimate_alias_target ();
+	  decl = new_node->decl;
+	  while (node != new_node)
+	    {
+	      if (!omp_declare_target_fn_p (node->decl)
+		  && !lookup_attribute ("omp declare target host",
+					DECL_ATTRIBUTES (node->decl)))
+		{
+		  node->offloadable = 1;
+		  DECL_ATTRIBUTES (node->decl)
+		    = tree_cons (id, NULL_TREE, DECL_ATTRIBUTES (node->decl));
+		}
+	      gcc_assert (node->alias && node->analyzed);
+	      node = node->get_alias_target ();
+	    }
 	  node->offloadable = 1;
 	  if (ENABLE_OFFLOADING)
 	    g->have_offload = true;
 	}
+      if (omp_declare_target_fn_p (decl)
+	  || lookup_attribute ("omp declare target host",
+			       DECL_ATTRIBUTES (decl)))
+	return NULL_TREE;
+
+      if (!DECL_EXTERNAL (decl) && DECL_SAVED_TREE (decl))
+	((vec<tree> *) data)->safe_push (decl);
+      DECL_ATTRIBUTES (decl) = tree_cons (id, NULL_TREE,
+					  DECL_ATTRIBUTES (decl));
     }
   else if (TYPE_P (*tp))
     *walk_subtrees = 0;
@@ -263,7 +317,7 @@ omp_discover_declare_target_var_r (tree *tp, int *walk_subtrees, void *data)
 	  DECL_ATTRIBUTES (*tp)
 	    = remove_attribute ("omp declare target link", DECL_ATTRIBUTES (*tp));
 	}
-      if (TREE_STATIC (*tp) && DECL_INITIAL (*tp))
+      if (TREE_STATIC (*tp) && lang_hooks.decls.omp_get_decl_init (*tp))
 	((vec<tree> *) data)->safe_push (*tp);
       DECL_ATTRIBUTES (*tp) = tree_cons (id, NULL_TREE, DECL_ATTRIBUTES (*tp));
       symtab_node *node = symtab_node::get (*tp);
@@ -295,20 +349,29 @@ omp_discover_implicit_declare_target (void)
   FOR_EACH_DEFINED_FUNCTION (node)
     if (DECL_SAVED_TREE (node->decl))
       {
+	struct cgraph_node *cgn;
         if (omp_declare_target_fn_p (node->decl))
 	  worklist.safe_push (node->decl);
 	else if (DECL_STRUCT_FUNCTION (node->decl)
 		 && DECL_STRUCT_FUNCTION (node->decl)->has_omp_target)
 	  worklist.safe_push (node->decl);
+	for (cgn = first_nested_function (node);
+	     cgn; cgn = next_nested_function (cgn))
+	  if (omp_declare_target_fn_p (cgn->decl))
+	    worklist.safe_push (cgn->decl);
+	  else if (DECL_STRUCT_FUNCTION (cgn->decl)
+		   && DECL_STRUCT_FUNCTION (cgn->decl)->has_omp_target)
+	    worklist.safe_push (cgn->decl);
       }
-  FOR_EACH_STATIC_INITIALIZER (vnode)
-    if (omp_declare_target_var_p (vnode->decl))
+  FOR_EACH_VARIABLE (vnode)
+    if (lang_hooks.decls.omp_get_decl_init (vnode->decl)
+	&& omp_declare_target_var_p (vnode->decl))
       worklist.safe_push (vnode->decl);
   while (!worklist.is_empty ())
     {
       tree decl = worklist.pop ();
       if (VAR_P (decl))
-	walk_tree_without_duplicates (&DECL_INITIAL (decl),
+	walk_tree_without_duplicates (lang_hooks.decls.omp_get_decl_init (decl),
 				      omp_discover_declare_target_var_r,
 				      &worklist);
       else if (omp_declare_target_fn_p (decl))
@@ -320,6 +383,8 @@ omp_discover_implicit_declare_target (void)
 				      omp_discover_declare_target_fn_r,
 				      &worklist);
     }
+
+  lang_hooks.decls.omp_finish_decl_inits ();
 }
 
 
@@ -569,7 +634,7 @@ oacc_xform_loop (gcall *call)
 	  /* If not -fno-tree-loop-vectorize, hint that we want to vectorize
 	     the loop.  */
 	  && (flag_tree_loop_vectorize
-	      || !global_options_set.x_flag_tree_loop_vectorize))
+	      || !OPTION_SET_P (flag_tree_loop_vectorize)))
 	{
 	  basic_block bb = gsi_bb (gsi);
 	  class loop *parent = bb->loop_father;
@@ -863,6 +928,35 @@ oacc_validate_dims (tree fn, tree attrs, int *dims, int level, unsigned used)
       tree val = TREE_VALUE (pos);
       dims[ix] = val ? TREE_INT_CST_LOW (val) : -1;
       pos = TREE_CHAIN (pos);
+    }
+
+  bool check = true;
+#ifdef ACCEL_COMPILER
+  check = false;
+#endif
+  if (check
+      && warn_openacc_parallelism
+      && !lookup_attribute ("oacc kernels", DECL_ATTRIBUTES (fn)))
+    {
+      static char const *const axes[] =
+      /* Must be kept in sync with GOMP_DIM enumeration.  */
+	{ "gang", "worker", "vector" };
+      for (ix = level >= 0 ? level : 0; ix != GOMP_DIM_MAX; ix++)
+	if (dims[ix] < 0)
+	  ; /* Defaulting axis.  */
+	else if ((used & GOMP_DIM_MASK (ix)) && dims[ix] == 1)
+	  /* There is partitioned execution, but the user requested a
+	     dimension size of 1.  They're probably confused.  */
+	  warning_at (DECL_SOURCE_LOCATION (fn), OPT_Wopenacc_parallelism,
+		      "region contains %s partitioned code but"
+		      " is not %s partitioned", axes[ix], axes[ix]);
+	else if (!(used & GOMP_DIM_MASK (ix)) && dims[ix] != 1)
+	  /* The dimension is explicitly partitioned to non-unity, but
+	     no use is made within the region.  */
+	  warning_at (DECL_SOURCE_LOCATION (fn), OPT_Wopenacc_parallelism,
+		      "region is %s partitioned but"
+		      " does not contain %s partitioned code",
+		      axes[ix], axes[ix]);
     }
 
   bool changed = targetm.goacc.validate_dims (fn, dims, level, used);
@@ -1265,13 +1359,16 @@ oacc_loop_xform_head_tail (gcall *from, int level)
 	    = ((enum ifn_unique_kind)
 	       TREE_INT_CST_LOW (gimple_call_arg (stmt, 0)));
 
-	  if (k == IFN_UNIQUE_OACC_FORK || k == IFN_UNIQUE_OACC_JOIN)
+	  if (k == IFN_UNIQUE_OACC_FORK
+	      || k == IFN_UNIQUE_OACC_JOIN
+	      || k == IFN_UNIQUE_OACC_PRIVATE)
 	    *gimple_call_arg_ptr (stmt, 2) = replacement;
 	  else if (k == kind && stmt != from)
 	    break;
 	}
       else if (gimple_call_internal_p (stmt, IFN_GOACC_REDUCTION))
 	*gimple_call_arg_ptr (stmt, 3) = replacement;
+      update_stmt (stmt);
 
       gsi_next (&gsi);
       while (gsi_end_p (gsi))
@@ -1297,25 +1394,28 @@ oacc_loop_process (oacc_loop *loop)
       gcall *call;
       
       for (ix = 0; loop->ifns.iterate (ix, &call); ix++)
-	switch (gimple_call_internal_fn (call))
-	  {
-	  case IFN_GOACC_LOOP:
+	{
+	  switch (gimple_call_internal_fn (call))
 	    {
-	      bool is_e = gimple_call_arg (call, 5) == integer_minus_one_node;
-	      gimple_call_set_arg (call, 5, is_e ? e_mask_arg : mask_arg);
-	      if (!is_e)
-		gimple_call_set_arg (call, 4, chunk_arg);
+	    case IFN_GOACC_LOOP:
+	      {
+		bool is_e = gimple_call_arg (call, 5) == integer_minus_one_node;
+		gimple_call_set_arg (call, 5, is_e ? e_mask_arg : mask_arg);
+		if (!is_e)
+		  gimple_call_set_arg (call, 4, chunk_arg);
+	      }
+	      break;
+
+	    case IFN_GOACC_TILE:
+	      gimple_call_set_arg (call, 3, mask_arg);
+	      gimple_call_set_arg (call, 4, e_mask_arg);
+	      break;
+
+	    default:
+	      gcc_unreachable ();
 	    }
-	    break;
-
-	  case IFN_GOACC_TILE:
-	    gimple_call_set_arg (call, 3, mask_arg);
-	    gimple_call_set_arg (call, 4, e_mask_arg);
-	    break;
-
-	  default:
-	    gcc_unreachable ();
-	  }
+	  update_stmt (call);
+	}
 
       unsigned dim = GOMP_DIM_GANG;
       unsigned mask = loop->mask | loop->e_mask;
@@ -1682,12 +1782,142 @@ default_goacc_reduction (gcall *call)
   gsi_replace_with_seq (&gsi, seq, true);
 }
 
+struct var_decl_rewrite_info
+{
+  gimple *stmt;
+  hash_map<tree, tree> *adjusted_vars;
+  bool avoid_pointer_conversion;
+  bool modified;
+};
+
+/* Helper function for execute_oacc_device_lower.  Rewrite VAR_DECLs (by
+   themselves or wrapped in various other nodes) according to ADJUSTED_VARS in
+   the var_decl_rewrite_info pointed to via DATA.  Used as part of coercing
+   gang-private variables in OpenACC offload regions to reside in GPU shared
+   memory.  */
+
+static tree
+oacc_rewrite_var_decl (tree *tp, int *walk_subtrees, void *data)
+{
+  walk_stmt_info *wi = (walk_stmt_info *) data;
+  var_decl_rewrite_info *info = (var_decl_rewrite_info *) wi->info;
+
+  if (TREE_CODE (*tp) == ADDR_EXPR)
+    {
+      tree arg = TREE_OPERAND (*tp, 0);
+      tree *new_arg = info->adjusted_vars->get (arg);
+
+      if (new_arg)
+	{
+	  if (info->avoid_pointer_conversion)
+	    {
+	      *tp = build_fold_addr_expr (*new_arg);
+	      info->modified = true;
+	      *walk_subtrees = 0;
+	    }
+	  else
+	    {
+	      gimple_stmt_iterator gsi = gsi_for_stmt (info->stmt);
+	      tree repl = build_fold_addr_expr (*new_arg);
+	      gimple *stmt1
+		= gimple_build_assign (make_ssa_name (TREE_TYPE (repl)), repl);
+	      tree conv = convert_to_pointer (TREE_TYPE (*tp),
+					      gimple_assign_lhs (stmt1));
+	      gimple *stmt2
+		= gimple_build_assign (make_ssa_name (TREE_TYPE (*tp)), conv);
+	      gsi_insert_before (&gsi, stmt1, GSI_SAME_STMT);
+	      gsi_insert_before (&gsi, stmt2, GSI_SAME_STMT);
+	      *tp = gimple_assign_lhs (stmt2);
+	      info->modified = true;
+	      *walk_subtrees = 0;
+	    }
+	}
+    }
+  else if (TREE_CODE (*tp) == COMPONENT_REF || TREE_CODE (*tp) == ARRAY_REF)
+    {
+      tree *base = &TREE_OPERAND (*tp, 0);
+
+      while (TREE_CODE (*base) == COMPONENT_REF
+	     || TREE_CODE (*base) == ARRAY_REF)
+	base = &TREE_OPERAND (*base, 0);
+
+      if (TREE_CODE (*base) != VAR_DECL)
+	return NULL;
+
+      tree *new_decl = info->adjusted_vars->get (*base);
+      if (!new_decl)
+	return NULL;
+
+      int base_quals = TYPE_QUALS (TREE_TYPE (*new_decl));
+      tree field = TREE_OPERAND (*tp, 1);
+
+      /* Adjust the type of the field.  */
+      int field_quals = TYPE_QUALS (TREE_TYPE (field));
+      if (TREE_CODE (field) == FIELD_DECL && field_quals != base_quals)
+	{
+	  tree *field_type = &TREE_TYPE (field);
+	  while (TREE_CODE (*field_type) == ARRAY_TYPE)
+	    field_type = &TREE_TYPE (*field_type);
+	  field_quals |= base_quals;
+	  *field_type = build_qualified_type (*field_type, field_quals);
+	}
+
+      /* Adjust the type of the component ref itself.  */
+      tree comp_type = TREE_TYPE (*tp);
+      int comp_quals = TYPE_QUALS (comp_type);
+      if (TREE_CODE (*tp) == COMPONENT_REF && comp_quals != base_quals)
+	{
+	  comp_quals |= base_quals;
+	  TREE_TYPE (*tp)
+	    = build_qualified_type (comp_type, comp_quals);
+	}
+
+      *base = *new_decl;
+      info->modified = true;
+    }
+  else if (TREE_CODE (*tp) == VAR_DECL)
+    {
+      tree *new_decl = info->adjusted_vars->get (*tp);
+      if (new_decl)
+	{
+	  *tp = *new_decl;
+	  info->modified = true;
+	}
+    }
+
+  return NULL_TREE;
+}
+
+/* Return TRUE if CALL is a call to a builtin atomic/sync operation.  */
+
+static bool
+is_sync_builtin_call (gcall *call)
+{
+  tree callee = gimple_call_fndecl (call);
+
+  if (callee != NULL_TREE
+      && gimple_call_builtin_p (call, BUILT_IN_NORMAL))
+    switch (DECL_FUNCTION_CODE (callee))
+      {
+#undef DEF_SYNC_BUILTIN
+#define DEF_SYNC_BUILTIN(ENUM, NAME, TYPE, ATTRS) case ENUM:
+#include "sync-builtins.def"
+#undef DEF_SYNC_BUILTIN
+	return true;
+
+      default:
+	;
+      }
+
+  return false;
+}
+
 /* Main entry point for oacc transformations which run on the device
    compiler after LTO, so we know what the target device is at this
    point (including the host fallback).  */
 
 static unsigned int
-execute_oacc_device_lower ()
+execute_oacc_loop_designation ()
 {
   tree attrs = oacc_get_fn_attrib (current_function_decl);
 
@@ -1702,12 +1932,97 @@ execute_oacc_device_lower ()
       flag_openacc_dims = (char *)&flag_openacc_dims;
     }
 
+  bool is_oacc_parallel
+    = (lookup_attribute ("oacc parallel",
+			 DECL_ATTRIBUTES (current_function_decl)) != NULL);
   bool is_oacc_kernels
     = (lookup_attribute ("oacc kernels",
 			 DECL_ATTRIBUTES (current_function_decl)) != NULL);
+  bool is_oacc_serial
+    = (lookup_attribute ("oacc serial",
+			 DECL_ATTRIBUTES (current_function_decl)) != NULL);
+  bool is_oacc_parallel_kernels_parallelized
+    = (lookup_attribute ("oacc parallel_kernels_parallelized",
+			 DECL_ATTRIBUTES (current_function_decl)) != NULL);
+  bool is_oacc_parallel_kernels_gang_single
+    = (lookup_attribute ("oacc parallel_kernels_gang_single",
+			 DECL_ATTRIBUTES (current_function_decl)) != NULL);
+  int fn_level = oacc_fn_attrib_level (attrs);
+  bool is_oacc_routine = (fn_level >= 0);
+  gcc_checking_assert (is_oacc_parallel
+		       + is_oacc_kernels
+		       + is_oacc_serial
+		       + is_oacc_parallel_kernels_parallelized
+		       + is_oacc_parallel_kernels_gang_single
+		       + is_oacc_routine
+		       == 1);
+
   bool is_oacc_kernels_parallelized
     = (lookup_attribute ("oacc kernels parallelized",
 			 DECL_ATTRIBUTES (current_function_decl)) != NULL);
+  if (is_oacc_kernels_parallelized)
+    gcc_checking_assert (is_oacc_kernels);
+
+  if (dump_file)
+    {
+      if (is_oacc_parallel)
+	fprintf (dump_file, "Function is OpenACC parallel offload\n");
+      else if (is_oacc_kernels)
+	fprintf (dump_file, "Function is %s OpenACC kernels offload\n",
+		 (is_oacc_kernels_parallelized
+		  ? "parallelized" : "unparallelized"));
+      else if (is_oacc_serial)
+	fprintf (dump_file, "Function is OpenACC serial offload\n");
+      else if (is_oacc_parallel_kernels_parallelized)
+	fprintf (dump_file, "Function is %s OpenACC kernels offload\n",
+		 "parallel_kernels_parallelized");
+      else if (is_oacc_parallel_kernels_gang_single)
+	fprintf (dump_file, "Function is %s OpenACC kernels offload\n",
+		 "parallel_kernels_gang_single");
+      else if (is_oacc_routine)
+	fprintf (dump_file, "Function is OpenACC routine level %d\n",
+		 fn_level);
+      else
+	gcc_unreachable ();
+    }
+
+  /* This doesn't belong into 'pass_oacc_loop_designation' conceptually, but
+     it's a convenient place, so...  */
+  if (is_oacc_routine)
+    {
+      tree attr = lookup_attribute ("omp declare target",
+				    DECL_ATTRIBUTES (current_function_decl));
+      gcc_checking_assert (attr);
+      tree clauses = TREE_VALUE (attr);
+      gcc_checking_assert (clauses);
+
+      /* Should this OpenACC routine be discarded?  */
+      bool discard = false;
+
+      tree clause_nohost = omp_find_clause (clauses, OMP_CLAUSE_NOHOST);
+      if (dump_file)
+	fprintf (dump_file,
+		 "OpenACC routine '%s' %s '%s' clause.\n",
+		 lang_hooks.decl_printable_name (current_function_decl, 2),
+		 clause_nohost ? "has" : "doesn't have",
+		 omp_clause_code_name[OMP_CLAUSE_NOHOST]);
+      /* Host compiler, 'nohost' clause?  */
+#ifndef ACCEL_COMPILER
+      if (clause_nohost)
+	discard = true;
+#endif
+
+      if (dump_file)
+	fprintf (dump_file,
+		 "OpenACC routine '%s' %sdiscarded.\n",
+		 lang_hooks.decl_printable_name (current_function_decl, 2),
+		 discard ? "" : "not ");
+      if (discard)
+	{
+	  TREE_ASM_WRITTEN (current_function_decl) = 1;
+	  return TODO_discard_function;
+	}
+    }
 
   /* Unparallelized OpenACC kernels constructs must get launched as 1 x 1 x 1
      kernels, so remove the parallelism dimensions function attributes
@@ -1720,22 +2035,10 @@ execute_oacc_device_lower ()
 
   /* Discover, partition and process the loops.  */
   oacc_loop *loops = oacc_loop_discovery ();
-  int fn_level = oacc_fn_attrib_level (attrs);
 
-  if (dump_file)
-    {
-      if (fn_level >= 0)
-	fprintf (dump_file, "Function is OpenACC routine level %d\n",
-		 fn_level);
-      else if (is_oacc_kernels)
-	fprintf (dump_file, "Function is %s OpenACC kernels offload\n",
-		 (is_oacc_kernels_parallelized
-		  ? "parallelized" : "unparallelized"));
-      else
-	fprintf (dump_file, "Function is OpenACC parallel offload\n");
-    }
-
-  unsigned outer_mask = fn_level >= 0 ? GOMP_DIM_MASK (fn_level) - 1 : 0;
+  unsigned outer_mask = 0;
+  if (is_oacc_routine)
+    outer_mask = GOMP_DIM_MASK (fn_level) - 1;
   unsigned used_mask = oacc_loop_partition (loops, outer_mask);
   /* OpenACC kernels constructs are special: they currently don't use the
      generic oacc_loop infrastructure and attribute/dimension processing.  */
@@ -1756,6 +2059,11 @@ execute_oacc_device_lower ()
 	fprintf (dump_file, "%s%d", comma, dims[ix]);
       fprintf (dump_file, "]\n");
     }
+
+  /* Verify that for OpenACC 'kernels' decomposed "gang-single" parts we launch
+     a single gang only.  */
+  if (is_oacc_parallel_kernels_gang_single)
+    gcc_checking_assert (dims[GOMP_DIM_GANG] == 1);
 
   oacc_loop_process (loops);
   if (dump_file)
@@ -1787,9 +2095,25 @@ execute_oacc_device_lower ()
 	free_oacc_loop (l);
     }
 
-  /* Offloaded targets may introduce new basic blocks, which require
-     dominance information to update SSA.  */
-  calculate_dominance_info (CDI_DOMINATORS);
+  free_oacc_loop (loops);
+
+  return 0;
+}
+
+static unsigned int
+execute_oacc_device_lower ()
+{
+  tree attrs = oacc_get_fn_attrib (current_function_decl);
+
+  if (!attrs)
+    /* Not an offloaded function.  */
+    return 0;
+
+  int dims[GOMP_DIM_MAX];
+  for (unsigned i = 0; i < GOMP_DIM_MAX; i++)
+    dims[i] = oacc_get_fn_dim_size (current_function_decl, i);
+
+  hash_map<tree, tree> adjusted_vars;
 
   /* Now lower internal loop functions to target-specific code
      sequences.  */
@@ -1867,6 +2191,90 @@ execute_oacc_device_lower ()
 		case IFN_UNIQUE_OACC_TAIL_MARK:
 		  remove = true;
 		  break;
+
+		case IFN_UNIQUE_OACC_PRIVATE:
+		  {
+		    dump_flags_t l_dump_flags
+		      = get_openacc_privatization_dump_flags ();
+
+		    location_t loc = gimple_location (stmt);
+		    if (LOCATION_LOCUS (loc) == UNKNOWN_LOCATION)
+		      loc = DECL_SOURCE_LOCATION (current_function_decl);
+		    const dump_user_location_t d_u_loc
+		      = dump_user_location_t::from_location_t (loc);
+
+		    HOST_WIDE_INT level
+		      = TREE_INT_CST_LOW (gimple_call_arg (call, 2));
+		    gcc_checking_assert (level == -1
+					 || (level >= 0
+					     && level < GOMP_DIM_MAX));
+		    for (unsigned i = 3;
+			 i < gimple_call_num_args (call);
+			 i++)
+		      {
+			static char const *const axes[] =
+			/* Must be kept in sync with GOMP_DIM enumeration.  */
+			  { "gang", "worker", "vector" };
+
+			tree arg = gimple_call_arg (call, i);
+			gcc_checking_assert (TREE_CODE (arg) == ADDR_EXPR);
+			tree decl = TREE_OPERAND (arg, 0);
+			if (dump_enabled_p ())
+/* PR100695 "Format decoder, quoting in 'dump_printf' etc." */
+#if __GNUC__ >= 10
+# pragma GCC diagnostic push
+# pragma GCC diagnostic ignored "-Wformat"
+#endif
+			  dump_printf_loc (l_dump_flags, d_u_loc,
+					   "variable %<%T%> ought to be"
+					   " adjusted for OpenACC"
+					   " privatization level: %qs\n",
+					   decl,
+					   (level == -1
+					    ? "UNKNOWN" : axes[level]));
+#if __GNUC__ >= 10
+# pragma GCC diagnostic pop
+#endif
+			bool adjusted;
+			if (level == -1)
+			  adjusted = false;
+			else if (!targetm.goacc.adjust_private_decl)
+			  adjusted = false;
+			else if (level == GOMP_DIM_VECTOR)
+			  {
+			    /* That's the default behavior.  */
+			    adjusted = true;
+			  }
+			else
+			  {
+			    tree oldtype = TREE_TYPE (decl);
+			    tree newdecl
+			      = targetm.goacc.adjust_private_decl (loc, decl,
+								   level);
+			    adjusted = (TREE_TYPE (newdecl) != oldtype
+					|| newdecl != decl);
+			    if (adjusted)
+			      adjusted_vars.put (decl, newdecl);
+			  }
+			if (adjusted
+			    && dump_enabled_p ())
+/* PR100695 "Format decoder, quoting in 'dump_printf' etc." */
+#if __GNUC__ >= 10
+# pragma GCC diagnostic push
+# pragma GCC diagnostic ignored "-Wformat"
+#endif
+			  dump_printf_loc (l_dump_flags, d_u_loc,
+					   "variable %<%T%> adjusted for"
+					   " OpenACC privatization level:"
+					   " %qs\n",
+					   decl, axes[level]);
+#if __GNUC__ >= 10
+# pragma GCC diagnostic pop
+#endif
+		      }
+		    remove = true;
+		  }
+		  break;
 		}
 	      break;
 	    }
@@ -1898,7 +2306,75 @@ execute_oacc_device_lower ()
 	  gsi_next (&gsi);
       }
 
-  free_oacc_loop (loops);
+  /* Regarding the OpenACC privatization level, we're currently only looking at
+     making the gang-private level work.  Regarding that, we have the following
+     configurations:
+
+       - GCN offloading: 'targetm.goacc.adjust_private_decl' does the work (in
+	 particular, change 'TREE_TYPE', etc.) and there is no
+	 'targetm.goacc.expand_var_decl'.
+
+       - nvptx offloading: 'targetm.goacc.adjust_private_decl' only sets a
+	 marker and then 'targetm.goacc.expand_var_decl' does the work.
+
+     Eventually (in particular, for worker-private level?), both
+     'targetm.goacc.adjust_private_decl' and 'targetm.goacc.expand_var_decl'
+     may need to do things, but that's currently not meant to be addressed, and
+     thus not fully worked out and implemented, and thus untested.  Hence,
+     'assert' what currently is implemented/tested, only.  */
+
+  if (targetm.goacc.expand_var_decl)
+    gcc_assert (adjusted_vars.is_empty ());
+
+  /* Make adjustments to gang-private local variables if required by the
+     target, e.g. forcing them into a particular address space.  Afterwards,
+     ADDR_EXPR nodes which have adjusted variables as their argument need to
+     be modified in one of two ways:
+
+       1. They can be recreated, making a pointer to the variable in the new
+	  address space, or
+
+       2. The address of the variable in the new address space can be taken,
+	  converted to the default (original) address space, and the result of
+	  that conversion subsituted in place of the original ADDR_EXPR node.
+
+     Which of these is done depends on the gimple statement being processed.
+     At present atomic operations and inline asms use (1), and everything else
+     uses (2).  At least on AMD GCN, there are atomic operations that work
+     directly in the LDS address space.
+
+     COMPONENT_REFS, ARRAY_REFS and plain VAR_DECLs are also rewritten to use
+     the new decl, adjusting types of appropriate tree nodes as necessary.  */
+
+  if (targetm.goacc.adjust_private_decl
+      && !adjusted_vars.is_empty ())
+    {
+      FOR_ALL_BB_FN (bb, cfun)
+	for (gimple_stmt_iterator gsi = gsi_start_bb (bb);
+	     !gsi_end_p (gsi);
+	     gsi_next (&gsi))
+	  {
+	    gimple *stmt = gsi_stmt (gsi);
+	    walk_stmt_info wi;
+	    var_decl_rewrite_info info;
+
+	    info.avoid_pointer_conversion
+	      = (is_gimple_call (stmt)
+		 && is_sync_builtin_call (as_a <gcall *> (stmt)))
+		|| gimple_code (stmt) == GIMPLE_ASM;
+	    info.stmt = stmt;
+	    info.modified = false;
+	    info.adjusted_vars = &adjusted_vars;
+
+	    memset (&wi, 0, sizeof (wi));
+	    wi.info = &info;
+
+	    walk_gimple_op (stmt, oacc_rewrite_var_decl, &wi);
+
+	    if (info.modified)
+	      update_stmt (stmt);
+	  }
+    }
 
   return 0;
 }
@@ -1940,6 +2416,36 @@ default_goacc_dim_limit (int ARG_UNUSED (axis))
 
 namespace {
 
+const pass_data pass_data_oacc_loop_designation =
+{
+  GIMPLE_PASS, /* type */
+  "oaccloops", /* name */
+  OPTGROUP_OMP, /* optinfo_flags */
+  TV_NONE, /* tv_id */
+  PROP_cfg, /* properties_required */
+  0 /* Possibly PROP_gimple_eomp.  */, /* properties_provided */
+  0, /* properties_destroyed */
+  0, /* todo_flags_start */
+  TODO_update_ssa | TODO_cleanup_cfg, /* todo_flags_finish */
+};
+
+class pass_oacc_loop_designation : public gimple_opt_pass
+{
+public:
+  pass_oacc_loop_designation (gcc::context *ctxt)
+    : gimple_opt_pass (pass_data_oacc_loop_designation, ctxt)
+  {}
+
+  /* opt_pass methods: */
+  virtual bool gate (function *) { return flag_openacc; };
+
+  virtual unsigned int execute (function *)
+    {
+      return execute_oacc_loop_designation ();
+    }
+
+}; // class pass_oacc_loop_designation
+
 const pass_data pass_data_oacc_device_lower =
 {
   GIMPLE_PASS, /* type */
@@ -1971,6 +2477,12 @@ public:
 }; // class pass_oacc_device_lower
 
 } // anon namespace
+
+gimple_opt_pass *
+make_pass_oacc_loop_designation (gcc::context *ctxt)
+{
+  return new pass_oacc_loop_designation (ctxt);
+}
 
 gimple_opt_pass *
 make_pass_oacc_device_lower (gcc::context *ctxt)
@@ -2275,8 +2787,16 @@ pass_omp_target_link::execute (function *fun)
     {
       gimple_stmt_iterator gsi;
       for (gsi = gsi_start_bb (bb); !gsi_end_p (gsi); gsi_next (&gsi))
-	if (walk_gimple_stmt (&gsi, NULL, find_link_var_op, NULL))
-	  gimple_regimplify_operands (gsi_stmt (gsi), &gsi);
+	{
+	  if (gimple_call_builtin_p (gsi_stmt (gsi), BUILT_IN_GOMP_TARGET))
+	    {
+	      /* Nullify the second argument of __builtin_GOMP_target_ext.  */
+	      gimple_call_set_arg (gsi_stmt (gsi), 1, null_pointer_node);
+	      update_stmt (gsi_stmt (gsi));
+	    }
+	  if (walk_gimple_stmt (&gsi, NULL, find_link_var_op, NULL))
+	    gimple_regimplify_operands (gsi_stmt (gsi), &gsi);
+	}
     }
 
   return 0;
