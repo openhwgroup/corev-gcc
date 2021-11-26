@@ -132,6 +132,15 @@ Target Bool Var(riscv_mrelax) Init(1)
 Take advantage of linker relaxations to reduce the number of instructions
 required to materialize symbol addresses.
 
+mzce-sext
+Target Bool Var(riscv_mzce_sext) Init(0)
+
+mzce-zext
+Target Bool Var(riscv_mzce_zext) Init(0)
+
+mzce-cmul
+Target Bool Var(riscv_mzce_cmul) Init(0)
+
 Mask(64BIT)
 
 Mask(MUL)
@@ -194,6 +203,9 @@ long riscv_stack_protector_guard_offset = 0
 
 TargetVariable
 int riscv_zi_subext
+
+TargetVariable
+int riscv_zce_subext
 
 Enum
 Name(isa_spec_class) Type(enum riscv_isa_spec_class)

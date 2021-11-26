@@ -1703,6 +1703,20 @@ riscv_extend_cost (rtx op, bool unsigned_p)
     /* We can use ANDI.  */
     return COSTS_N_INSNS (1);
 
+  /* ZCEE provide zext.w.  */
+  if (TARGET_ZCEE && TARGET_64BIT && unsigned_p && GET_MODE (op) == SImode)
+    return COSTS_N_INSNS (1);
+
+  /* ZCEE provide zext.h, sext.b and sext.h.  */
+  if (TARGET_ZCEE)
+    {
+      if (!unsigned_p && GET_MODE (op) == QImode)
+	return COSTS_N_INSNS (1);
+
+      if (GET_MODE (op) == HImode)
+	return COSTS_N_INSNS (1);
+    }
+
   if (!unsigned_p && GET_MODE (op) == SImode)
     /* We can use SEXT.W.  */
     return COSTS_N_INSNS (1);
@@ -4648,6 +4662,15 @@ riscv_file_start (void)
      relaxation in the assembler.  */
   if (! riscv_mrelax)
     fprintf (asm_out_file, "\t.option norelax\n");
+
+  if (riscv_mzce_sext)
+    fprintf (asm_out_file, "\t.option zce-sext\n");
+
+  if (riscv_mzce_zext)
+    fprintf (asm_out_file, "\t.option zce-zext\n");
+
+  if (riscv_mzce_cmul)
+    fprintf (asm_out_file, "\t.option zce-cmul\n");
 
   if (riscv_emit_attribute_p)
     riscv_emit_attribute ();
