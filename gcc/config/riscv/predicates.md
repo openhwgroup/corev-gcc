@@ -239,3 +239,9 @@
 (define_predicate "const63_operand"
   (and (match_code "const_int")
        (match_test "INTVAL (op) == 63")))
+
+(define_special_predicate "riscv_stack_push_operation"
+  (match_code "parallel")
+{
+  return riscv_valid_stack_push_pop_p (op, true);
+})
