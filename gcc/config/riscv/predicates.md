@@ -245,3 +245,13 @@
 {
   return riscv_valid_stack_push_pop_p (op, true);
 })
+
+(define_special_predicate "riscv_stack_pop_operation"
+  (match_code "parallel")
+{
+  return riscv_valid_stack_push_pop_p (op, false);
+})
+
+(define_predicate "pop_return_value_constant"
+  (and (match_code "const_int")
+       (match_test "INTVAL (op) == 0")))
