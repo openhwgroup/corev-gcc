@@ -370,6 +370,12 @@ static const unsigned push_save_reg_order[] = {
   S9_REGNUM, S10_REGNUM, S11_REGNUM
 };
 
+/* Order for the CLOBBERs/USEs of push/pop in rve.  */
+static const unsigned push_save_reg_order_zcmpe[] = {
+  INVALID_REGNUM, RETURN_ADDR_REGNUM, S0_REGNUM,
+  S1_REGNUM
+};
+
 /* A table describing all the processors GCC knows about.  */
 static const struct riscv_tune_info riscv_tune_info_table[] = {
   { "rocket", generic, &rocket_tune_info },
@@ -4025,7 +4031,7 @@ riscv_use_save_libcall (const struct riscv_frame_info *frame)
 static bool
 riscv_use_push_pop (const struct riscv_frame_info *frame)
 {
-  if (!TARGET_ZCMP)
+  if (!(TARGET_ZCMP || TARGET_ZCMPE))
     return false;
 
   /* {ra,s0-s10} is invalid. */
@@ -4392,23 +4398,30 @@ riscv_emit_pop_insn (struct riscv_frame_info *frame, HOST_WIDE_INT offset, HOST_
   HOST_WIDE_INT sp_adjust;
   rtx dwarf = NULL_RTX;
 
-  gcc_assert (n_reg <= ARRAY_SIZE (push_save_reg_order)
-      && n_reg >= 1);
+  const unsigned *reg_order = TARGET_ZCMPE ?
+	  push_save_reg_order_zcmpe
+	: push_save_reg_order;
+
+  gcc_assert (n_reg >= 1
+	&& (TARGET_ZCMP || TARGET_ZCMPE)
+	&& ((TARGET_ZCMPE && (n_reg <= ARRAY_SIZE (push_save_reg_order_zcmpe)))
+	    || (TARGET_ZCMP && (n_reg <= ARRAY_SIZE (push_save_reg_order)))));
 
   /* sp adjust pattern */
   int max_allow_sp_adjust = riscv_push_pop_max_sp_adjust (frame->mask);
+  int aligned_size = (size + 15) & (~0xf);
 
   /* if sp adjustment is too large, we should split it first. */
-  if (size > max_allow_sp_adjust)
+  if (aligned_size > max_allow_sp_adjust)
     {
       rtx dwarf_pre_sp_adjust = NULL_RTX;
       rtx pre_adjust_rtx = gen_add3_insn (stack_pointer_rtx,
 			stack_pointer_rtx,
-			GEN_INT (size - max_allow_sp_adjust));
+			GEN_INT (aligned_size - max_allow_sp_adjust));
       rtx insn = emit_insn (pre_adjust_rtx);
 
       rtx cfa_pre_adjust_rtx = gen_rtx_PLUS (Pmode, stack_pointer_rtx,
-			GEN_INT (size - max_allow_sp_adjust));
+			GEN_INT (aligned_size - max_allow_sp_adjust));
       dwarf_pre_sp_adjust = alloc_reg_note (REG_CFA_DEF_CFA,
 		cfa_pre_adjust_rtx,
 		dwarf_pre_sp_adjust);
@@ -4419,13 +4432,13 @@ riscv_emit_pop_insn (struct riscv_frame_info *frame, HOST_WIDE_INT offset, HOST_
       sp_adjust = max_allow_sp_adjust;
     }
   else
-    sp_adjust = size;
+    sp_adjust = aligned_size;
 
   /* register save sequence. */
   for (unsigned i = 1; i < veclen; ++i)
     {
       offset -= UNITS_PER_WORD;
-      unsigned regno = push_save_reg_order[i];
+      unsigned regno = reg_order[i];
       rtx reg = gen_rtx_REG (Pmode, regno);
       rtx mem = gen_frame_mem (Pmode, plus_constant (Pmode,
 	      stack_pointer_rtx,
@@ -4567,7 +4580,7 @@ riscv_valid_stack_push_pop_p (rtx op, bool push_p)
   rtx elt_plus;
   enum rtx_code dest_code = push_p ? MEM : REG;
 
-  if (!TARGET_ZCMP)
+  if (!(TARGET_ZCMP || TARGET_ZCMPE))
     return false;
 
   total_count = XVECLEN (op, 0);
@@ -4641,14 +4654,22 @@ riscv_emit_push_insn (struct riscv_frame_info *frame, HOST_WIDE_INT size)
   unsigned int n_reg = veclen - 1;
   rtvec vec = rtvec_alloc (veclen);
 
-  gcc_assert (n_reg <= ARRAY_SIZE (push_save_reg_order)
-      && n_reg >= 1);
+  const unsigned *reg_order = TARGET_ZCMPE ?
+	  push_save_reg_order_zcmpe
+	: push_save_reg_order;
+
+  int aligned_size = (size + 15) & (~0xf);
+
+  gcc_assert (n_reg >= 1
+	&& (TARGET_ZCMP || TARGET_ZCMPE)
+	&& ((TARGET_ZCMPE && (n_reg <= ARRAY_SIZE (push_save_reg_order_zcmpe)))
+	    || (TARGET_ZCMP && (n_reg <= ARRAY_SIZE (push_save_reg_order)))));
 
   /* sp adjust pattern */
   int max_allow_sp_adjust = riscv_push_pop_max_sp_adjust (frame->mask);
-  int sp_adjust = size > max_allow_sp_adjust ?
+  int sp_adjust = aligned_size > max_allow_sp_adjust ?
       max_allow_sp_adjust
-      : size;
+      : aligned_size;
 
   /*TODO: move this part to frame computation function. */
   frame->push_pop_offset = (veclen - 1) * UNITS_PER_WORD;
@@ -4665,7 +4686,7 @@ riscv_emit_push_insn (struct riscv_frame_info *frame, HOST_WIDE_INT size)
   for (unsigned i = 1; i < veclen; ++i)
     {
       sp_adjust -= UNITS_PER_WORD;
-      unsigned regno = push_save_reg_order[i];
+      unsigned regno = reg_order[i];
       rtx reg = gen_rtx_REG (Pmode, regno);
       rtx mem = gen_frame_mem (Pmode, plus_constant (Pmode,
 	      stack_pointer_rtx,
@@ -4716,10 +4737,11 @@ riscv_expand_prologue (void)
     {
       riscv_emit_push_insn (frame, step1);
 
-      step1 -= frame->push_pop_sp_adjust;
-      size -= frame->push_pop_sp_adjust;
-      gcc_assert (step1 >= 0);
-      frame->mask &= ~RISCV_ZCE_PUSH_POP_MASK;
+      step1 = MAX (step1 - frame->push_pop_sp_adjust, 0);
+      size = MAX (size - frame->push_pop_sp_adjust, 0);
+      frame->mask &= ~ (TARGET_ZCMPE ?
+		  RISCV_ZCMPE_PUSH_POP_MASK
+		: RISCV_ZCE_PUSH_POP_MASK);
     }
 
   /* Save the registers.  */
@@ -4920,7 +4942,9 @@ riscv_expand_epilogue (int style)
       riscv_emit_stack_tie ();
       need_barrier_p = false;
       riscv_emit_pop_insn (frame, frame->total_size, step2);
-      frame->mask &= ~RISCV_ZCE_PUSH_POP_MASK;
+      frame->mask &= ~ (TARGET_ZCMPE ?
+		  RISCV_ZCMPE_PUSH_POP_MASK
+		: RISCV_ZCE_PUSH_POP_MASK);
       step2 = 0;
     }
 
@@ -5415,6 +5439,12 @@ riscv_option_override (void)
 
   if (TARGET_RVE && riscv_abi != ABI_ILP32E)
     error ("rv32e requires ilp32e ABI");
+
+  if (TARGET_ZCMPE && riscv_abi != ABI_ILP32E)
+    error ("Zcmpe requires ilp32e ABI");
+
+  if (TARGET_ZCMP && riscv_abi == ABI_ILP32E)
+    error ("Zcmp is not compatible with ilp32e ABI");
 
   /* We do not yet support ILP32 on RV64.  */
   if (BITS_PER_WORD != POINTER_SIZE)

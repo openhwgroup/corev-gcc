@@ -21,7 +21,7 @@
   [(match_parallel 0 "riscv_stack_push_operation"
     [(set (reg:X SP_REGNUM) (plus:X (reg:X SP_REGNUM)
       (match_operand:X 1 "const_int_operand" "")))])]
-  "TARGET_ZCMP"
+  "TARGET_ZCMP || TARGET_ZCMPE"
   "cm.push\t{%L0},%1")
 
 (define_insn "*stack_pop<mode>"
@@ -29,7 +29,7 @@
     [(set (match_operand:X 1 "register_operand" "")
       (mem:X (plus:X (reg:X SP_REGNUM)
 	(match_operand:X 2 "const_int_operand" ""))))])]
-  "TARGET_ZCMP"
+  "TARGET_ZCMP || TARGET_ZCMPE"
   {
     return riscv_output_popret_p (operands[0]) ?
 	"cm.popret\t{%L0},%s0" :
@@ -40,7 +40,7 @@
   [(match_parallel 0 "riscv_stack_pop_operation"
     [(set (reg:ANYI A0_REGNUM)
       (match_operand:ANYI 1 "pop_return_value_constant" ""))])]
-  "TARGET_ZCMP"
+  "TARGET_ZCMP || TARGET_ZCMPE"
   {
     gcc_assert (riscv_output_popret_p (operands[0]));
     return "cm.popretz\t{%L0},%s0";
