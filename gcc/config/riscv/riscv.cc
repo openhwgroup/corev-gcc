@@ -4026,12 +4026,52 @@ riscv_use_save_libcall (const struct riscv_frame_info *frame)
   return frame->save_libcall_adjustment != 0;
 }
 
+/* Determine how many instructions related to push/pop instructions.  */
+
+static unsigned
+riscv_save_push_pop_count (unsigned mask)
+{
+  if (!BITSET_P (mask, GP_REG_FIRST + RETURN_ADDR_REGNUM))
+    return 0;
+  for (unsigned n = GP_REG_LAST; n > GP_REG_FIRST; n--)
+    if (BITSET_P (mask, n)
+	&& !call_used_regs [n])
+      /* add ra saving and sp adjust. */
+      return CALLEE_SAVED_REG_NUMBER (n) + 1 + 2;
+  abort ();
+}
+
+/* Calculate the maximum sp adjustment of push/pop instruction. */
+
+static unsigned
+riscv_push_pop_base_sp_adjust (unsigned mask)
+{
+  unsigned n_regs = riscv_save_push_pop_count (mask) - 1;
+  return (n_regs * UNITS_PER_WORD + 15) & (~0xf);
+}
+
 /* Determine whether to call push/pop routines.  */
 
 static bool
-riscv_use_push_pop (const struct riscv_frame_info *frame)
+riscv_use_push_pop (const struct riscv_frame_info *frame, const HOST_WIDE_INT frame_size)
 {
   if (!(TARGET_ZCMP || TARGET_ZCMPE))
+    return false;
+
+  HOST_WIDE_INT base_size = riscv_push_pop_base_sp_adjust (frame->mask);
+  /*
+     Pr 960215-1.c in rv64 ouputs
+
+	addi	sp,sp,-32
+	sd	ra,24(sp)
+	sd	s0,16(sp)
+	sd	s2,8(sp)
+	sd	s3,0(sp)
+     it is a rare case that callee saved registers are not non-continous,
+     which breaks the old push implementation, and we just reject this case
+     like save-restore does now.
+  */
+  if (base_size > frame_size)
     return false;
 
   /* {ra,s0-s10} is invalid. */
@@ -4041,29 +4081,6 @@ riscv_use_push_pop (const struct riscv_frame_info *frame)
 
   return frame->mask & (1 << (RETURN_ADDR_REGNUM - GP_REG_FIRST));
 }
-
-/* Determine which GPR save/restore routine to call.  */
-
-static unsigned
-riscv_save_push_pop_count (unsigned mask)
-{
-  unsigned reg_array_len = TARGET_ZCMPE ? ARRAY_SIZE (push_save_reg_order_zcmpe)
-	  : ARRAY_SIZE (push_save_reg_order);
-  const unsigned *reg_order = TARGET_ZCMPE ?
-	  push_save_reg_order_zcmpe
-	: push_save_reg_order;
-  unsigned n = 2;
-
-  if (!BITSET_P (mask, GP_REG_FIRST + RETURN_ADDR_REGNUM))
-    return 0;
-
-  for (; n < reg_array_len; n++)
-    if (!BITSET_P (mask, reg_order [n]))
-      break;
-
-  return n;
-}
-
 
 /* Determine which GPR save/restore routine to call.  */
 
@@ -4378,17 +4395,6 @@ riscv_restore_reg (rtx reg, rtx mem)
   RTX_FRAME_RELATED_P (insn) = 1;
 }
 
-/* Calculate the maximum sp adjustment of push/pop instruction. */
-
-static unsigned
-riscv_push_pop_max_sp_adjust (unsigned mask)
-{
-  int lowerb = 48;
-  unsigned n_regs = riscv_save_push_pop_count (mask) - 1;
-  int align16 = (n_regs * UNITS_PER_WORD + 15) & (~0xf);
-  return lowerb + align16;
-}
-
 static void
 riscv_emit_pop_insn (struct riscv_frame_info *frame, HOST_WIDE_INT offset, HOST_WIDE_INT size)
 {
@@ -4408,7 +4414,7 @@ riscv_emit_pop_insn (struct riscv_frame_info *frame, HOST_WIDE_INT offset, HOST_
 	    || (TARGET_ZCMP && (n_reg <= ARRAY_SIZE (push_save_reg_order)))));
 
   /* sp adjust pattern */
-  int max_allow_sp_adjust = riscv_push_pop_max_sp_adjust (frame->mask);
+  int max_allow_sp_adjust = riscv_push_pop_base_sp_adjust (frame->mask) + 48;
   int aligned_size = (size + 15) & (~0xf);
 
   /* if sp adjustment is too large, we should split it first. */
@@ -4666,7 +4672,7 @@ riscv_emit_push_insn (struct riscv_frame_info *frame, HOST_WIDE_INT size)
 	    || (TARGET_ZCMP && (n_reg <= ARRAY_SIZE (push_save_reg_order)))));
 
   /* sp adjust pattern */
-  int max_allow_sp_adjust = riscv_push_pop_max_sp_adjust (frame->mask);
+  int max_allow_sp_adjust = riscv_push_pop_base_sp_adjust (frame->mask) + 48;
   int sp_adjust = aligned_size > max_allow_sp_adjust ?
       max_allow_sp_adjust
       : aligned_size;
@@ -4733,7 +4739,7 @@ riscv_expand_prologue (void)
 
   step1 = MIN (size, riscv_first_stack_step (frame));
 
-  if (riscv_use_push_pop (frame))
+  if (riscv_use_push_pop (frame, step1))
     {
       riscv_emit_push_insn (frame, step1);
 
@@ -4936,7 +4942,7 @@ riscv_expand_epilogue (int style)
   if (use_restore_libcall)
     frame->mask = 0; /* Temporarily fib that we need not save GPRs.  */
 
-  if (use_zcmp_pop && riscv_use_push_pop (frame))
+  if (use_zcmp_pop && riscv_use_push_pop (frame, step2))
     {
       /* Emit a barrier to prevent loads from a deallocated stack.  */
       riscv_emit_stack_tie ();
