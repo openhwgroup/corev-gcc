@@ -1,6 +1,6 @@
 // Utility functions for uses-allocator construction -*- C++ -*-
 
-// Copyright (C) 2019-2021 Free Software Foundation, Inc.
+// Copyright (C) 2019-2022 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -22,20 +22,6 @@
 // see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 // <http://www.gnu.org/licenses/>.
 
-/*
- * Copyright (c) 1997-1999
- * Silicon Graphics Computer Systems, Inc.
- *
- * Permission to use, copy, modify, distribute and sell this software
- * and its documentation for any purpose is hereby granted without fee,
- * provided that the above copyright notice appear in all copies and
- * that both that copyright notice and this permission notice appear
- * in supporting documentation.  Silicon Graphics makes no
- * representations about the suitability of this software for any
- * purpose.  It is provided "as is" without express or implied warranty.
- *
- */
-
 /** @file include/bits/uses_allocator_args.h
  *  This is an internal header file, included by other library headers.
  *  Do not attempt to use it directly. @headername{memory}
@@ -56,12 +42,6 @@
 namespace std _GLIBCXX_VISIBILITY(default)
 {
 _GLIBCXX_BEGIN_NAMESPACE_VERSION
-  template<typename _Tp>
-    inline constexpr bool __is_pair = false;
-  template<typename _Tp, typename _Up>
-    inline constexpr bool __is_pair<pair<_Tp, _Up>> = true;
-  template<typename _Tp, typename _Up>
-    inline constexpr bool __is_pair<const pair<_Tp, _Up>> = true;
 
   template<typename _Tp>
     concept _Std_pair = __is_pair<_Tp>;
@@ -202,7 +182,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     }
 
   template<typename _Tp, typename _Alloc, typename... _Args>
-    inline _Tp
+    constexpr _Tp
     make_obj_using_allocator(const _Alloc& __a, _Args&&... __args)
     {
       return std::make_from_tuple<_Tp>(
@@ -211,7 +191,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     }
 
   template<typename _Tp, typename _Alloc, typename... _Args>
-    inline _Tp*
+    constexpr _Tp*
     uninitialized_construct_using_allocator(_Tp* __p, const _Alloc& __a,
 					    _Args&&... __args)
     {

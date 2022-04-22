@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---          Copyright (C) 1992-2021, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2022, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -47,6 +47,7 @@
 with Alloc;
 with Sinfo.Nodes;    use Sinfo.Nodes;
 with Einfo.Entities; use Einfo.Entities;
+with Einfo.Utils;    use Einfo.Utils;
 with Types;          use Types;
 with Seinfo;         use Seinfo;
 with System;         use System;
@@ -409,11 +410,30 @@ package Atree is
    --  all calls to process returned either OK, OK_Orig, or Skip).
 
    generic
+      with function Process
+        (Parent_Node : Node_Id;
+         Node        : Node_Id) return Traverse_Result is <>;
+   function Traverse_Func_With_Parent
+     (Node : Node_Id) return Traverse_Final_Result;
+   pragma Inline (Traverse_Func_With_Parent);
+   --  Same as Traverse_Func except that the called function Process receives
+   --  also the Parent_Node of Node.
+
+   generic
       with function Process (N : Node_Id) return Traverse_Result is <>;
    procedure Traverse_Proc (Node : Node_Id);
    pragma Inline (Traverse_Proc);
    --  This is the same as Traverse_Func except that no result is returned,
    --  i.e. Traverse_Func is called and the result is simply discarded.
+
+   generic
+      with function Process
+        (Parent_Node : Node_Id;
+         Node        : Node_Id) return Traverse_Result is <>;
+   procedure Traverse_Proc_With_Parent (Node : Node_Id);
+   pragma Inline (Traverse_Proc_With_Parent);
+   --  Same as Traverse_Proc except that the called function Process receives
+   --  also the Parent_Node of Node.
 
    ---------------------------
    -- Node Access Functions --
@@ -615,6 +635,20 @@ package Atree is
    --  else" fields to retain their value. The two "something else"s are not
    --  always the same; for example we change from E_Void, to E_Variable, to
    --  E_Void, to E_Constant.
+
+   function Node_To_Fetch_From
+     (N : Node_Or_Entity_Id; Field : Node_Or_Entity_Field)
+     return Node_Or_Entity_Id is
+      (case Field_Descriptors (Field).Type_Only is
+         when No_Type_Only => N,
+         when Base_Type_Only => Base_Type (N),
+         when Impl_Base_Type_Only => Implementation_Base_Type (N),
+         when Root_Type_Only => Root_Type (N));
+   --  This is analogous to the same-named function in Gen_IL.Gen. Normally,
+   --  Type_Only is No_Type_Only, and we fetch the field from the node N. But
+   --  if Type_Only = Base_Type_Only, we need to go to the Base_Type, and
+   --  similarly for the other two cases. This can return something other
+   --  than N only if N is an Entity.
 
    -----------------------------
    -- Private Part Subpackage --

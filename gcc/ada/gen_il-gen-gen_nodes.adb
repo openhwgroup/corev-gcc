@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---           Copyright (C) 2020-2021, Free Software Foundation, Inc.        --
+--           Copyright (C) 2020-2022, Free Software Foundation, Inc.        --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -481,7 +481,9 @@ begin -- Gen_IL.Gen.Gen_Nodes
        (Sy (Expressions, List_Id, Default_No_List),
         Sy (Component_Associations, List_Id, Default_No_List),
         Sy (Null_Record_Present, Flag),
+        Sy (Is_Parenthesis_Aggregate, Flag),
         Sy (Is_Homogeneous_Aggregate, Flag),
+        Sy (Is_Enum_Array_Aggregate, Flag),
         Sm (Aggregate_Bounds, Node_Id),
         Sm (Entity_Or_Associated_Node, Node_Id), -- just Associated_Node
         Sm (Compile_Time_Known_Aggregate, Flag),
@@ -1136,11 +1138,13 @@ begin -- Gen_IL.Gen.Gen_Nodes
    Cc (N_Formal_Abstract_Subprogram_Declaration, N_Formal_Subprogram_Declaration,
        (Sy (Specification, Node_Id),
         Sy (Default_Name, Node_Id, Default_Empty),
+        Sy (Expression, Node_Id, Default_Empty),
         Sy (Box_Present, Flag)));
 
    Cc (N_Formal_Concrete_Subprogram_Declaration, N_Formal_Subprogram_Declaration,
        (Sy (Specification, Node_Id),
         Sy (Default_Name, Node_Id, Default_Empty),
+        Sy (Expression, Node_Id, Default_Empty),
         Sy (Box_Present, Flag)));
 
    Ab (N_Push_Pop_xxx_Label, Node_Kind);
@@ -1675,16 +1679,29 @@ begin -- Gen_IL.Gen.Gen_Nodes
 
    Union (N_Is_Decl,
           Children =>
-            (N_Declaration,
+            (N_Aggregate,
+             N_Block_Statement,
+             N_Declaration,
              N_Discriminant_Specification,
+             N_Entry_Index_Specification,
              N_Enumeration_Type_Definition,
              N_Exception_Handler,
+             N_Explicit_Dereference,
+             N_Expression_With_Actions,
+             N_Extension_Aggregate,
+             N_Identifier,
+             N_Iterated_Component_Association,
              N_Later_Decl_Item,
+             N_Loop_Statement,
+             N_Null_Statement,
+             N_Number_Declaration,
              N_Package_Specification,
              N_Parameter_Specification,
              N_Renaming_Declaration,
-             N_Subprogram_Specification));
-   --  Nodes that can be returned by Declaration_Node
+             N_Quantified_Expression));
+   --  Nodes that can be returned by Declaration_Node; it can also return
+   --  Empty. Not all of these are true "declarations", but Declaration_Node
+   --  can return them in some cases.
 
    Union (N_Is_Range,
           Children =>

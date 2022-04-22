@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 2020-2021, Free Software Foundation, Inc.         --
+--          Copyright (C) 2020-2022, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -2135,9 +2135,13 @@ package body Gen_IL.Gen is
 
                procedure One_Comp (F : Field_Enum);
 
+               --------------
+               -- One_Comp --
+               --------------
+
                procedure One_Comp (F : Field_Enum) is
                   pragma Annotate (Codepeer, Modified, Field_Table);
-                  Offset : constant Field_Offset :=  Field_Table (F).Offset;
+                  Offset : constant Field_Offset := Field_Table (F).Offset;
                begin
                   if First_Time then
                      First_Time := False;
@@ -2157,7 +2161,8 @@ package body Gen_IL.Gen is
 
                   Put (S, F_Image (F) & " => (" &
                        Image (Field_Table (F).Field_Type) & "_Field, " &
-                       Image (Offset) & ")");
+                       Image (Offset) & ", " &
+                       Image (Field_Table (F).Type_Only) & ")");
 
                   FS := Field_Size (F);
                   FB := First_Bit (F, Offset);
@@ -2252,10 +2257,32 @@ package body Gen_IL.Gen is
          Decrease_Indent (S, 2);
          Put (S, ");" & LF & LF);
 
+         Put (S, "type Type_Only_Enum is" & LF);
+         Increase_Indent (S, 2);
+         Put (S, "(");
+
+         declare
+            First_Time : Boolean := True;
+         begin
+            for TO in Type_Only_Enum loop
+               if First_Time then
+                  First_Time := False;
+               else
+                  Put (S, ", ");
+               end if;
+
+               Put (S, Image (TO));
+            end loop;
+         end;
+
+         Decrease_Indent (S, 2);
+         Put (S, ");" & LF & LF);
+
          Put (S, "type Field_Descriptor is record" & LF);
          Increase_Indent (S, 3);
          Put (S, "Kind : Field_Kind;" & LF);
          Put (S, "Offset : Field_Offset;" & LF);
+         Put (S, "Type_Only : Type_Only_Enum;" & LF);
          Decrease_Indent (S, 3);
          Put (S, "end record;" & LF & LF);
 
@@ -2445,7 +2472,8 @@ package body Gen_IL.Gen is
          for T in First_Concrete (Root) .. Last_Concrete (Root) loop
             if T not in N_Unused_At_Start | N_Unused_At_End then
                Put_Make_Spec (S, Root, T);
-               Put (S, ";" & LF & "pragma " & Inline & " (Make_" &
+               Put (S, ";" & LF);
+               Put (S, "pragma " & Inline & " (Make_" &
                     Image_Sans_N (T) & ");" & LF & LF);
             end if;
          end loop;

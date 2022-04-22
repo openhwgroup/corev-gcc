@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2021, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2022, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -759,6 +759,8 @@ package body Sem_Ch7 is
                  ("optional package body (not allowed in Ada 95)??", N);
             else
                Error_Msg_N ("spec of this package does not allow a body", N);
+               Error_Msg_N ("\either remove the body or add pragma "
+                            & "Elaborate_Body in the spec", N);
             end if;
          end if;
       end if;
@@ -2633,13 +2635,13 @@ package body Sem_Ch7 is
       elsif Abstract_Present (Def) then
          Error_Msg_N ("only a tagged type can be abstract", N);
 
-      --  When extensions are enabled, we initialize the primitive operations
-      --  list of an untagged private type to an empty element list. (Note:
-      --  This could be done for all private types and shared with the tagged
-      --  case above, but for now we do it separately when the feature of
-      --  prefixed calls for untagged types is enabled.)
+      --  We initialize the primitive operations list of an untagged private
+      --  type to an empty element list. Do this even when Extensions_Allowed
+      --  is False to issue better error messages. (Note: This could be done
+      --  for all private types and shared with the tagged case above, but
+      --  for now we do it separately.)
 
-      elsif Extensions_Allowed then
+      else
          Set_Direct_Primitive_Operations (Id, New_Elmt_List);
       end if;
    end New_Private_Type;
@@ -3363,12 +3365,12 @@ package body Sem_Ch7 is
       --  Body required if library package with pragma Elaborate_Body
 
       elsif Has_Pragma_Elaborate_Body (Pack_Id) then
-         Error_Msg_N ("info: & requires body (Elaborate_Body)?Y?", Pack_Id);
+         Error_Msg_N ("info: & requires body (Elaborate_Body)?.y?", Pack_Id);
 
       --  Body required if subprogram
 
       elsif Is_Subprogram_Or_Generic_Subprogram (Pack_Id) then
-         Error_Msg_N ("info: & requires body (subprogram case)?Y?", Pack_Id);
+         Error_Msg_N ("info: & requires body (subprogram case)?.y?", Pack_Id);
 
       --  Body required if generic parent has Elaborate_Body
 
@@ -3381,7 +3383,7 @@ package body Sem_Ch7 is
          begin
             if Has_Pragma_Elaborate_Body (G_P) then
                Error_Msg_N
-                 ("info: & requires body (generic parent Elaborate_Body)?Y?",
+                 ("info: & requires body (generic parent Elaborate_Body)?.y?",
                   Pack_Id);
             end if;
          end;
@@ -3399,7 +3401,7 @@ package body Sem_Ch7 is
                        (Node (First_Elmt (Abstract_States (Pack_Id))))
       then
          Error_Msg_N
-           ("info: & requires body (non-null abstract state aspect)?Y?",
+           ("info: & requires body (non-null abstract state aspect)?.y?",
             Pack_Id);
       end if;
 
@@ -3410,7 +3412,8 @@ package body Sem_Ch7 is
          if Requires_Completion_In_Body (E, Pack_Id) then
             Error_Msg_Node_2 := E;
             Error_Msg_NE
-              ("info: & requires body (& requires completion)?Y?", E, Pack_Id);
+              ("info: & requires body (& requires completion)?.y?", E,
+               Pack_Id);
          end if;
 
          Next_Entity (E);

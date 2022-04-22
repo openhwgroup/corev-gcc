@@ -1,7 +1,7 @@
 /* Functions to enable and disable individual warnings on an expression
    and statement basis.
 
-   Copyright (C) 2021 Free Software Foundation, Inc.
+   Copyright (C) 2021-2022 Free Software Foundation, Inc.
 
    This file is part of GCC.
 
@@ -98,7 +98,7 @@ get_nowarn_spec (const_tree expr)
   return nowarn_map ? nowarn_map->get (loc) : NULL;
 }
 
-/* Return the no-warning bitmap for stateemt STMT.  */
+/* Return the no-warning bitmap for statement STMT.  */
 
 static nowarn_spec_t *
 get_nowarn_spec (const gimple *stmt)
@@ -206,7 +206,8 @@ void copy_warning (ToType to, FromType from)
 	  gcc_assert (supp);
 
 	  gcc_checking_assert (nowarn_map);
-	  nowarn_map->put (to_loc, *from_spec);
+	  nowarn_spec_t tem = *from_spec;
+	  nowarn_map->put (to_loc, tem);
 	}
       else
 	{

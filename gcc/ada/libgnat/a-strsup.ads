@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---          Copyright (C) 2003-2021, Free Software Foundation, Inc.         --
+--          Copyright (C) 2003-2022, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -76,7 +76,8 @@ package Ada.Strings.Superbounded with SPARK_Mode is
    --  that they can be renamed in Ada.Strings.Bounded.Generic_Bounded_Length.
 
    function Super_Length (Source : Super_String) return Natural
-   is (Source.Current_Length);
+   is (Source.Current_Length)
+   with Global => null;
 
    --------------------------------------------------------
    -- Conversion, Concatenation, and Selection Functions --
@@ -620,7 +621,8 @@ package Ada.Strings.Superbounded with SPARK_Mode is
    is (if Index <= Source.Current_Length
        then Source.Data (Index)
        else raise Index_Error)
-   with Pre => Index <= Super_Length (Source);
+   with Pre    => Index <= Super_Length (Source),
+        Global => null;
 
    procedure Super_Replace_Element
      (Source : in out Super_String;
@@ -649,8 +651,9 @@ package Ada.Strings.Superbounded with SPARK_Mode is
           --  get the null string in accordance with normal Ada slice rules.
 
           String (Source.Data (Low .. High)))
-   with Pre => Low - 1 <= Super_Length (Source)
-                 and then High <= Super_Length (Source);
+   with Pre    => Low - 1 <= Super_Length (Source)
+                    and then High <= Super_Length (Source),
+        Global => null;
 
    function Super_Slice
      (Source : Super_String;
@@ -2319,7 +2322,7 @@ package Ada.Strings.Superbounded with SPARK_Mode is
             and then
               String'(Super_Slice (Super_Head'Result,
                 Super_Length (Source) + 1, Count)) =
-                  (1 .. Count - Super_Length (Source) => Pad),
+                  [1 .. Count - Super_Length (Source) => Pad],
         Count > Source.Max_Length and then Drop = Right
         =>
           --  Source is followed by Pad characters
@@ -2331,13 +2334,13 @@ package Ada.Strings.Superbounded with SPARK_Mode is
             and then
               String'(Super_Slice (Super_Head'Result,
                 Super_Length (Source) + 1, Source.Max_Length)) =
-                  (1 .. Source.Max_Length - Super_Length (Source) => Pad),
+                  [1 .. Source.Max_Length - Super_Length (Source) => Pad],
         Count - Super_Length (Source) > Source.Max_Length and then Drop = Left
         =>
           --  Source is fully dropped on the left
 
           Super_To_String (Super_Head'Result) =
-            (1 .. Source.Max_Length => Pad),
+            [1 .. Source.Max_Length => Pad],
         others
         =>
           --  Source is partly dropped on the left
@@ -2352,7 +2355,7 @@ package Ada.Strings.Superbounded with SPARK_Mode is
               String'(Super_Slice (Super_Head'Result,
                 Source.Max_Length - Count + Super_Length (Source) + 1,
                 Source.Max_Length)) =
-                  (1 .. Count - Super_Length (Source) => Pad)),
+                  [1 .. Count - Super_Length (Source) => Pad]),
      Global         => null;
 
    procedure Super_Head
@@ -2379,7 +2382,7 @@ package Ada.Strings.Superbounded with SPARK_Mode is
             and then
               String'(Super_Slice (Source,
                 Super_Length (Source'Old) + 1, Count)) =
-                  (1 .. Count - Super_Length (Source'Old) => Pad),
+                  [1 .. Count - Super_Length (Source'Old) => Pad],
         Count > Source.Max_Length and then Drop = Right
         =>
           --  Source is followed by Pad characters
@@ -2391,12 +2394,12 @@ package Ada.Strings.Superbounded with SPARK_Mode is
             and then
               String'(Super_Slice (Source,
                 Super_Length (Source'Old) + 1, Source.Max_Length)) =
-                  (1 .. Source.Max_Length - Super_Length (Source'Old) => Pad),
+                  [1 .. Source.Max_Length - Super_Length (Source'Old) => Pad],
         Count - Super_Length (Source) > Source.Max_Length and then Drop = Left
         =>
           --  Source is fully dropped on the left
 
-          Super_To_String (Source) = (1 .. Source.Max_Length => Pad),
+          Super_To_String (Source) = [1 .. Source.Max_Length => Pad],
         others
         =>
           --  Source is partly dropped on the left
@@ -2411,7 +2414,7 @@ package Ada.Strings.Superbounded with SPARK_Mode is
               String'(Super_Slice (Source,
                 Source.Max_Length - Count + Super_Length (Source'Old) + 1,
                 Source.Max_Length)) =
-                  (1 .. Count - Super_Length (Source'Old) => Pad)),
+                  [1 .. Count - Super_Length (Source'Old) => Pad]),
      Global         => null;
 
    function Super_Tail
@@ -2440,7 +2443,7 @@ package Ada.Strings.Superbounded with SPARK_Mode is
             and then
               String'(Super_Slice (Super_Tail'Result,
                 1, Count - Super_Length (Source))) =
-                  (1 .. Count - Super_Length (Source) => Pad)
+                  [1 .. Count - Super_Length (Source) => Pad]
             and then
               Super_Slice (Super_Tail'Result,
                 Count - Super_Length (Source) + 1, Count) =
@@ -2453,7 +2456,7 @@ package Ada.Strings.Superbounded with SPARK_Mode is
             and then
               String'(Super_Slice (Super_Tail'Result,
                 1, Source.Max_Length - Super_Length (Source))) =
-                  (1 .. Source.Max_Length - Super_Length (Source) => Pad)
+                  [1 .. Source.Max_Length - Super_Length (Source) => Pad]
             and then
               (if Super_Length (Source) > 0 then
                  Super_Slice (Super_Tail'Result,
@@ -2466,7 +2469,7 @@ package Ada.Strings.Superbounded with SPARK_Mode is
           --  Source is fully dropped on the right
 
           Super_To_String (Super_Tail'Result) =
-            (1 .. Source.Max_Length => Pad),
+            [1 .. Source.Max_Length => Pad],
         others
         =>
           --  Source is partly dropped on the right
@@ -2475,7 +2478,7 @@ package Ada.Strings.Superbounded with SPARK_Mode is
             and then
               String'(Super_Slice (Super_Tail'Result,
                 1, Count - Super_Length (Source))) =
-                  (1 .. Count - Super_Length (Source) => Pad)
+                  [1 .. Count - Super_Length (Source) => Pad]
             and then
               String'(Super_Slice (Super_Tail'Result,
                 Count - Super_Length (Source) + 1, Source.Max_Length)) =
@@ -2509,7 +2512,7 @@ package Ada.Strings.Superbounded with SPARK_Mode is
             and then
               String'(Super_Slice (Source,
                 1, Count - Super_Length (Source'Old))) =
-                  (1 .. Count - Super_Length (Source'Old) => Pad)
+                  [1 .. Count - Super_Length (Source'Old) => Pad]
             and then
               Super_Slice (Source,
                 Count - Super_Length (Source'Old) + 1, Count) =
@@ -2522,7 +2525,7 @@ package Ada.Strings.Superbounded with SPARK_Mode is
             and then
               String'(Super_Slice (Source,
                 1, Source.Max_Length - Super_Length (Source'Old))) =
-                  (1 .. Source.Max_Length - Super_Length (Source'Old) => Pad)
+                  [1 .. Source.Max_Length - Super_Length (Source'Old) => Pad]
             and then
               (if Super_Length (Source'Old) > 0 then
                  Super_Slice (Source,
@@ -2534,7 +2537,7 @@ package Ada.Strings.Superbounded with SPARK_Mode is
         =>
           --  Source is fully dropped on the right
 
-          Super_To_String (Source) = (1 .. Source.Max_Length => Pad),
+          Super_To_String (Source) = [1 .. Source.Max_Length => Pad],
         others
         =>
           --  Source is partly dropped on the right
@@ -2543,7 +2546,7 @@ package Ada.Strings.Superbounded with SPARK_Mode is
             and then
               String'(Super_Slice (Source,
                 1, Count - Super_Length (Source'Old))) =
-                  (1 .. Count - Super_Length (Source'Old) => Pad)
+                  [1 .. Count - Super_Length (Source'Old) => Pad]
             and then
               String'(Super_Slice (Source,
                 Count - Super_Length (Source'Old) + 1, Source.Max_Length)) =
@@ -2566,7 +2569,7 @@ package Ada.Strings.Superbounded with SPARK_Mode is
    with
      Pre    => Left <= Max_Length,
      Post   => Times'Result.Max_Length = Max_Length
-       and then Super_To_String (Times'Result) = (1 .. Left => Right),
+       and then Super_To_String (Times'Result) = [1 .. Left => Right],
      Global => null;
    --  Note the additional parameter Max_Length
 
@@ -2610,7 +2613,7 @@ package Ada.Strings.Superbounded with SPARK_Mode is
      Pre    => (if Count > Max_Length then Drop /= Error),
      Post   => Super_Replicate'Result.Max_Length = Max_Length
        and then Super_To_String (Super_Replicate'Result) =
-         (1 .. Natural'Min (Max_Length, Count) => Item),
+         [1 .. Natural'Min (Max_Length, Count) => Item],
      Global => null;
    --  Note the additional parameter Max_Length
 

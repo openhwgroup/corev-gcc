@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2007-2021 Free Software Foundation, Inc.
+ * Copyright (C) 2007-2022 Free Software Foundation, Inc.
  *
  * This file is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -86,7 +86,6 @@
 #define bit_AVX2	(1 << 5)
 #define bit_BMI2	(1 << 8)
 #define bit_RTM	(1 << 11)
-#define bit_MPX	(1 << 14)
 #define bit_AVX512F	(1 << 16)
 #define bit_AVX512DQ	(1 << 17)
 #define bit_RDSEED	(1 << 18)
@@ -135,10 +134,6 @@
 #define bit_AMX_BF16    (1 << 22)
 #define bit_AMX_TILE    (1 << 24)
 #define bit_AMX_INT8    (1 << 25)
-
-/* XFEATURE_ENABLED_MASK register bits (%eax == 0xd, %ecx == 0) */
-#define bit_BNDREGS     (1 << 3)
-#define bit_BNDCSR      (1 << 4)
 
 /* Extended State Enumeration Sub-leaf (%eax == 0xd, %ecx == 1) */
 #define bit_XSAVEOPT	(1 << 0)

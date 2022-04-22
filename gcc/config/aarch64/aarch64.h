@@ -1,5 +1,5 @@
 /* Machine description for AArch64 architecture.
-   Copyright (C) 2009-2021 Free Software Foundation, Inc.
+   Copyright (C) 2009-2022 Free Software Foundation, Inc.
    Contributed by ARM Ltd.
 
    This file is part of GCC.
@@ -231,14 +231,20 @@ extern unsigned aarch64_architecture_version;
 /* Pointer Authentication (PAUTH) extension.  */
 #define AARCH64_FL_PAUTH      (1ULL << 40)
 
+/* Armv9.0-A.  */
+#define AARCH64_FL_V9         (1ULL << 41)  /* Armv9.0-A Architecture.  */
+
 /* 64-byte atomic load/store extensions.  */
-#define AARCH64_FL_LS64      (1ULL << 41)
+#define AARCH64_FL_LS64      (1ULL << 42)
 
 /* Armv8.7-a architecture extensions.  */
-#define AARCH64_FL_V8_7       (1ULL << 42)
+#define AARCH64_FL_V8_7       (1ULL << 43)
 
-/* Armv9.0-A.  */
-#define AARCH64_FL_V9         (1ULL << 43)  /* Armv9.0-A Architecture.  */
+/* Hardware memory operation instructions.  */
+#define AARCH64_FL_MOPS       (1ULL << 44)
+
+/* Armv8.8-a architecture extensions.  */
+#define AARCH64_FL_V8_8       (1ULL << 45)
 
 /* Has FP and SIMD.  */
 #define AARCH64_FL_FPSIMD     (AARCH64_FL_FP | AARCH64_FL_SIMD)
@@ -266,11 +272,14 @@ extern unsigned aarch64_architecture_version;
    | AARCH64_FL_I8MM | AARCH64_FL_BF16)
 #define AARCH64_FL_FOR_ARCH8_7			\
   (AARCH64_FL_FOR_ARCH8_6 | AARCH64_FL_V8_7 | AARCH64_FL_LS64)
+#define AARCH64_FL_FOR_ARCH8_8			\
+  (AARCH64_FL_FOR_ARCH8_7 | AARCH64_FL_V8_8 | AARCH64_FL_MOPS)
 
 #define AARCH64_FL_FOR_ARCH8_R     \
   (AARCH64_FL_FOR_ARCH8_4 | AARCH64_FL_V8_R)
 #define AARCH64_FL_FOR_ARCH9       \
-  (AARCH64_FL_FOR_ARCH8_5 | AARCH64_FL_SVE | AARCH64_FL_SVE2 | AARCH64_FL_V9)
+  (AARCH64_FL_FOR_ARCH8_5 | AARCH64_FL_SVE | AARCH64_FL_SVE2 | AARCH64_FL_V9 \
+   | AARCH64_FL_F16)
 
 /* Macros to test ISA flags.  */
 
@@ -310,6 +319,8 @@ extern unsigned aarch64_architecture_version;
 #define AARCH64_ISA_V8_R	   (aarch64_isa_flags & AARCH64_FL_V8_R)
 #define AARCH64_ISA_PAUTH	   (aarch64_isa_flags & AARCH64_FL_PAUTH)
 #define AARCH64_ISA_V9		   (aarch64_isa_flags & AARCH64_FL_V9)
+#define AARCH64_ISA_MOPS	   (aarch64_isa_flags & AARCH64_FL_MOPS)
+#define AARCH64_ISA_LS64	   (aarch64_isa_flags & AARCH64_FL_LS64)
 
 /* Crypto is an optional extension to AdvSIMD.  */
 #define TARGET_CRYPTO (TARGET_SIMD && AARCH64_ISA_CRYPTO)
@@ -400,6 +411,12 @@ extern unsigned aarch64_architecture_version;
 
 /* PAUTH instructions are enabled through +pauth.  */
 #define TARGET_PAUTH (AARCH64_ISA_PAUTH)
+
+/* MOPS instructions are enabled through +mops.  */
+#define TARGET_MOPS (AARCH64_ISA_MOPS)
+
+/* LS64 instructions are enabled through +ls64.  */
+#define TARGET_LS64 (AARCH64_ISA_LS64)
 
 /* Make sure this is always defined so we don't have to check for ifdefs
    but rather use normal ifs.  */
@@ -620,7 +637,7 @@ extern unsigned aarch64_architecture_version;
 #define DBX_REGISTER_NUMBER(REGNO)	aarch64_dbx_register_number (REGNO)
 /* Provide a definition of DWARF_FRAME_REGNUM here so that fallback unwinders
    can use DWARF_ALT_FRAME_RETURN_COLUMN defined below.  This is just the same
-   as the default definition in dwarf2out.c.  */
+   as the default definition in dwarf2out.cc.  */
 #undef DWARF_FRAME_REGNUM
 #define DWARF_FRAME_REGNUM(REGNO)	DBX_REGISTER_NUMBER (REGNO)
 
@@ -796,10 +813,16 @@ enum target_cpus
   TARGET_CPU_generic
 };
 
+/* Define how many bits are used to represent the CPU in TARGET_CPU_DEFAULT.
+   This needs to be big enough to fit the value of TARGET_CPU_generic.
+   All bits after this are used to represent the AARCH64_CPU_DEFAULT_FLAGS.  */
+#define TARGET_CPU_NBITS 8
+#define TARGET_CPU_MASK ((1 << TARGET_CPU_NBITS) - 1)
+
 /* If there is no CPU defined at configure, use generic as default.  */
 #ifndef TARGET_CPU_DEFAULT
 #define TARGET_CPU_DEFAULT \
-  (TARGET_CPU_generic | (AARCH64_CPU_DEFAULT_FLAGS << 6))
+  (TARGET_CPU_generic | (AARCH64_CPU_DEFAULT_FLAGS << TARGET_CPU_NBITS))
 #endif
 
 /* If inserting NOP before a mult-accumulate insn remember to adjust the
@@ -906,9 +929,21 @@ struct GTY (()) aarch64_frame
 	 Indicated by CALLEE_ADJUST == 0 && EMIT_FRAME_CHAIN.
 
      These fields indicate which registers we've decided to handle using
-     (1) or (2), or INVALID_REGNUM if none.  */
-  unsigned wb_candidate1;
-  unsigned wb_candidate2;
+     (1) or (2), or INVALID_REGNUM if none.
+
+     In some cases we don't always need to pop all registers in the push
+     candidates, pop candidates record which registers need to be popped
+     eventually.  The initial value of a pop candidate is copied from its
+     corresponding push candidate.
+
+     Currently, different pop candidates are only used for shadow call
+     stack.  When "-fsanitize=shadow-call-stack" is specified, we replace
+     x30 in the pop candidate with INVALID_REGNUM to ensure that x30 is
+     not popped twice.  */
+  unsigned wb_push_candidate1;
+  unsigned wb_push_candidate2;
+  unsigned wb_pop_candidate1;
+  unsigned wb_pop_candidate2;
 
   /* Big-endian SVE frames need a spare predicate register in order
      to save vector registers in the correct layout for unwinding.
@@ -916,6 +951,9 @@ struct GTY (()) aarch64_frame
   unsigned spare_pred_reg;
 
   bool laid_out;
+
+  /* True if shadow call stack should be enabled for the current function.  */
+  bool is_scs_enabled;
 };
 
 typedef struct GTY (()) machine_function
@@ -1046,23 +1084,24 @@ typedef struct
    7-byte copy is a 4-byte + 2-byte + byte copy.  This proves inefficient
    for both size and speed of copy, so we will instead use the "cpymem"
    standard name to implement the copy.  This logic does not apply when
-   targeting -mstrict-align, so keep a sensible default in that case.  */
+   targeting -mstrict-align or TARGET_MOPS, so keep a sensible default in
+   that case.  */
 #define MOVE_RATIO(speed) \
-  (!STRICT_ALIGNMENT ? 2 : (((speed) ? 15 : AARCH64_CALL_RATIO) / 2))
+  ((!STRICT_ALIGNMENT || TARGET_MOPS) ? 2 : (((speed) ? 15 : AARCH64_CALL_RATIO) / 2))
 
 /* Like MOVE_RATIO, without -mstrict-align, make decisions in "setmem" when
    we would use more than 3 scalar instructions.
    Otherwise follow a sensible default: when optimizing for size, give a better
    estimate of the length of a memset call, but use the default otherwise.  */
 #define CLEAR_RATIO(speed) \
-  (!STRICT_ALIGNMENT ? 4 : (speed) ? 15 : AARCH64_CALL_RATIO)
+  (!STRICT_ALIGNMENT ? (TARGET_MOPS ? 0 : 4) : (speed) ? 15 : AARCH64_CALL_RATIO)
 
 /* SET_RATIO is similar to CLEAR_RATIO, but for a non-zero constant.  Without
    -mstrict-align, make decisions in "setmem".  Otherwise follow a sensible
    default: when optimizing for size adjust the ratio to account for the
    overhead of loading the constant.  */
 #define SET_RATIO(speed) \
-  (!STRICT_ALIGNMENT ? 0 : (speed) ? 15 : AARCH64_CALL_RATIO - 2)
+  ((!STRICT_ALIGNMENT || TARGET_MOPS) ? 0 : (speed) ? 15 : AARCH64_CALL_RATIO - 2)
 
 /* Disable auto-increment in move_by_pieces et al.  Use of auto-increment is
    rarely a good idea in straight-line code since it adds an extra address
@@ -1276,12 +1315,12 @@ extern const char *host_detect_local_cpu (int argc, const char **argv);
 #define ASM_OUTPUT_POOL_EPILOGUE  aarch64_asm_output_pool_epilogue
 
 /* This type is the user-visible __fp16, and a pointer to that type.  We
-   need it in many places in the backend.  Defined in aarch64-builtins.c.  */
+   need it in many places in the backend.  Defined in aarch64-builtins.cc.  */
 extern GTY(()) tree aarch64_fp16_type_node;
 extern GTY(()) tree aarch64_fp16_ptr_type_node;
 
 /* This type is the user-visible __bf16, and a pointer to that type.  Defined
-   in aarch64-builtins.c.  */
+   in aarch64-builtins.cc.  */
 extern GTY(()) tree aarch64_bf16_type_node;
 extern GTY(()) tree aarch64_bf16_ptr_type_node;
 

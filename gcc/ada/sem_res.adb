@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2021, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2022, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -82,6 +82,7 @@ with Sinfo.CN;       use Sinfo.CN;
 with Snames;         use Snames;
 with Stand;          use Stand;
 with Stringt;        use Stringt;
+with Strub;          use Strub;
 with Style;          use Style;
 with Targparm;       use Targparm;
 with Tbuild;         use Tbuild;
@@ -102,6 +103,14 @@ package body Sem_Res is
    --  Etype is the base type of the context.
 
    --  Note that Resolve_Attribute is separated off in Sem_Attr
+
+   function Has_Applicable_User_Defined_Literal
+     (N   : Node_Id;
+      Typ : Entity_Id) return Boolean;
+   --  If N is a literal or a named number, check whether Typ
+   --  has a user-defined literal aspect that can apply to N.
+   --  If present, replace N with a call to the corresponding
+   --  function and return True.
 
    procedure Check_Discriminant_Use (N : Node_Id);
    --  Enforce the restrictions on the use of discriminants when constraining
@@ -286,6 +295,15 @@ package body Sem_Res is
    --  is only one requires a search over all visible entities, and happens
    --  only in very pathological cases (see 6115-006).
 
+   function Try_User_Defined_Literal
+     (N   : Node_Id;
+      Typ : Entity_Id) return Boolean;
+   --  If an operator node has a literal operand, check whether the type
+   --  of the context, or the type of the other operand has a user-defined
+   --  literal aspect that can be applied to the literal to resolve the node.
+   --  If such aspect exists, replace literal with a call to the
+   --  corresponding function and return True, return false otherwise.
+
    -------------------------
    -- Ambiguous_Character --
    -------------------------
@@ -408,6 +426,165 @@ package body Sem_Res is
            Scope_Suppress;
       end if;
    end Analyze_And_Resolve;
+
+   -------------------------------------
+   -- Has_Applicable_User_Defined_Literal --
+   -------------------------------------
+
+   function Has_Applicable_User_Defined_Literal
+     (N   : Node_Id;
+      Typ : Entity_Id) return Boolean
+   is
+      Loc  : constant Source_Ptr := Sloc (N);
+      Literal_Aspect_Map :
+        constant array (N_Numeric_Or_String_Literal) of Aspect_Id :=
+          (N_Integer_Literal => Aspect_Integer_Literal,
+           N_Real_Literal    => Aspect_Real_Literal,
+           N_String_Literal  => Aspect_String_Literal);
+
+      Named_Number_Aspect_Map : constant array (Named_Kind) of Aspect_Id :=
+        (E_Named_Integer => Aspect_Integer_Literal,
+         E_Named_Real    => Aspect_Real_Literal);
+
+      Lit_Aspect : Aspect_Id;
+
+      Callee : Entity_Id;
+      Name   : Node_Id;
+      Param1 : Node_Id;
+      Param2 : Node_Id;
+      Params : List_Id;
+      Call   : Node_Id;
+      Expr   : Node_Id;
+
+   begin
+      if (Nkind (N) in N_Numeric_Or_String_Literal
+           and then Present
+            (Find_Aspect (Typ, Literal_Aspect_Map (Nkind (N)))))
+        or else
+          (Nkind (N) = N_Identifier
+            and then Is_Named_Number (Entity (N))
+            and then
+              Present
+                (Find_Aspect
+                  (Typ, Named_Number_Aspect_Map (Ekind (Entity (N))))))
+      then
+         Lit_Aspect :=
+           (if Nkind (N) = N_Identifier
+            then Named_Number_Aspect_Map (Ekind (Entity (N)))
+            else Literal_Aspect_Map (Nkind (N)));
+         Callee :=
+           Entity (Expression (Find_Aspect (Typ, Lit_Aspect)));
+         Name := Make_Identifier (Loc, Chars (Callee));
+
+         if Is_Derived_Type (Typ)
+           and then Is_Tagged_Type (Typ)
+           and then Base_Type (Etype (Callee)) /= Base_Type (Typ)
+         then
+            Callee :=
+              Corresponding_Primitive_Op
+                (Ancestor_Op     => Callee,
+                 Descendant_Type => Base_Type (Typ));
+         end if;
+
+         --  Handle an identifier that denotes a named number.
+
+         if Nkind (N) = N_Identifier then
+            Expr := Expression (Declaration_Node (Entity (N)));
+
+            if Ekind (Entity (N)) = E_Named_Integer then
+               UI_Image (Expr_Value (Expr), Decimal);
+               Start_String;
+               Store_String_Chars
+                 (UI_Image_Buffer (1 .. UI_Image_Length));
+               Param1 := Make_String_Literal (Loc, End_String);
+               Params := New_List (Param1);
+
+            else
+               UI_Image (Norm_Num (Expr_Value_R (Expr)), Decimal);
+               Start_String;
+
+               if UR_Is_Negative (Expr_Value_R (Expr)) then
+                  Store_String_Chars ("-");
+               end if;
+
+               Store_String_Chars
+                 (UI_Image_Buffer (1 .. UI_Image_Length));
+               Param1 := Make_String_Literal (Loc, End_String);
+
+               --  Note: Set_Etype is called below on Param1
+
+               UI_Image (Norm_Den (Expr_Value_R (Expr)), Decimal);
+               Start_String;
+               Store_String_Chars
+                 (UI_Image_Buffer (1 .. UI_Image_Length));
+               Param2 := Make_String_Literal (Loc, End_String);
+               Set_Etype (Param2, Standard_String);
+
+               Params := New_List (Param1, Param2);
+
+               if Present (Related_Expression (Callee)) then
+                  Callee := Related_Expression (Callee);
+               else
+                  Error_Msg_NE
+                    ("cannot resolve & for a named real", N, Callee);
+                  return False;
+               end if;
+            end if;
+
+         elsif Nkind (N) = N_String_Literal then
+            Param1 := Make_String_Literal (Loc, Strval (N));
+            Params := New_List (Param1);
+
+         else
+            Param1 :=
+              Make_String_Literal
+                (Loc, String_From_Numeric_Literal (N));
+            Params := New_List (Param1);
+         end if;
+
+         Call :=
+           Make_Function_Call
+             (Sloc                   => Loc,
+              Name                   => Name,
+              Parameter_Associations => Params);
+
+         Set_Entity (Name, Callee);
+         Set_Is_Overloaded (Name, False);
+
+         if Lit_Aspect = Aspect_String_Literal then
+            Set_Etype (Param1, Standard_Wide_Wide_String);
+         else
+            Set_Etype (Param1, Standard_String);
+         end if;
+
+         Set_Etype (Call, Etype (Callee));
+
+         if Base_Type (Etype (Call)) /= Base_Type (Typ) then
+            --  Conversion may be needed in case of an inherited
+            --  aspect of a derived type. For a null extension, we
+            --  use a null extension aggregate instead because the
+            --  downward type conversion would be illegal.
+
+            if Is_Null_Extension_Of
+                 (Descendant => Typ,
+                  Ancestor   => Etype (Call))
+            then
+               Call := Make_Extension_Aggregate (Loc,
+                         Ancestor_Part       => Call,
+                         Null_Record_Present => True);
+            else
+               Call := Convert_To (Typ, Call);
+            end if;
+         end if;
+
+         Rewrite (N, Call);
+
+         Analyze_And_Resolve (N, Typ);
+         return True;
+      else
+         return False;
+      end if;
+   end Has_Applicable_User_Defined_Literal;
 
    ----------------------------
    -- Check_Discriminant_Use --
@@ -1597,11 +1774,11 @@ package body Sem_Res is
                   elsif Opnd_Type = Universal_Real then
                      Orig_Type := Type_In_P (Is_Real_Type'Access);
 
+                  elsif Opnd_Type = Universal_Access then
+                     Orig_Type := Type_In_P (Is_Definite_Access_Type'Access);
+
                   elsif Opnd_Type = Any_String then
                      Orig_Type := Type_In_P (Is_String_Type'Access);
-
-                  elsif Opnd_Type = Any_Access then
-                     Orig_Type := Type_In_P (Is_Definite_Access_Type'Access);
 
                   elsif Opnd_Type = Any_Composite then
                      Orig_Type := Type_In_P (Is_Composite_Type'Access);
@@ -2155,16 +2332,6 @@ package body Sem_Res is
          Set_Analyzed (N, True);
          return;
       end Resolution_Failed;
-
-      Literal_Aspect_Map :
-        constant array (N_Numeric_Or_String_Literal) of Aspect_Id :=
-          (N_Integer_Literal => Aspect_Integer_Literal,
-           N_Real_Literal    => Aspect_Real_Literal,
-           N_String_Literal  => Aspect_String_Literal);
-
-      Named_Number_Aspect_Map : constant array (Named_Kind) of Aspect_Id :=
-        (E_Named_Integer => Aspect_Integer_Literal,
-         E_Named_Real    => Aspect_Real_Literal);
 
    --  Start of processing for Resolve
 
@@ -2884,143 +3051,14 @@ package body Sem_Res is
                end;
             end if;
 
-            --  Rewrite Literal as a call if the corresponding literal aspect
-            --  is set.
+            --  If node is a literal and context type has a user-defined
+            --  literal aspect, rewrite node as a call to the corresponding
+            --  function, which plays the role of an implicit conversion.
 
-            if (Nkind (N) in N_Numeric_Or_String_Literal
-                 and then
-                   Present
-                     (Find_Aspect (Typ, Literal_Aspect_Map (Nkind (N)))))
-              or else
-                (Nkind (N) = N_Identifier
-                  and then Is_Named_Number (Entity (N))
-                  and then
-                    Present
-                      (Find_Aspect
-                        (Typ, Named_Number_Aspect_Map (Ekind (Entity (N))))))
+            if Nkind (N) in
+                N_Numeric_Or_String_Literal | N_Identifier
+              and then Has_Applicable_User_Defined_Literal (N, Typ)
             then
-               declare
-                  Lit_Aspect : constant Aspect_Id :=
-                    (if Nkind (N) = N_Identifier
-                     then Named_Number_Aspect_Map (Ekind (Entity (N)))
-                     else Literal_Aspect_Map (Nkind (N)));
-
-                  Loc  : constant Source_Ptr := Sloc (N);
-
-                  Callee : Entity_Id :=
-                    Entity (Expression (Find_Aspect (Typ, Lit_Aspect)));
-
-                  Name : constant Node_Id :=
-                    Make_Identifier (Loc, Chars (Callee));
-
-                  Param1 : Node_Id;
-                  Param2 : Node_Id;
-                  Params : List_Id;
-                  Call   : Node_Id;
-                  Expr   : Node_Id;
-
-               begin
-                  if Is_Derived_Type (Typ)
-                    and then Is_Tagged_Type (Typ)
-                    and then Base_Type (Etype (Callee)) /= Base_Type (Typ)
-                  then
-                     Callee :=
-                       Corresponding_Primitive_Op
-                         (Ancestor_Op     => Callee,
-                          Descendant_Type => Base_Type (Typ));
-                  end if;
-
-                  if Nkind (N) = N_Identifier then
-                     Expr := Expression (Declaration_Node (Entity (N)));
-
-                     if Ekind (Entity (N)) = E_Named_Integer then
-                        UI_Image (Expr_Value (Expr), Decimal);
-                        Start_String;
-                        Store_String_Chars
-                          (UI_Image_Buffer (1 .. UI_Image_Length));
-                        Param1 := Make_String_Literal (Loc, End_String);
-                        Params := New_List (Param1);
-
-                     else
-                        UI_Image (Norm_Num (Expr_Value_R (Expr)), Decimal);
-                        Start_String;
-
-                        if UR_Is_Negative (Expr_Value_R (Expr)) then
-                           Store_String_Chars ("-");
-                        end if;
-
-                        Store_String_Chars
-                          (UI_Image_Buffer (1 .. UI_Image_Length));
-                        Param1 := Make_String_Literal (Loc, End_String);
-
-                        --  Note: Set_Etype is called below on Param1
-
-                        UI_Image (Norm_Den (Expr_Value_R (Expr)), Decimal);
-                        Start_String;
-                        Store_String_Chars
-                          (UI_Image_Buffer (1 .. UI_Image_Length));
-                        Param2 := Make_String_Literal (Loc, End_String);
-                        Set_Etype (Param2, Standard_String);
-
-                        Params := New_List (Param1, Param2);
-
-                        if Present (Related_Expression (Callee)) then
-                           Callee := Related_Expression (Callee);
-                        else
-                           Error_Msg_NE
-                             ("cannot resolve & for a named real", N, Callee);
-                           return;
-                        end if;
-                     end if;
-
-                  elsif Nkind (N) = N_String_Literal then
-                     Param1 := Make_String_Literal (Loc, Strval (N));
-                     Params := New_List (Param1);
-                  else
-                     Param1 :=
-                       Make_String_Literal
-                         (Loc, String_From_Numeric_Literal (N));
-                     Params := New_List (Param1);
-                  end if;
-
-                  Call :=
-                    Make_Function_Call
-                      (Sloc                   => Loc,
-                       Name                   => Name,
-                       Parameter_Associations => Params);
-
-                  Set_Entity (Name, Callee);
-                  Set_Is_Overloaded (Name, False);
-
-                  if Lit_Aspect = Aspect_String_Literal then
-                     Set_Etype (Param1, Standard_Wide_Wide_String);
-                  else
-                     Set_Etype (Param1, Standard_String);
-                  end if;
-
-                  Set_Etype (Call, Etype (Callee));
-
-                  if Base_Type (Etype (Call)) /= Base_Type (Typ) then
-                     --  Conversion may be needed in case of an inherited
-                     --  aspect of a derived type. For a null extension, we
-                     --  use a null extension aggregate instead because the
-                     --  downward type conversion would be illegal.
-
-                     if Is_Null_Extension_Of
-                          (Descendant => Typ,
-                           Ancestor   => Etype (Call))
-                     then
-                        Call := Make_Extension_Aggregate (Loc,
-                                  Ancestor_Part       => Call,
-                                  Null_Record_Present => True);
-                     else
-                        Call := Convert_To (Typ, Call);
-                     end if;
-                  end if;
-
-                  Rewrite (N, Call);
-               end;
-
                Analyze_And_Resolve (N, Typ);
                return;
             end if;
@@ -3116,6 +3154,14 @@ package body Sem_Res is
                     ("missing ALL or SOME in quantified expression",
                      Defining_Identifier (First (Component_Associations (N))));
 
+               --  For an operator with no interpretation, check whether
+               --  one of its operands may be a user-defined literal.
+
+               elsif Nkind (N) in N_Op
+                 and then Try_User_Defined_Literal (N, Typ)
+               then
+                  return;
+
                else
                   Wrong_Type (N, Typ);
                end if;
@@ -3134,6 +3180,27 @@ package body Sem_Res is
       --  Only one interpretation
 
       else
+         --  Prevent implicit conversions between access-to-subprogram types
+         --  with different strub modes. Explicit conversions are acceptable in
+         --  some circumstances. We don't have to be concerned about data or
+         --  access-to-data types. Conversions between data types can safely
+         --  drop or add strub attributes from types, because strub effects are
+         --  associated with the locations rather than values. E.g., converting
+         --  a hypothetical Strub_Integer variable to Integer would load the
+         --  value from the variable, enabling stack scrabbing for the
+         --  enclosing subprogram, and then convert the value to Integer. As
+         --  for conversions between access-to-data types, that's no different
+         --  from any other case of type punning.
+
+         if Is_Access_Type (Typ)
+           and then Ekind (Designated_Type (Typ)) = E_Subprogram_Type
+           and then Is_Access_Type (Expr_Type)
+           and then Ekind (Designated_Type (Expr_Type)) = E_Subprogram_Type
+         then
+            Check_Same_Strub_Mode
+              (Designated_Type (Typ), Designated_Type (Expr_Type));
+         end if;
+
          --  In Ada 2005, if we have something like "X : T := 2 + 2;", where
          --  the "+" on T is abstract, and the operands are of universal type,
          --  the above code will have (incorrectly) resolved the "+" to the
@@ -3372,7 +3439,7 @@ package body Sem_Res is
          end case;
 
          --  Mark relevant use-type and use-package clauses as effective using
-         --  the original node because constant folding may have occured and
+         --  the original node because constant folding may have occurred and
          --  removed references that need to be examined.
 
          if Nkind (Original_Node (N)) in N_Op then
@@ -3712,7 +3779,7 @@ package body Sem_Res is
 
                if Wrong_Order then
                   Error_Msg_N
-                    ("?P?actuals for this call may be in wrong order", N);
+                    ("?.p?actuals for this call may be in wrong order", N);
                end if;
             end;
          end;
@@ -7488,7 +7555,7 @@ package body Sem_Res is
       if Bad_Unordered_Enumeration_Reference (N, Etype (L)) then
          Error_Msg_Sloc := Sloc (Etype (L));
          Error_Msg_NE
-           ("comparison on unordered enumeration type& declared#?U?",
+           ("comparison on unordered enumeration type& declared#?.u?",
             N, Etype (L));
       end if;
 
@@ -8681,7 +8748,7 @@ package body Sem_Res is
             Set_Etype (N, Any_Type);
             return;
 
-         elsif T = Any_Access
+         elsif T = Universal_Access
            or else Ekind (T) in E_Allocator_Type | E_Access_Attribute_Type
          then
             T := Find_Unique_Access_Type;
@@ -9707,7 +9774,7 @@ package body Sem_Res is
       ----------------------------
 
       procedure Resolve_Set_Membership is
-         Alt  : Node_Id;
+         Alt : Node_Id;
 
       begin
          --  If the left operand is overloaded, find type compatible with not
@@ -10118,7 +10185,7 @@ package body Sem_Res is
                        ("\\interpretation as call yields&", Arg, Typ);
                      Error_Msg_NE
                        ("\\interpretation as indexing of call yields&",
-                         Arg, Component_Type (Typ));
+                         Arg, Ctyp);
 
                   else
                      Error_Msg_N ("ambiguous operand for concatenation!", Arg);
@@ -10141,10 +10208,30 @@ package body Sem_Res is
                end;
             end if;
 
-            Resolve (Arg, Component_Type (Typ));
+            Resolve (Arg, Ctyp);
 
             if Nkind (Arg) = N_String_Literal then
-               Set_Etype (Arg, Component_Type (Typ));
+               Set_Etype (Arg, Ctyp);
+
+            elsif Is_Scalar_Type (Etype (Arg))
+              and then Compile_Time_Known_Value (Arg)
+            then
+               --  Determine if the out-of-range violation constitutes a
+               --  warning or an error according to the expression base type,
+               --  according to Ada 2022 RM 4.9 (35/2).
+
+               if Is_Out_Of_Range (Arg, Base_Type (Ctyp)) then
+                  Apply_Compile_Time_Constraint_Error
+                    (Arg, "value not in range of}", CE_Range_Check_Failed,
+                     Ent => Base_Type (Ctyp),
+                     Typ => Base_Type (Ctyp));
+
+               elsif Is_Out_Of_Range (Arg, Ctyp) then
+                  Apply_Compile_Time_Constraint_Error
+                    (Arg, "value not in range of}??", CE_Range_Check_Failed,
+                     Ent => Ctyp,
+                     Typ => Ctyp);
+               end if;
             end if;
 
             if Arg = Left_Opnd (N) then
@@ -10507,7 +10594,7 @@ package body Sem_Res is
       end if;
 
       --  AI12-0100: Once the qualified expression is resolved, check whether
-      --  operand statisfies a static predicate of the target subtype, if any.
+      --  operand satisfies a static predicate of the target subtype, if any.
       --  In the static expression case, a predicate check failure is an error.
 
       if Has_Predicates (Target_Typ) then
@@ -10647,7 +10734,7 @@ package body Sem_Res is
       then
          Error_Msg_Sloc := Sloc (Typ);
          Error_Msg_NE
-           ("subrange of unordered enumeration type& declared#?U?", N, Typ);
+           ("subrange of unordered enumeration type& declared#?.u?", N, Typ);
       end if;
 
       Check_Unset_Reference (L);
@@ -10687,6 +10774,30 @@ package body Sem_Res is
             Fold_Uint (H, Expr_Value (H), Static => True);
          end if;
       end if;
+
+      --  If we have a compile-time-known null range, we warn, because that is
+      --  likely to be a mistake. (Dynamic null ranges make sense, but often
+      --  compile-time-known ones do not.) Warn only if this is in a subtype
+      --  declaration. We do this here, rather than while analyzing a subtype
+      --  declaration, in case we decide to expand the cases. We do not want to
+      --  warn in all cases, because some are idiomatic, such as an empty
+      --  aggregate (1 .. 0 => <>).
+
+      --  We don't warn in generics or their instances, because there might be
+      --  some instances where the range is null, and some where it is not,
+      --  which would lead to false alarms.
+
+      if not (Inside_A_Generic or In_Instance)
+        and then Comes_From_Source (N)
+        and then Compile_Time_Compare
+          (Low_Bound (N), High_Bound (N), Assume_Valid => True) = GT
+        and then Nkind (Parent (N)) = N_Range_Constraint
+        and then Nkind (Parent (Parent (N))) = N_Subtype_Indication
+        and then Nkind (Parent (Parent (Parent (N)))) = N_Subtype_Declaration
+        and then Is_OK_Static_Range (N)
+      then
+         Error_Msg_N ("null range??", N);
+      end if;
    end Resolve_Range;
 
    --------------------------
@@ -10698,17 +10809,23 @@ package body Sem_Res is
 
    begin
       --  Special processing for fixed-point literals to make sure that the
-      --  value is an exact multiple of small where this is required. We skip
-      --  this for the universal real case, and also for generic types.
+      --  value is an exact multiple of the small where this is required. We
+      --  skip this for the universal real case, and also for generic types.
 
       if Is_Fixed_Point_Type (Typ)
         and then Typ /= Universal_Fixed
         and then Typ /= Any_Fixed
         and then not Is_Generic_Type (Typ)
       then
+         --  We must freeze the base type to get the proper value of the small
+
+         if not Is_Frozen (Base_Type (Typ)) then
+            Freeze_Fixed_Point_Type (Base_Type (Typ));
+         end if;
+
          declare
             Val   : constant Ureal := Realval (N);
-            Cintr : constant Ureal := Val / Small_Value (Typ);
+            Cintr : constant Ureal := Val / Small_Value (Base_Type (Typ));
             Cint  : constant Uint  := UR_Trunc (Cintr);
             Den   : constant Uint  := Norm_Den (Cintr);
             Stat  : Boolean;
@@ -10953,7 +11070,7 @@ package body Sem_Res is
       --  resolution was complete to do this, since otherwise we can't tell if
       --  we are an lvalue or not.
 
-      if May_Be_Lvalue (N) then
+      if Known_To_Be_Assigned (N) then
          Generate_Reference (Entity (S), S, 'm');
       else
          Generate_Reference (Entity (S), S, 'r');
@@ -10979,7 +11096,7 @@ package body Sem_Res is
          if Is_Entity_Name (P)
            and then Has_Deferred_Reference (Entity (P))
          then
-            if May_Be_Lvalue (N) then
+            if Known_To_Be_Assigned (N) then
                Generate_Reference (Entity (P), P, 'm');
             else
                Generate_Reference (Entity (P), P, 'r');
@@ -11163,7 +11280,7 @@ package body Sem_Res is
                      --  of the First_Node call here.
 
                      Error_Msg_F
-                       ("?A?assertion would fail at run time!",
+                       ("?.a?assertion would fail at run time!",
                         Expression
                           (First (Pragma_Argument_Associations (Orig))));
                   end if;
@@ -11194,7 +11311,7 @@ package body Sem_Res is
                      --  comment above for an explanation of why we do this.
 
                      Error_Msg_F
-                       ("?A?check would fail at run time!",
+                       ("?.a?check would fail at run time!",
                         Expression
                           (Last (Pragma_Argument_Associations (Orig))));
                   end if;
@@ -11649,14 +11766,14 @@ package body Sem_Res is
                Comp_Typ_Hi : constant Node_Id :=
                                Type_High_Bound (Component_Type (Typ));
 
-               Char_Val : Int;
+               Char_Val : Uint;
 
             begin
                if Compile_Time_Known_Value (Comp_Typ_Lo)
                  and then Compile_Time_Known_Value (Comp_Typ_Hi)
                then
                   for J in 1 .. Strlen loop
-                     Char_Val := Int (Get_String_Char (Str, J));
+                     Char_Val := UI_From_CC (Get_String_Char (Str, J));
 
                      if Char_Val < Expr_Value (Comp_Typ_Lo)
                        or else Char_Val > Expr_Value (Comp_Typ_Hi)
@@ -11664,7 +11781,7 @@ package body Sem_Res is
                         Apply_Compile_Time_Constraint_Error
                           (N, "character out of range??",
                            CE_Range_Check_Failed,
-                           Loc => Source_Ptr (Int (Loc) + J));
+                           Loc => Loc + Source_Ptr (J));
                      end if;
                   end loop;
 
@@ -12099,7 +12216,7 @@ package body Sem_Res is
       end if;
 
       --  Ada 2012: Once the type conversion is resolved, check whether the
-      --  operand statisfies a static predicate of the target subtype, if any.
+      --  operand satisfies a static predicate of the target subtype, if any.
       --  In the static expression case, a predicate check failure is an error.
 
       if Has_Predicates (Target_Typ) then
@@ -12185,7 +12302,7 @@ package body Sem_Res is
         and then Expr_Value (R) > Uint_1
       then
          Error_Msg_N
-           ("?M?negative literal of modular type is in fact positive", N);
+           ("?.m?negative literal of modular type is in fact positive", N);
          Error_Msg_Uint_1 := (-Expr_Value (R)) mod Modulus (B_Typ);
          Error_Msg_Uint_2 := Expr_Value (R);
          Error_Msg_N ("\do you really mean^ when writing -^ '?", N);
@@ -12847,6 +12964,76 @@ package body Sem_Res is
       end if;
    end Simplify_Type_Conversion;
 
+   ------------------------------
+   -- Try_User_Defined_Literal --
+   ------------------------------
+
+   function Try_User_Defined_Literal
+     (N   : Node_Id;
+      Typ : Entity_Id) return Boolean
+   is
+   begin
+      if Nkind (N) in N_Op_Add | N_Op_Divide | N_Op_Mod | N_Op_Multiply
+        | N_Op_Rem | N_Op_Subtract
+      then
+
+         --  Both operands must have the same type as the context.
+         --  (ignoring for now fixed-point and exponentiation ops).
+
+         if Has_Applicable_User_Defined_Literal (Right_Opnd (N), Typ) then
+            Resolve (Left_Opnd (N), Typ);
+            Analyze_And_Resolve (N, Typ);
+            return True;
+         end if;
+
+         if
+           Has_Applicable_User_Defined_Literal (Left_Opnd (N), Typ)
+         then
+            Resolve (Right_Opnd (N), Typ);
+            Analyze_And_Resolve (N, Typ);
+            return True;
+
+         else
+            return False;
+         end if;
+
+      elsif Nkind (N) in N_Binary_Op then
+         --  For other operators the context does not impose a type on
+         --  the operands, but their types must match.
+
+         if (Nkind (Left_Opnd (N))
+           not in N_Integer_Literal | N_String_Literal | N_Real_Literal)
+         and then
+           Has_Applicable_User_Defined_Literal
+             (Right_Opnd (N), Etype (Left_Opnd (N)))
+         then
+            Analyze_And_Resolve (N, Typ);
+            return True;
+
+         elsif (Nkind (Right_Opnd (N))
+           not in N_Integer_Literal | N_String_Literal | N_Real_Literal)
+         and then
+           Has_Applicable_User_Defined_Literal
+             (Left_Opnd (N), Etype (Right_Opnd (N)))
+         then
+            Analyze_And_Resolve (N, Typ);
+            return True;
+         else
+            return False;
+         end if;
+
+      elsif Nkind (N) in N_Unary_Op
+        and then
+          Has_Applicable_User_Defined_Literal (Right_Opnd (N), Typ)
+      then
+         Analyze_And_Resolve (N, Typ);
+         return True;
+
+      else   --  Other operators
+         return False;
+      end if;
+   end Try_User_Defined_Literal;
+
    -----------------------------
    -- Unique_Fixed_Point_Type --
    -----------------------------
@@ -12985,7 +13172,7 @@ package body Sem_Res is
       function In_Instance_Code return Boolean;
       --  Return True if expression is within an instance but is not in one of
       --  the actuals of the instantiation. Type conversions within an instance
-      --  are not rechecked because type visbility may lead to spurious errors,
+      --  are not rechecked because type visibility may lead to spurious errors
       --  but conversions in an actual for a formal object must be checked.
 
       function Is_Discrim_Of_Bad_Access_Conversion_Argument
@@ -14039,7 +14226,15 @@ package body Sem_Res is
             end;
          end if;
 
-         return True;
+         --  Check that the strub modes are compatible.
+         --  We wish to reject explicit conversions only for
+         --  incompatible modes.
+
+         return Conversion_Check
+                  (Compatible_Strub_Modes
+                     (Designated_Type (Target_Type),
+                      Designated_Type (Opnd_Type)),
+                   "incompatible `strub` modes");
 
       --  Remote access to subprogram types
 
@@ -14065,7 +14260,16 @@ package body Sem_Res is
               Designated_Type (Corresponding_Remote_Type (Opnd_Type)),
             Err_Loc =>
               N);
-         return True;
+
+         --  Check that the strub modes are compatible.
+         --  We wish to reject explicit conversions only for
+         --  incompatible modes.
+
+         return Conversion_Check
+                  (Compatible_Strub_Modes
+                     (Designated_Type (Target_Type),
+                      Designated_Type (Opnd_Type)),
+                   "incompatible `strub` modes");
 
       --  If it was legal in the generic, it's legal in the instance
 

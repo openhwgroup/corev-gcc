@@ -1,5 +1,5 @@
 /* Classes for representing the state of interest at a given path of analysis.
-   Copyright (C) 2019-2021 Free Software Foundation, Inc.
+   Copyright (C) 2019-2022 Free Software Foundation, Inc.
    Contributed by David Malcolm <dmalcolm@redhat.com>.
 
 This file is part of GCC.
@@ -273,6 +273,7 @@ DEBUG_FUNCTION void
 sm_state_map::dump (bool simple) const
 {
   pretty_printer pp;
+  pp_format_decoder (&pp) = default_tree_printer;
   pp_show_color (&pp) = pp_show_color (global_dc->printer);
   pp.buffer->stream = stderr;
   print (NULL, simple, true, &pp);
@@ -419,6 +420,10 @@ sm_state_map::get_state (const svalue *sval,
 	  }
       }
 
+  if (state_machine::state_t state
+      = m_sm.alt_get_inherited_state (*this, sval, ext_state))
+    return state;
+
   return m_sm.get_default_state (sval);
 }
 
@@ -493,6 +498,18 @@ sm_state_map::impl_set_state (const svalue *sval,
     return false;
 
   gcc_assert (sval->can_have_associated_state_p ());
+
+  if (m_sm.inherited_state_p ())
+    {
+      if (const compound_svalue *compound_sval
+	    = sval->dyn_cast_compound_svalue ())
+	for (auto iter : *compound_sval)
+	  {
+	    const svalue *inner_sval = iter.second;
+	    if (inner_sval->can_have_associated_state_p ())
+	      impl_set_state (inner_sval, state, origin, ext_state);
+	  }
+    }
 
   /* Special-case state 0 as the default value.  */
   if (state == 0)
@@ -1105,52 +1122,90 @@ program_state::prune_for_point (exploded_graph &eg,
   if (pm)
     {
       unsigned num_ssas_purged = 0;
-      auto_vec<const decl_region *> ssa_name_regs;
-      new_state.m_region_model->get_ssa_name_regions_for_current_frame
-	(&ssa_name_regs);
-      ssa_name_regs.qsort (region::cmp_ptr_ptr);
+      unsigned num_decls_purged = 0;
+      auto_vec<const decl_region *> regs;
+      new_state.m_region_model->get_regions_for_current_frame (&regs);
+      regs.qsort (region::cmp_ptr_ptr);
       unsigned i;
       const decl_region *reg;
-      FOR_EACH_VEC_ELT (ssa_name_regs, i, reg)
+      FOR_EACH_VEC_ELT (regs, i, reg)
 	{
-	  tree ssa_name = reg->get_decl ();
-	  const state_purge_per_ssa_name &per_ssa
-	    = pm->get_data_for_ssa_name (ssa_name);
-	  if (!per_ssa.needed_at_point_p (point.get_function_point ()))
+	  const tree node = reg->get_decl ();
+	  if (TREE_CODE (node) == SSA_NAME)
 	    {
-	      /* Don't purge bindings of SSA names to svalues
-		 that have unpurgable sm-state, so that leaks are
-		 reported at the end of the function, rather than
-		 at the last place that such an SSA name is referred to.
-
-		 But do purge them for temporaries (when SSA_NAME_VAR is
-		 NULL), so that we report for cases where a leak happens when
-		 a variable is overwritten with another value, so that the leak
-		 is reported at the point of overwrite, rather than having
-		 temporaries keep the value reachable until the frame is
-		 popped.  */
-	      const svalue *sval
-		= new_state.m_region_model->get_store_value (reg, NULL);
-	      if (!new_state.can_purge_p (eg.get_ext_state (), sval)
-		  && SSA_NAME_VAR (ssa_name))
+	      const tree ssa_name = node;
+	      const state_purge_per_ssa_name &per_ssa
+		= pm->get_data_for_ssa_name (node);
+	      if (!per_ssa.needed_at_point_p (point.get_function_point ()))
 		{
-		  /* (currently only state maps can keep things
-		     alive).  */
-		  if (logger)
-		    logger->log ("not purging binding for %qE"
-				 " (used by state map)", ssa_name);
-		  continue;
-		}
+		  /* Don't purge bindings of SSA names to svalues
+		     that have unpurgable sm-state, so that leaks are
+		     reported at the end of the function, rather than
+		     at the last place that such an SSA name is referred to.
 
-	      new_state.m_region_model->purge_region (reg);
-	      num_ssas_purged++;
+		     But do purge them for temporaries (when SSA_NAME_VAR is
+		     NULL), so that we report for cases where a leak happens when
+		     a variable is overwritten with another value, so that the leak
+		     is reported at the point of overwrite, rather than having
+		     temporaries keep the value reachable until the frame is
+		     popped.  */
+		  const svalue *sval
+		    = new_state.m_region_model->get_store_value (reg, NULL);
+		  if (!new_state.can_purge_p (eg.get_ext_state (), sval)
+		      && SSA_NAME_VAR (ssa_name))
+		    {
+		      /* (currently only state maps can keep things
+			 alive).  */
+		      if (logger)
+			logger->log ("not purging binding for %qE"
+				     " (used by state map)", ssa_name);
+		      continue;
+		    }
+
+		  new_state.m_region_model->purge_region (reg);
+		  num_ssas_purged++;
+		}
+	    }
+	  else
+	    {
+	      const tree decl = node;
+	      gcc_assert (TREE_CODE (node) == VAR_DECL
+			  || TREE_CODE (node) == PARM_DECL
+			  || TREE_CODE (node) == RESULT_DECL);
+	      if (const state_purge_per_decl *per_decl
+		  = pm->get_any_data_for_decl (decl))
+		if (!per_decl->needed_at_point_p (point.get_function_point ()))
+		  {
+		    /* Don't purge bindings of decls if there are svalues
+		       that have unpurgable sm-state within the decl's cluster,
+		       so that leaks are reported at the end of the function,
+		       rather than at the last place that such a decl is
+		       referred to.  */
+		    if (!new_state.can_purge_base_region_p (eg.get_ext_state (),
+							    reg))
+		      {
+			/* (currently only state maps can keep things
+			   alive).  */
+			if (logger)
+			  logger->log ("not purging binding for %qE"
+				       " (value in binding used by state map)",
+				       decl);
+			continue;
+		      }
+
+		    new_state.m_region_model->purge_region (reg);
+		    num_decls_purged++;
+		  }
 	    }
 	}
 
-      if (num_ssas_purged > 0)
+      if (num_ssas_purged > 0 || num_decls_purged > 0)
 	{
 	  if (logger)
-	    logger->log ("num_ssas_purged: %i", num_ssas_purged);
+	    {
+	      logger->log ("num_ssas_purged: %i", num_ssas_purged);
+	      logger->log ("num_decl_purged: %i", num_decls_purged);
+	    }
 	  impl_region_model_context ctxt (eg, enode_for_diag,
 					  this,
 					  &new_state,
@@ -1163,6 +1218,27 @@ program_state::prune_for_point (exploded_graph &eg,
   new_state.m_region_model->canonicalize ();
 
   return new_state;
+}
+
+/* Return true if there are no unpurgeable bindings within BASE_REG. */
+
+bool
+program_state::can_purge_base_region_p (const extrinsic_state &ext_state,
+					const region *base_reg) const
+{
+  binding_cluster *cluster
+    = m_region_model->get_store ()->get_cluster (base_reg);
+  if (!cluster)
+    return true;
+
+  for (auto iter : *cluster)
+    {
+      const svalue *sval = iter.second;
+      if (!can_purge_p (ext_state, sval))
+	return false;
+    }
+
+  return true;
 }
 
 /* Get a representative tree to use for describing SVAL.  */
@@ -1180,6 +1256,7 @@ program_state::get_representative_tree (const svalue *sval) const
 
 bool
 program_state::can_merge_with_p (const program_state &other,
+				 const extrinsic_state &ext_state,
 				 const program_point &point,
 				 program_state *out) const
 {
@@ -1196,7 +1273,9 @@ program_state::can_merge_with_p (const program_state &other,
   /* Attempt to merge the region_models.  */
   if (!m_region_model->can_merge_with_p (*other.m_region_model,
 					  point,
-					  out->m_region_model))
+					 out->m_region_model,
+					 &ext_state,
+					 this, &other))
     return false;
 
   /* Copy m_checker_states to OUT.  */
@@ -1383,6 +1462,10 @@ program_state::impl_call_analyzer_dump_state (const gcall *call,
 
   const svalue *sval = cd.get_arg_svalue (1);
 
+  /* Strip off cast to int (due to variadic args).  */
+  if (const svalue *cast = sval->maybe_undo_cast ())
+    sval = cast;
+
   state_machine::state_t state = smap->get_state (sval, ext_state);
   warning_at (call->location, 0, "state: %qs", state->get_name ());
 }
@@ -1542,7 +1625,8 @@ test_program_state_1 ()
   region_model *model = s.m_region_model;
   const svalue *size_in_bytes
     = mgr->get_or_create_unknown_svalue (size_type_node);
-  const region *new_reg = model->create_region_for_heap_alloc (size_in_bytes);
+  const region *new_reg
+    = model->create_region_for_heap_alloc (size_in_bytes, NULL);
   const svalue *ptr_sval = mgr->get_ptr_svalue (ptr_type_node, new_reg);
   model->set_value (model->get_lvalue (p, NULL),
 		    ptr_sval, NULL);
@@ -1598,7 +1682,8 @@ test_program_state_merging ()
   region_model *model0 = s0.m_region_model;
   const svalue *size_in_bytes
     = mgr->get_or_create_unknown_svalue (size_type_node);
-  const region *new_reg = model0->create_region_for_heap_alloc (size_in_bytes);
+  const region *new_reg
+    = model0->create_region_for_heap_alloc (size_in_bytes, NULL);
   const svalue *ptr_sval = mgr->get_ptr_svalue (ptr_type_node, new_reg);
   model0->set_value (model0->get_lvalue (p, &ctxt),
 		     ptr_sval, &ctxt);
@@ -1622,7 +1707,7 @@ test_program_state_merging ()
      with the given sm-state.
      They ought to be mergeable, preserving the sm-state.  */
   program_state merged (ext_state);
-  ASSERT_TRUE (s0.can_merge_with_p (s1, point, &merged));
+  ASSERT_TRUE (s0.can_merge_with_p (s1, ext_state, point, &merged));
   merged.validate (ext_state);
 
   /* Verify that the merged state has the sm-state for "p".  */
@@ -1680,7 +1765,7 @@ test_program_state_merging_2 ()
 
   /* They ought to not be mergeable.  */
   program_state merged (ext_state);
-  ASSERT_FALSE (s0.can_merge_with_p (s1, point, &merged));
+  ASSERT_FALSE (s0.can_merge_with_p (s1, ext_state, point, &merged));
 }
 
 /* Run all of the selftests within this file.  */

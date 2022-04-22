@@ -247,15 +247,6 @@ else
 class Thread : ThreadBase
 {
     //
-    // Main process thread
-    //
-    version (FreeBSD)
-    {
-        // set when suspend failed and should be retried, see Issue 13416
-        private shared bool m_suspendagain;
-    }
-
-    //
     // Standard thread data
     //
     version (Windows)
@@ -719,7 +710,7 @@ class Thread : ThreadBase
                     // the effective maximum.
 
                     // maxupri
-                    result.PRIORITY_MIN = -clinfo[0];
+                    result.PRIORITY_MIN = -cast(int)(clinfo[0]);
                     // by definition
                     result.PRIORITY_DEFAULT = 0;
                 }
@@ -1049,7 +1040,7 @@ class Thread : ThreadBase
     }
 }
 
-private Thread toThread(ThreadBase t) @trusted nothrow @nogc pure
+private Thread toThread(return scope ThreadBase t) @trusted nothrow @nogc pure
 {
     return cast(Thread) cast(void*) t;
 }
@@ -1109,6 +1100,7 @@ unittest
     try
     {
         new Thread(
+        function()
         {
             throw new Exception( MSG );
         }).start().join();
@@ -1207,6 +1199,18 @@ unittest
     semb.notify();
 
     thr.join();
+}
+
+// https://issues.dlang.org/show_bug.cgi?id=22124
+unittest
+{
+    Thread thread = new Thread({});
+    auto fun(Thread t, int x)
+    {
+        t.__ctor({x = 3;});
+        return t;
+    }
+    static assert(!__traits(compiles, () @nogc => fun(thread, 3) ));
 }
 
 unittest
@@ -1474,6 +1478,35 @@ in (fn)
                 }
             }}
             sp = cast(void*)&regs[0];
+        }
+        else version (AArch64)
+        {
+            // Callee-save registers, x19-x28 according to AAPCS64, section
+            // 5.1.1.  Include x29 fp because it optionally can be a callee
+            // saved reg
+            size_t[11] regs = void;
+            // store the registers in pairs
+            asm pure nothrow @nogc
+            {
+                "stp x19, x20, %0" : "=m" (regs[ 0]), "=m" (regs[1]);
+                "stp x21, x22, %0" : "=m" (regs[ 2]), "=m" (regs[3]);
+                "stp x23, x24, %0" : "=m" (regs[ 4]), "=m" (regs[5]);
+                "stp x25, x26, %0" : "=m" (regs[ 6]), "=m" (regs[7]);
+                "stp x27, x28, %0" : "=m" (regs[ 8]), "=m" (regs[9]);
+                "str x29, %0"      : "=m" (regs[10]);
+                "mov %0, sp"       : "=r" (sp);
+            }
+        }
+        else version (ARM)
+        {
+            // Callee-save registers, according to AAPCS, section 5.1.1.
+            // arm and thumb2 instructions
+            size_t[8] regs = void;
+            asm pure nothrow @nogc
+            {
+                "stm %0, {r4-r11}" : : "r" (regs.ptr) : "memory";
+                "mov %0, sp"       : "=r" (sp);
+            }
         }
         else
         {
@@ -1977,7 +2010,6 @@ extern (C) void thread_suspendAll() nothrow
             // subtract own thread
             assert(cnt >= 1);
             --cnt;
-        Lagain:
             // wait for semaphore notifications
             for (; cnt; --cnt)
             {
@@ -1987,20 +2019,6 @@ extern (C) void thread_suspendAll() nothrow
                         onThreadError("Unable to wait for semaphore");
                     errno = 0;
                 }
-            }
-            version (FreeBSD)
-            {
-                // avoid deadlocks, see Issue 13416
-                t = ThreadBase.sm_tbeg.toThread;
-                while (t)
-                {
-                    auto tn = t.next;
-                    if (t.m_suspendagain && suspend(t))
-                        ++cnt;
-                    t = tn.toThread;
-                }
-                if (cnt)
-                    goto Lagain;
             }
         }
     }
@@ -2154,8 +2172,7 @@ extern (C) void thread_init() @nogc
         status = sem_init( &suspendCount, 0, 0 );
         assert( status == 0 );
     }
-    if (typeid(Thread).initializer.ptr)
-        _mainThreadStore[] = typeid(Thread).initializer[];
+    _mainThreadStore[] = __traits(initSymbol, Thread)[];
     Thread.sm_main = attachThread((cast(Thread)_mainThreadStore.ptr).__ctor());
 }
 
@@ -2212,15 +2229,7 @@ version (Windows)
 
             void append( Throwable t )
             {
-                if ( obj.m_unhandled is null )
-                    obj.m_unhandled = t;
-                else
-                {
-                    Throwable last = obj.m_unhandled;
-                    while ( last.next !is null )
-                        last = last.next;
-                    last.next = t;
-                }
+                obj.m_unhandled = Throwable.chainTogether(obj.m_unhandled, t);
             }
 
             version (D_InlineAsm_X86)
@@ -2367,15 +2376,7 @@ else version (Posix)
 
             void append( Throwable t )
             {
-                if ( obj.m_unhandled is null )
-                    obj.m_unhandled = t;
-                else
-                {
-                    Throwable last = obj.m_unhandled;
-                    while ( last.next !is null )
-                        last = last.next;
-                    last.next = t;
-                }
+                obj.m_unhandled = Throwable.chainTogether(obj.m_unhandled, t);
             }
             try
             {
@@ -2455,7 +2456,6 @@ else version (Posix)
                 status = sigdelset( &sigres, resumeSignalNumber );
                 assert( status == 0 );
 
-                version (FreeBSD) obj.m_suspendagain = false;
                 status = sem_post( &suspendCount );
                 assert( status == 0 );
 
@@ -2466,19 +2466,6 @@ else version (Posix)
                     obj.m_curr.tstack = obj.m_curr.bstack;
                 }
             }
-
-            // avoid deadlocks on FreeBSD, see Issue 13416
-            version (FreeBSD)
-            {
-                auto obj = Thread.getThis();
-                if (THR_IN_CRITICAL(obj.m_addr))
-                {
-                    obj.m_suspendagain = true;
-                    if (sem_post(&suspendCount)) assert(0);
-                    return;
-                }
-            }
-
             callWithStackShell(&op);
         }
 
@@ -2491,29 +2478,6 @@ else version (Posix)
         do
         {
 
-        }
-
-        // HACK libthr internal (thr_private.h) macro, used to
-        // avoid deadlocks in signal handler, see Issue 13416
-        version (FreeBSD) bool THR_IN_CRITICAL(pthread_t p) nothrow @nogc
-        {
-            import core.sys.posix.config : c_long;
-            import core.sys.posix.sys.types : lwpid_t;
-
-            // If the begin of pthread would be changed in libthr (unlikely)
-            // we'll run into undefined behavior, compare with thr_private.h.
-            static struct pthread
-            {
-                c_long tid;
-                static struct umutex { lwpid_t owner; uint flags; uint[2] ceilings; uint[4] spare; }
-                umutex lock;
-                uint cycle;
-                int locklevel;
-                int critical_count;
-                // ...
-            }
-            auto priv = cast(pthread*)p;
-            return priv.locklevel > 0 || priv.critical_count > 0;
         }
     }
 }

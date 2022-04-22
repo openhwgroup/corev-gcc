@@ -1,5 +1,5 @@
 /* Internals of libgccjit: classes for playing back recorded API calls.
-   Copyright (C) 2013-2021 Free Software Foundation, Inc.
+   Copyright (C) 2013-2022 Free Software Foundation, Inc.
    Contributed by David Malcolm <dmalcolm@redhat.com>.
 
 This file is part of GCC.
@@ -24,6 +24,7 @@ along with GCC; see the file COPYING3.  If not see
 #include <utility> // for std::pair
 
 #include "timevar.h"
+#include "varasm.h"
 
 #include "jit-recording.h"
 
@@ -109,7 +110,8 @@ public:
   new_global (location *loc,
 	      enum gcc_jit_global_kind kind,
 	      type *type,
-	      const char *name);
+	      const char *name,
+	      enum global_var_flags flags);
 
   lvalue *
   new_global_initialized (location *loc,
@@ -118,7 +120,19 @@ public:
                           size_t element_size,
                           size_t initializer_num_elem,
                           const void *initializer,
-                          const char *name);
+			  const char *name,
+			  enum global_var_flags flags);
+
+  rvalue *
+  new_ctor (location *log,
+	    type *type,
+	    const auto_vec<field*> *fields,
+	    const auto_vec<rvalue*> *rvalues);
+
+
+  void
+  global_set_init_rvalue (lvalue* variable,
+			  rvalue* init);
 
   template <typename HOST_TYPE>
   rvalue *
@@ -166,6 +180,11 @@ public:
   new_cast (location *loc,
 	    rvalue *expr,
 	    type *type_);
+
+  rvalue *
+  new_bitcast (location *loc,
+	       rvalue *expr,
+	       type *type_);
 
   lvalue *
   new_array_access (location *loc,
@@ -286,7 +305,8 @@ private:
   global_new_decl (location *loc,
                    enum gcc_jit_global_kind kind,
                    type *type,
-                   const char *name);
+		   const char *name,
+		   enum global_var_flags flags);
   lvalue *
   global_finalize_lvalue (tree inner);
 
@@ -674,6 +694,33 @@ public:
 
   rvalue *
   get_address (location *loc);
+
+  void
+  set_tls_model (enum tls_model tls_model)
+  {
+    set_decl_tls_model (as_tree (), tls_model);
+  }
+
+  void
+  set_link_section (const char* name)
+  {
+    set_decl_section_name (as_tree (), name);
+  }
+
+  void
+  set_register_name (const char* reg_name)
+  {
+    set_user_assembler_name (as_tree (), reg_name);
+    DECL_REGISTER (as_tree ()) = 1;
+    DECL_HARD_REGISTER (as_tree ()) = 1;
+  }
+
+  void
+  set_alignment (int alignment)
+  {
+      SET_DECL_ALIGN (as_tree (), alignment * BITS_PER_UNIT);
+      DECL_USER_ALIGN (as_tree ()) = 1;
+  }
 
 private:
   bool mark_addressable (location *loc);

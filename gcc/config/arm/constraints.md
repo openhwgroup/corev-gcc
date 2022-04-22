@@ -1,5 +1,5 @@
 ;; Constraint definitions for ARM and Thumb
-;; Copyright (C) 2006-2021 Free Software Foundation, Inc.
+;; Copyright (C) 2006-2022 Free Software Foundation, Inc.
 ;; Contributed by ARM Ltd.
 
 ;; This file is part of GCC.
@@ -311,6 +311,12 @@
   In ARM/Thumb-2 state a vector of constant zeros."
  (and (match_code "const_vector")
       (match_test "(TARGET_NEON || TARGET_HAVE_MVE) && op == CONST0_RTX (mode)")))
+
+(define_constraint "DB"
+ "@internal
+  In ARM/Thumb-2 state with MVE a constant vector of booleans."
+ (and (match_code "const_vector")
+      (match_test "TARGET_HAVE_MVE && GET_MODE_CLASS (mode) == MODE_VECTOR_BOOL")))
 
 (define_constraint "Da"
  "@internal

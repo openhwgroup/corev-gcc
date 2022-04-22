@@ -1,5 +1,5 @@
 /* Definition of data structure of RISC-V subset for GNU compiler.
-   Copyright (C) 2011-2021 Free Software Foundation, Inc.
+   Copyright (C) 2011-2022 Free Software Foundation, Inc.
    Contributed by Andrew Waterman (andrew@sifive.com).
    Based on MIPS target for GNU compiler.
 
@@ -68,6 +68,7 @@ private:
 				     const char *);
 
   void handle_implied_ext (riscv_subset_t *);
+  void handle_combine_ext ();
 
 public:
   ~riscv_subset_list ();

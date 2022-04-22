@@ -1,6 +1,6 @@
 /* coroutine-specific state, expansions and tests.
 
-   Copyright (C) 2018-2021 Free Software Foundation, Inc.
+   Copyright (C) 2018-2022 Free Software Foundation, Inc.
 
  Contributed by Iain Sandoe <iain@sandoe.co.uk> under contract to Facebook.
 
@@ -912,7 +912,7 @@ build_co_await (location_t loc, tree a, suspend_point_kind suspend_kind)
   if (MAYBE_CLASS_TYPE_P (TREE_TYPE (a)))
     {
       o = build_new_op (loc, CO_AWAIT_EXPR, LOOKUP_NORMAL, a, NULL_TREE,
-			NULL_TREE, NULL, tf_warning_or_error);
+			NULL_TREE, NULL_TREE, NULL, tf_warning_or_error);
       /* If no viable functions are found, o is a.  */
       if (!o || o == error_mark_node)
 	o = a;
@@ -1824,7 +1824,7 @@ expand_one_await_expression (tree *stmt, tree *await_expr, void *d)
       cp_walk_tree (await_init, co_await_find_in_subtree, &aw_expr_ptr, NULL))
     expand_one_await_expression (await_init, aw_expr_ptr, d);
 
-  /* Expand any more await expressions in the the original statement.  */
+  /* Expand any more await expressions in the original statement.  */
   if (cp_walk_tree (revised, co_await_find_in_subtree, &aw_expr_ptr, NULL))
     expand_one_await_expression (revised, aw_expr_ptr, d);
 
@@ -4211,9 +4211,15 @@ coro_rewrite_function_body (location_t fn_start, tree fnbody, tree orig,
 	{
 	  /* Build a compound expression that sets the
 	     initial-await-resume-called variable true and then calls the
-	     initial suspend expression await resume.  */
+	     initial suspend expression await resume.
+	     In the case that the user decides to make the initial await
+	     await_resume() return a value, we need to discard it and, it is
+	     a reference type, look past the indirection.  */
+	  if (INDIRECT_REF_P (initial_await))
+	    initial_await = TREE_OPERAND (initial_await, 0);
 	  tree vec = TREE_OPERAND (initial_await, 3);
 	  tree aw_r = TREE_VEC_ELT (vec, 2);
+	  aw_r = convert_to_void (aw_r, ICV_STATEMENT, tf_warning_or_error);
 	  tree update = build2 (MODIFY_EXPR, boolean_type_node, i_a_r_c,
 				boolean_true_node);
 	  aw_r = cp_build_compound_expr (update, aw_r, tf_warning_or_error);
@@ -4381,7 +4387,7 @@ morph_fn_to_coro (tree orig, tree *resumer, tree *destroyer)
      If we encounter a fatal error we might return a now-empty body.
 
      Note, the returned ramp body is not 'popped', to be compatible with
-     the way that decl.c handles regular functions, the scope pop is done
+     the way that decl.cc handles regular functions, the scope pop is done
      in the caller.  */
 
   tree newbody = push_stmt_list ();
@@ -4534,6 +4540,7 @@ morph_fn_to_coro (tree orig, tree *resumer, tree *destroyer)
   BIND_EXPR_BLOCK (ramp_bind) = top_block;
   BLOCK_VARS (top_block) = BIND_EXPR_VARS (ramp_bind);
   BLOCK_SUBBLOCKS (top_block) = NULL_TREE;
+  current_binding_level->blocks = top_block;
 
   /* The decl_expr for the coro frame pointer, initialize to zero so that we
      can pass it to the IFN_CO_FRAME (since there's no way to pass a type,
@@ -4595,8 +4602,8 @@ morph_fn_to_coro (tree orig, tree *resumer, tree *destroyer)
 	If the lookup finds an allocation function in the scope of the promise
 	type, overload resolution is performed on a function call created by
 	assembling an argument list.  The first argument is the amount of space
-	requested, and has type std::size_t.  The succeeding arguments are
-	those of the original function.  */
+	requested, and has type std::size_t.  The lvalues p1...pn are the
+	succeeding arguments..  */
       vec<tree, va_gc> *args = make_tree_vector ();
       vec_safe_push (args, resizeable); /* Space needed.  */
 
@@ -4614,10 +4621,10 @@ morph_fn_to_coro (tree orig, tree *resumer, tree *destroyer)
 	      this_ref = convert_to_reference (tt, this_ref, CONV_STATIC,
 					       LOOKUP_NORMAL , NULL_TREE,
 					       tf_warning_or_error);
-	      vec_safe_push (args, this_ref);
+	      vec_safe_push (args, convert_from_reference (this_ref));
 	    }
 	  else
-	    vec_safe_push (args, arg);
+	    vec_safe_push (args, convert_from_reference (arg));
 	}
 
       /* Note the function selected; we test to see if it's NOTHROW.  */

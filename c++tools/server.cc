@@ -1,5 +1,5 @@
 /* C++ modules.  Experimental!
-   Copyright (C) 2018-2021 Free Software Foundation, Inc.
+   Copyright (C) 2018-2022 Free Software Foundation, Inc.
    Written by Nathan Sidwell <nathan@acm.org> while at FaceBook
 
    This file is part of GCC.
@@ -319,7 +319,7 @@ static void ATTRIBUTE_NORETURN
 print_version (void)
 {
   fnotice (stdout, "%s %s%s\n", progname, pkgversion_string, version_string);
-  fprintf (stdout, "Copyright %s 2018-2021 Free Software Foundation, Inc.\n",
+  fprintf (stdout, "Copyright %s 2018-2022 Free Software Foundation, Inc.\n",
 	   ("(C)"));
   fnotice (stdout,
 	   ("This is free software; see the source for copying conditions.\n"
@@ -360,7 +360,11 @@ accept_from (char *arg ATTRIBUTE_UNUSED)
   hints.ai_next = NULL;
 
   struct addrinfo *addrs = NULL;
-  if (int e = getaddrinfo (slash == arg ? NULL : arg, "0", &hints, &addrs))
+  /* getaddrinfo requires either hostname or servname to be non-null, so that we must
+     set a port number (to cover the case that the string passed contains just /NN).
+     Use an arbitrary in-range port number, but avoiding "0" which triggers a bug on
+     some BSD variants.  */
+  if (int e = getaddrinfo (slash == arg ? NULL : arg, "1", &hints, &addrs))
     {
       noisy ("cannot resolve '%s': %s", arg, gai_strerror (e));
       ok = false;

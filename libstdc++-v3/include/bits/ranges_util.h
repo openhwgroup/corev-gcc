@@ -1,6 +1,6 @@
 // Utilities for representing and manipulating ranges -*- C++ -*-
 
-// Copyright (C) 2019-2021 Free Software Foundation, Inc.
+// Copyright (C) 2019-2022 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -216,6 +216,8 @@ namespace ranges
 
   } // namespace __detail
 
+  namespace views { struct _Drop; } // defined in <ranges>
+
   enum class subrange_kind : bool { unsized, sized };
 
   /// The ranges::subrange class template
@@ -226,9 +228,10 @@ namespace ranges
     class subrange : public view_interface<subrange<_It, _Sent, _Kind>>
     {
     private:
-      // XXX: gcc complains when using constexpr here
-      static const bool _S_store_size
+      static constexpr bool _S_store_size
 	= _Kind == subrange_kind::sized && !sized_sentinel_for<_Sent, _It>;
+
+      friend struct views::_Drop; // Needs to inspect _S_store_size.
 
       _It _M_begin = _It();
       [[no_unique_address]] _Sent _M_end = _Sent();

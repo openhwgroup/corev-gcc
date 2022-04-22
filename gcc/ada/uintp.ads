@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---          Copyright (C) 1992-2021, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2022, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -104,6 +104,7 @@ package Uintp is
    subtype Unat is Valid_Uint with Predicate => Unat >= Uint_0; -- natural
    subtype Upos is Valid_Uint with Predicate => Upos >= Uint_1; -- positive
    subtype Nonzero_Uint is Valid_Uint with Predicate => Nonzero_Uint /= Uint_0;
+   subtype Unegative is Valid_Uint with Predicate => Unegative < Uint_0;
    subtype Ubool is Valid_Uint with Predicate => Ubool in Uint_0 | Uint_1;
    subtype Opt_Ubool is Uint with
      Predicate => No (Opt_Ubool) or else Opt_Ubool in Ubool;

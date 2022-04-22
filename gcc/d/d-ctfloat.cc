@@ -1,5 +1,5 @@
 /* d-ctfloat.cc -- D frontend interface to the gcc back-end.
-   Copyright (C) 2020-2021 Free Software Foundation, Inc.
+   Copyright (C) 2020-2022 Free Software Foundation, Inc.
 
 GCC is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -55,8 +55,7 @@ CTFloat::isIdentical (real_t x, real_t y)
 {
   real_value rx = x.rv ();
   real_value ry = y.rv ();
-  return (REAL_VALUE_ISNAN (rx) && REAL_VALUE_ISNAN (ry))
-    || real_identical (&rx, &ry);
+  return real_identical (&rx, &ry);
 }
 
 /* Return true if real_t value R is NaN.  */

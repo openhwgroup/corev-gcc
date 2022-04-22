@@ -1,7 +1,7 @@
 // { dg-options "-g -O0 -std=gnu++2a" }
 // { dg-do run { target c++2a } }
 
-// Copyright (C) 2014-2021 Free Software Foundation, Inc.
+// Copyright (C) 2014-2022 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -18,8 +18,10 @@
 // with this library; see the file COPYING3.  If not see
 // <http://www.gnu.org/licenses/>.
 
+#include <array>
 #include <compare>
 #include <iostream>
+#include <span>
 
 struct X
 {
@@ -53,6 +55,15 @@ main()
 // { dg-final { note-test c9 "std::partial_ordering::greater" } }
   auto c10 = 0.0 <=> __builtin_nan("");
 // { dg-final { note-test c10 "std::partial_ordering::unordered" } }
+
+  auto il = {1, 2};
+  auto s1 = std::span(il);
+  static_assert(s1.extent == std::size_t(-1));
+// { dg-final { note-test s1 {std::span of length 2 = {1, 2}} } }
+  auto a = std::array{3, 4};
+  auto s2 = std::span(a);
+  static_assert(s2.extent == std::size_t(2));
+// { dg-final { note-test s2 {std::span of length 2 = {3, 4}} } }
 
   std::cout << "\n";
   return 0;			// Mark SPOT

@@ -1,4 +1,4 @@
-// Copyright (C) 2017-2021 Free Software Foundation, Inc.
+// Copyright (C) 2017-2022 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -109,6 +109,7 @@
 #define func (
 #define tmp (
 #define sz (
+#define token (
 
 #if __cplusplus < 201103L
 #define uses_allocator  (
@@ -202,6 +203,8 @@
 #undef y
 // <sys/var.h> defines vario::v
 #undef v
+// <sys/timer.h> defines trb::func and cputime_tmr::func
+#undef func
 #endif
 
 #ifdef __APPLE__
@@ -251,6 +254,10 @@
 #undef p
 // See https://gcc.gnu.org/ml/libstdc++/2019-05/msg00175.html
 #undef ptr
+// <sys/timespec_util.h> uses this as parameter
+#undef r
+// <stdlib.h> uses this as member of drand48_data
+#undef x
 #endif
 
 #ifdef __VXWORKS__

@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2021, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2022, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -380,8 +380,8 @@ package body Uintp is
 
       procedure Image_String (S : String) is
       begin
-         for X in S'Range loop
-            Image_Char (S (X));
+         for X of S loop
+            Image_Char (X);
          end loop;
       end Image_String;
 

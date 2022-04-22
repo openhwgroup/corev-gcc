@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---          Copyright (C) 2020-2021, Free Software Foundation, Inc.         --
+--          Copyright (C) 2020-2022, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -146,6 +146,9 @@ package Gen_IL.Internals is
    --  only]", and "[root type only]" annotations documented in einfo.ads.
    --  The default is No_Type_Only, indicating the field is not one of
    --  these special "[... only]" ones.
+
+   function Image (Type_Only : Type_Only_Enum) return String is
+     (Capitalize (Type_Only'Img));
 
    Unknown_Offset : constant := -1;
    --  Initial value of Offset, so we can tell whether it has been set

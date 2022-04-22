@@ -1,6 +1,6 @@
 /* Get common system includes and various definitions and declarations based
    on autoconf macros.
-   Copyright (C) 1998-2021 Free Software Foundation, Inc.
+   Copyright (C) 1998-2022 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -737,12 +737,10 @@ extern int vsnprintf (char *, size_t, const char *, va_list);
 
 /* Some of the headers included by <memory> can use "abort" within a
    namespace, e.g. "_VSTD::abort();", which fails after we use the
-   preprocessor to redefine "abort" as "fancy_abort" below.
-   Given that unique-ptr.h can use "free", we need to do this after "free"
-   is declared but before "abort" is overridden.  */
+   preprocessor to redefine "abort" as "fancy_abort" below.  */
 
-#ifdef INCLUDE_UNIQUE_PTR
-# include "unique-ptr.h"
+#ifdef INCLUDE_MEMORY
+# include <memory>
 #endif
 
 #ifdef INCLUDE_MALLOC_H
@@ -1305,25 +1303,17 @@ startswith (const char *str, const char *prefix)
   return strncmp (str, prefix, strlen (prefix)) == 0;
 }
 
-/* Strip white spaces from STRING with LEN length.
-   A stripped string is returned and LEN is updated accordingly.  */
+/* Return true if STR string ends with SUFFIX.  */
 
-static inline char *
-strip_whitespaces (char *string, size_t *len)
+static inline bool
+endswith (const char *str, const char *suffix)
 {
-  while (string[0] == ' ' || string[0] == '\t')
-    {
-      --(*len);
-      ++string;
-    }
+  size_t str_len = strlen (str);
+  size_t suffix_len = strlen (suffix);
+  if (str_len < suffix_len)
+    return false;
 
-  while (string[*len - 1] == ' ' || string[*len - 1] == '\t')
-    {
-      string[*len - 1] = '\0';
-      --(*len);
-    }
-
-  return string;
+  return memcmp (str + str_len - suffix_len, suffix, suffix_len) == 0;
 }
 
 #endif /* ! GCC_SYSTEM_H */

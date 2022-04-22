@@ -1,6 +1,6 @@
 /* Verify pattern initialization for floating point type automatic variables.  */
 /* { dg-do compile } */
-/* { dg-options "-ftrivial-auto-var-init=pattern -fdump-rtl-expand -march=x86-64 -mtune=generic -msse" } */
+/* { dg-options "-ftrivial-auto-var-init=pattern -march=x86-64 -mtune=generic -msse" } */
 
 long double result;
 
@@ -14,8 +14,7 @@ long double foo()
   return result;
 }
 
-/* { dg-final { scan-rtl-dump-times "0xfffffffffefefefe" 1 "expand" { target { ! ia32 } } } } */
-/* { dg-final { scan-rtl-dump-times "\\\[0xfefefefefefefefe\\\]" 1 "expand" { target { ! ia32 } } } } */
-/* { dg-final { scan-rtl-dump-times "0xfffffffffffffffe\\\]\\\) repeated x16" 1 "expand" { target { ! ia32 } } } } */
-/* { dg-final { scan-rtl-dump-times "0xfffffffffefefefe" 2 "expand" { target ia32 } } } */
-/* { dg-final { scan-rtl-dump-times "\\\[0xfefefefefefefefe\\\]" 2 "expand" { target ia32 } } } */
+
+/* The long double init isn't expanded optimally, see PR105259.  For ia32
+   it uses zero-initialization.  */
+/* { dg-final { scan-assembler-times "long\t-16843010" 3 } } */

@@ -1,5 +1,5 @@
 /* Header file for gimple range GORI structures.
-   Copyright (C) 2017-2021 Free Software Foundation, Inc.
+   Copyright (C) 2017-2022 Free Software Foundation, Inc.
    Contributed by Andrew MacLeod <amacleod@redhat.com>
    and Aldy Hernandez <aldyh@redhat.com>.
 
@@ -158,10 +158,14 @@ class gori_compute : public gori_map
 public:
   gori_compute (int not_executable_flag = 0);
   bool outgoing_edge_range_p (irange &r, edge e, tree name, range_query &q);
-  bool has_edge_range_p (tree name, edge e = NULL);
+  bool condexpr_adjust (irange &r1, irange &r2, gimple *s, tree cond, tree op1,
+			tree op2, fur_source &src);
+  bool has_edge_range_p (tree name, basic_block bb = NULL);
+  bool has_edge_range_p (tree name, edge e);
   void dump (FILE *f);
 private:
-  bool may_recompute_p (tree name, edge e = NULL);
+  bool may_recompute_p (tree name, edge e);
+  bool may_recompute_p (tree name, basic_block bb = NULL);
   bool compute_operand_range (irange &r, gimple *stmt, const irange &lhs,
 			      tree name, class fur_source &src);
   bool compute_operand_range_switch (irange &r, gswitch *s, const irange &lhs,

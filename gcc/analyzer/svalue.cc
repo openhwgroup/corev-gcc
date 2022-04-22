@@ -1,5 +1,5 @@
 /* Symbolic values.
-   Copyright (C) 2019-2021 Free Software Foundation, Inc.
+   Copyright (C) 2019-2022 Free Software Foundation, Inc.
    Contributed by David Malcolm <dmalcolm@redhat.com>.
 
 This file is part of GCC.
@@ -193,6 +193,14 @@ svalue::can_merge_p (const svalue *other,
 	return NULL;
     }
 
+  /* Reject merging svalues that have non-purgable sm-state,
+     to avoid falsely reporting memory leaks by merging them
+     with something else.  */
+  if (!merger->mergeable_svalue_p (this))
+    return NULL;
+  if (!merger->mergeable_svalue_p (other))
+    return NULL;
+
   /* Widening.  */
   /* Merge: (new_cst, existing_cst) -> widen (existing, new).  */
   if (maybe_get_constant () && other->maybe_get_constant ())
@@ -329,9 +337,16 @@ cmp_cst (const_tree cst1, const_tree cst2)
 	return cmp_nelts_per_pattern;
       unsigned encoded_nelts = vector_cst_encoded_nelts (cst1);
       for (unsigned i = 0; i < encoded_nelts; i++)
-	if (int el_cmp = cmp_cst (VECTOR_CST_ENCODED_ELT (cst1, i),
-				  VECTOR_CST_ENCODED_ELT (cst2, i)))
-	  return el_cmp;
+	{
+	  const_tree elt1 = VECTOR_CST_ENCODED_ELT (cst1, i);
+	  const_tree elt2 = VECTOR_CST_ENCODED_ELT (cst2, i);
+	  int t1 = TYPE_UID (TREE_TYPE (elt1));
+	  int t2 = TYPE_UID (TREE_TYPE (elt2));
+	  if (int cmp_type = t1 - t2)
+	    return cmp_type;
+	  if (int el_cmp = cmp_cst (elt1, elt2))
+	    return el_cmp;
+	}
       return 0;
     }
 }
@@ -532,6 +547,26 @@ svalue::cmp_ptr (const svalue *sval1, const svalue *sval2)
 	return 0;
       }
       break;
+    case SK_CONST_FN_RESULT:
+      {
+	const const_fn_result_svalue *const_fn_result_sval1
+	  = (const const_fn_result_svalue *)sval1;
+	const const_fn_result_svalue *const_fn_result_sval2
+	  = (const const_fn_result_svalue *)sval2;
+	int d1 = DECL_UID (const_fn_result_sval1->get_fndecl ());
+	int d2 = DECL_UID (const_fn_result_sval2->get_fndecl ());
+	if (int cmp_fndecl = d1 - d2)
+	  return cmp_fndecl;
+	if (int cmp = ((int)const_fn_result_sval1->get_num_inputs ()
+		       - (int)const_fn_result_sval2->get_num_inputs ()))
+	  return cmp;
+	for (unsigned i = 0; i < const_fn_result_sval1->get_num_inputs (); i++)
+	  if (int input_cmp
+	      = svalue::cmp_ptr (const_fn_result_sval1->get_input (i),
+				 const_fn_result_sval2->get_input (i)))
+	    return input_cmp;
+	return 0;
+      }
     }
 }
 
@@ -614,6 +649,48 @@ bool
 svalue::all_zeroes_p () const
 {
   return false;
+}
+
+/* If this svalue is a pointer, attempt to determine the base region it points
+   to.  Return NULL on any problems.  */
+
+const region *
+svalue::maybe_get_deref_base_region () const
+{
+  const svalue *iter = this;
+  while (1)
+    {
+      switch (iter->get_kind ())
+	{
+	default:
+	  return NULL;
+
+	case SK_REGION:
+	  {
+	    const region_svalue *region_sval
+	      = as_a <const region_svalue *> (iter);
+	    return region_sval->get_pointee ()->get_base_region ();
+	  }
+
+	case SK_BINOP:
+	  {
+	    const binop_svalue *binop_sval
+	      = as_a <const binop_svalue *> (iter);
+	    switch (binop_sval->get_op ())
+	      {
+	      case POINTER_PLUS_EXPR:
+		/* If we have a symbolic value expressing pointer arithmetic,
+		   use the LHS.  */
+		iter = binop_sval->get_arg0 ();
+		continue;
+
+	      default:
+		return NULL;
+	      }
+	    return NULL;
+	  }
+	}
+    }
 }
 
 /* class region_svalue : public svalue.  */
@@ -1880,6 +1957,59 @@ void
 asm_output_svalue::accept (visitor *v) const
 {
   v->visit_asm_output_svalue (this);
+  for (unsigned i = 0; i < m_num_inputs; i++)
+    m_input_arr[i]->accept (v);
+}
+
+/* class const_fn_result_svalue : public svalue.  */
+
+/* Implementation of svalue::dump_to_pp vfunc for const_fn_result_svalue.  */
+
+void
+const_fn_result_svalue::dump_to_pp (pretty_printer *pp, bool simple) const
+{
+  if (simple)
+    {
+      pp_printf (pp, "CONST_FN_RESULT(%qD, {", m_fndecl);
+      for (unsigned i = 0; i < m_num_inputs; i++)
+	{
+	  if (i > 0)
+	    pp_string (pp, ", ");
+	  dump_input (pp, i, m_input_arr[i], simple);
+	}
+      pp_string (pp, "})");
+    }
+  else
+    {
+      pp_printf (pp, "CONST_FN_RESULT(%qD, {", m_fndecl);
+      for (unsigned i = 0; i < m_num_inputs; i++)
+	{
+	  if (i > 0)
+	    pp_string (pp, ", ");
+	  dump_input (pp, i, m_input_arr[i], simple);
+	}
+      pp_string (pp, "})");
+    }
+}
+
+/* Subroutine of const_fn_result_svalue::dump_to_pp.  */
+
+void
+const_fn_result_svalue::dump_input (pretty_printer *pp,
+				    unsigned input_idx,
+				    const svalue *sval,
+				    bool simple) const
+{
+  pp_printf (pp, "arg%i: ", input_idx);
+  sval->dump_to_pp (pp, simple);
+}
+
+/* Implementation of svalue::accept vfunc for const_fn_result_svalue.  */
+
+void
+const_fn_result_svalue::accept (visitor *v) const
+{
+  v->visit_const_fn_result_svalue (this);
   for (unsigned i = 0; i < m_num_inputs; i++)
     m_input_arr[i]->accept (v);
 }

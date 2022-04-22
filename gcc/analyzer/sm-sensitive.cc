@@ -1,6 +1,6 @@
 /* An experimental state machine, for tracking exposure of sensitive
    data (e.g. through logging).
-   Copyright (C) 2019-2021 Free Software Foundation, Inc.
+   Copyright (C) 2019-2022 Free Software Foundation, Inc.
    Contributed by David Malcolm <dmalcolm@redhat.com>.
 
 This file is part of GCC.
@@ -91,13 +91,17 @@ public:
     return same_tree_p (m_arg, other.m_arg);
   }
 
+  int get_controlling_option () const FINAL OVERRIDE
+  {
+    return OPT_Wanalyzer_exposure_through_output_file;
+  }
+
   bool emit (rich_location *rich_loc) FINAL OVERRIDE
   {
     diagnostic_metadata m;
     /* CWE-532: Information Exposure Through Log Files */
     m.add_cwe (532);
-    return warning_meta (rich_loc, m,
-			 OPT_Wanalyzer_exposure_through_output_file,
+    return warning_meta (rich_loc, m, get_controlling_option (),
 			 "sensitive value %qE written to output file",
 			 m_arg);
   }

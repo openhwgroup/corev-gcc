@@ -526,6 +526,16 @@ else version (CRuntime_Musl)
     int    putc_unlocked(int, FILE*);
     int    putchar_unlocked(int);
 }
+else version (CRuntime_Bionic)
+{
+    void   flockfile(FILE*);
+    int    ftrylockfile(FILE*);
+    void   funlockfile(FILE*);
+    int    getc_unlocked(FILE*);
+    int    getchar_unlocked();
+    int    putc_unlocked(int, FILE*);
+    int    putchar_unlocked(int);
+}
 else version (Darwin)
 {
     void   flockfile(FILE*);
@@ -613,35 +623,35 @@ version (CRuntime_Glibc)
 {
     enum P_tmpdir  = "/tmp";
 }
-version (CRuntime_Musl)
+else version (CRuntime_Musl)
 {
     enum P_tmpdir  = "/tmp";
 }
-version (Darwin)
+else version (Darwin)
 {
     enum P_tmpdir  = "/var/tmp";
 }
-version (FreeBSD)
+else version (FreeBSD)
 {
     enum P_tmpdir  = "/var/tmp/";
 }
-version (NetBSD)
+else version (NetBSD)
 {
     enum P_tmpdir  = "/var/tmp/";
 }
-version (OpenBSD)
+else version (OpenBSD)
 {
     enum P_tmpdir  = "/tmp/";
 }
-version (DragonFlyBSD)
+else version (DragonFlyBSD)
 {
     enum P_tmpdir  = "/var/tmp/";
 }
-version (Solaris)
+else version (Solaris)
 {
     enum P_tmpdir  = "/var/tmp/";
 }
-version (CRuntime_UClibc)
+else version (CRuntime_UClibc)
 {
     enum P_tmpdir  = "/tmp";
 }

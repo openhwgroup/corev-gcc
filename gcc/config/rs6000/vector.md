@@ -3,7 +3,7 @@
 ;; expander, and the actual vector instructions will be in altivec.md and
 ;; vsx.md
 
-;; Copyright (C) 2009-2021 Free Software Foundation, Inc.
+;; Copyright (C) 2009-2022 Free Software Foundation, Inc.
 ;; Contributed by Michael Meissner <meissner@linux.vnet.ibm.com>
 
 ;; This file is part of GCC.
@@ -916,23 +916,21 @@
 ;; which is in the reverse order that we want
 (define_expand "vector_select_<mode>"
   [(set (match_operand:VEC_L 0 "vlogical_operand")
-	(if_then_else:VEC_L
-	 (ne:CC (match_operand:VEC_L 3 "vlogical_operand")
-		(match_dup 4))
-	 (match_operand:VEC_L 2 "vlogical_operand")
-	 (match_operand:VEC_L 1 "vlogical_operand")))]
-  "VECTOR_UNIT_ALTIVEC_OR_VSX_P (<MODE>mode)"
-  "operands[4] = CONST0_RTX (<MODE>mode);")
+	(ior:VEC_L
+	  (and:VEC_L (not:VEC_L (match_operand:VEC_L 3 "vlogical_operand"))
+		     (match_operand:VEC_L 1 "vlogical_operand"))
+	  (and:VEC_L (match_dup 3)
+		     (match_operand:VEC_L 2 "vlogical_operand"))))]
+  "VECTOR_UNIT_ALTIVEC_OR_VSX_P (<MODE>mode)")
 
 (define_expand "vector_select_<mode>_uns"
   [(set (match_operand:VEC_L 0 "vlogical_operand")
-	(if_then_else:VEC_L
-	 (ne:CCUNS (match_operand:VEC_L 3 "vlogical_operand")
-		   (match_dup 4))
-	 (match_operand:VEC_L 2 "vlogical_operand")
-	 (match_operand:VEC_L 1 "vlogical_operand")))]
-  "VECTOR_UNIT_ALTIVEC_OR_VSX_P (<MODE>mode)"
-  "operands[4] = CONST0_RTX (<MODE>mode);")
+	(ior:VEC_L
+	  (and:VEC_L (not:VEC_L (match_operand:VEC_L 3 "vlogical_operand"))
+		     (match_operand:VEC_L 1 "vlogical_operand"))
+	  (and:VEC_L (match_dup 3)
+		     (match_operand:VEC_L 2 "vlogical_operand"))))]
+  "VECTOR_UNIT_ALTIVEC_OR_VSX_P (<MODE>mode)")
 
 ;; Expansions that compare vectors producing a vector result and a predicate,
 ;; setting CR6 to indicate a combined status
@@ -1521,7 +1519,10 @@
  [(set (match_operand:VEC_N 0 "nonimmediate_operand")
        (match_operand:VEC_N 1 "any_operand"))]
  "VECTOR_MEM_VSX_P (<MODE>mode) && TARGET_ALLOW_MOVMISALIGN"
- "")
+{
+  rs6000_emit_move (operands[0], operands[1], <MODE>mode);
+  DONE;
+})
 
 ;; Vector shift right in bits. Currently supported ony for shift
 ;; amounts that can be expressed as byte shifts (divisible by 8).

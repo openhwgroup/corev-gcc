@@ -1,6 +1,6 @@
 // <optional> -*- C++ -*-
 
-// Copyright (C) 2013-2021 Free Software Foundation, Inc.
+// Copyright (C) 2013-2022 Free Software Foundation, Inc.
 // Copyright The GNU Toolchain Authors.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
@@ -60,10 +60,12 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
    *  @{
    */
 
-#if __cplusplus == 201703L
-# define __cpp_lib_optional 201606L
-#else
+#if __cplusplus > 202002L && __cpp_lib_concepts
+# define __cpp_lib_optional 202110L
+#elif __cplusplus >= 202002L
 # define __cpp_lib_optional 202106L
+#else
+# define __cpp_lib_optional 201606L
 #endif
 
   template<typename _Tp>
@@ -1043,12 +1045,10 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	    return static_cast<_Tp>(std::forward<_Up>(__u));
 	}
 
-#if __cplusplus > 202002L && __cpp_lib_concepts
-#define __cpp_lib_monadic_optional 202110L
-
+#if __cpp_lib_optional >= 202110L
       // [optional.monadic]
 
-      template<typename _Fn> requires invocable<_Fn, _Tp&>
+      template<typename _Fn>
 	constexpr auto
 	and_then(_Fn&& __f) &
 	{
@@ -1060,7 +1060,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	    return _Up();
 	}
 
-      template<typename _Fn> requires invocable<_Fn, const _Tp&>
+      template<typename _Fn>
 	constexpr auto
 	and_then(_Fn&& __f) const &
 	{
@@ -1072,7 +1072,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	    return _Up();
 	}
 
-      template<typename _Fn> requires invocable<_Fn, _Tp>
+      template<typename _Fn>
 	constexpr auto
 	and_then(_Fn&& __f) &&
 	{
@@ -1084,7 +1084,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	    return _Up();
 	}
 
-      template<typename _Fn> requires invocable<_Fn, const _Tp>
+      template<typename _Fn>
 	constexpr auto
 	and_then(_Fn&& __f) const &&
 	{
@@ -1096,7 +1096,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	    return _Up();
 	}
 
-      template<typename _Fn> requires invocable<_Fn, _Tp&>
+      template<typename _Fn>
 	constexpr auto
 	transform(_Fn&& __f) &
 	{
@@ -1107,7 +1107,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	    return optional<_Up>();
 	}
 
-      template<typename _Fn> requires invocable<_Fn, const _Tp&>
+      template<typename _Fn>
 	constexpr auto
 	transform(_Fn&& __f) const &
 	{
@@ -1118,7 +1118,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	    return optional<_Up>();
 	}
 
-      template<typename _Fn> requires invocable<_Fn, _Tp>
+      template<typename _Fn>
 	constexpr auto
 	transform(_Fn&& __f) &&
 	{
@@ -1129,7 +1129,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	    return optional<_Up>();
 	}
 
-      template<typename _Fn> requires invocable<_Fn, const _Tp>
+      template<typename _Fn>
 	constexpr auto
 	transform(_Fn&& __f) const &&
 	{

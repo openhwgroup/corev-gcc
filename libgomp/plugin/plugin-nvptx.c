@@ -1,6 +1,6 @@
 /* Plugin for NVPTX execution.
 
-   Copyright (C) 2013-2021 Free Software Foundation, Inc.
+   Copyright (C) 2013-2022 Free Software Foundation, Inc.
 
    Contributed by Mentor Embedded.
 
@@ -41,7 +41,11 @@
 #include "oacc-int.h"
 
 #include <pthread.h>
-#include <cuda.h>
+#if PLUGIN_NVPTX_DYNAMIC
+# include "cuda/cuda.h"
+#else
+# include <cuda.h>
+#endif
 #include <stdbool.h>
 #include <limits.h>
 #include <string.h>
@@ -1353,7 +1357,7 @@ GOMP_OFFLOAD_load_image (int ord, unsigned version, const void *target_data,
   size_t device_num_varsize;
   CUresult r = CUDA_CALL_NOCHECK (cuModuleGetGlobal, &device_num_varptr,
 				  &device_num_varsize, module,
-				  STRINGX (GOMP_DEVICE_NUM_VAR));
+				  XSTRING (GOMP_DEVICE_NUM_VAR));
   if (r == CUDA_SUCCESS)
     {
       targ_tbl->start = (uintptr_t) device_num_varptr;

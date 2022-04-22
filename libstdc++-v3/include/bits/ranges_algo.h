@@ -1,6 +1,6 @@
 // Core algorithmic facilities -*- C++ -*-
 
-// Copyright (C) 2020-2021 Free Software Foundation, Inc.
+// Copyright (C) 2020-2022 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -3084,7 +3084,7 @@ namespace ranges
 	auto __last = ranges::end(__r);
 	__glibcxx_assert(__first != __last);
 	auto __comp_proj = __detail::__make_comp_proj(__comp, __proj);
-	minmax_result<range_value_t<_Range>> __result = {*__first, *__first};
+	minmax_result<range_value_t<_Range>> __result = {*__first, __result.min};
 	if (++__first == __last)
 	  return __result;
 	else

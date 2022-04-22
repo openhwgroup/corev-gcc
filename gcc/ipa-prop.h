@@ -1,5 +1,5 @@
 /* Interprocedural analyses.
-   Copyright (C) 2005-2021 Free Software Foundation, Inc.
+   Copyright (C) 2005-2022 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -25,7 +25,7 @@ along with GCC; see the file COPYING3.  If not see
 
 #define IPA_UNDESCRIBED_USE -1
 
-/* ipa-prop.c stuff (ipa-cp, indirect inlining):  */
+/* ipa-prop.cc stuff (ipa-cp, indirect inlining):  */
 
 /* A jump function for a callsite represents the values passed as actual
    arguments of the callsite.  They were originally proposed in a paper called
@@ -59,7 +59,7 @@ along with GCC; see the file COPYING3.  If not see
    parameter or can apply one simple binary operation to it (such jump
    functions are called polynomial).
 
-   Jump functions are computed in ipa-prop.c by function
+   Jump functions are computed in ipa-prop.cc by function
    update_call_notes_after_inlining.  Some information can be lost and jump
    functions degraded accordingly when inlining, see
    update_call_notes_after_inlining in the same file.  */
@@ -143,6 +143,8 @@ struct GTY(()) ipa_ancestor_jf_data
   int formal_id;
   /* Flag with the same meaning like agg_preserve in ipa_pass_through_data.  */
   unsigned agg_preserved : 1;
+  /* When set, the operation should not have any effect on NULL pointers.  */
+  unsigned keep_null : 1;
 };
 
 /* A jump function for an aggregate part at a given offset, which describes how
@@ -438,6 +440,17 @@ ipa_get_jf_ancestor_type_preserved (struct ipa_jump_func *jfunc)
   return jfunc->value.ancestor.agg_preserved;
 }
 
+/* Return if jfunc represents an operation whether we first check the formal
+   parameter for non-NULLness unless it does not matter because the offset is
+   zero anyway.  */
+
+static inline bool
+ipa_get_jf_ancestor_keep_null (struct ipa_jump_func *jfunc)
+{
+  gcc_checking_assert (jfunc->type == IPA_JF_ANCESTOR);
+  return jfunc->value.ancestor.keep_null;
+}
+
 /* Class for allocating a bundle of various potentially known properties about
    actual arguments of a particular call on stack for the usual case and on
    heap only if there are unusually many arguments.  The data is deallocated
@@ -623,8 +636,8 @@ ipa_node_params::ipa_node_params ()
 : descriptors (NULL), lattices (NULL), ipcp_orig_node (NULL),
   known_csts (vNULL), known_contexts (vNULL), analysis_done (0),
   node_enqueued (0), do_clone_for_all_contexts (0), is_all_contexts_clone (0),
-  node_dead (0), node_within_scc (0), node_calling_single_call (0),
-  versionable (0)
+  node_dead (0), node_within_scc (0), node_is_self_scc (0),
+  node_calling_single_call (0), versionable (0)
 {
 }
 
@@ -700,6 +713,17 @@ ipa_get_param_count (class ipa_node_params *info)
   return vec_safe_length (info->descriptors);
 }
 
+/* Return the parameter declaration in DESCRIPTORS at index I and assert it is
+   indeed a PARM_DECL.  */
+
+static inline tree
+ipa_get_param (const vec<ipa_param_descriptor, va_gc> &descriptors, int i)
+{
+  tree t = descriptors[i].decl_or_type;
+  gcc_checking_assert (TREE_CODE (t) == PARM_DECL);
+  return t;
+}
+
 /* Return the declaration of Ith formal parameter of the function corresponding
    to INFO.  Note there is no setter function as this array is built just once
    using ipa_initialize_node_params.  This function should not be called in
@@ -709,9 +733,7 @@ static inline tree
 ipa_get_param (class ipa_node_params *info, int i)
 {
   gcc_checking_assert (info->descriptors);
-  tree t = (*info->descriptors)[i].decl_or_type;
-  gcc_checking_assert (TREE_CODE (t) == PARM_DECL);
-  return t;
+  return ipa_get_param (*info->descriptors, i);
 }
 
 /* Return the type of Ith formal parameter of the function corresponding
@@ -1175,11 +1197,11 @@ bool ipcp_get_parm_bits (tree, tree *, widest_int *);
 bool unadjusted_ptr_and_unit_offset (tree op, tree *ret,
 				     poly_int64 *offset_ret);
 
-/* From tree-sra.c:  */
+/* From tree-sra.cc:  */
 tree build_ref_for_offset (location_t, tree, poly_int64, bool, tree,
 			   gimple_stmt_iterator *, bool);
 
-/* In ipa-cp.c  */
-void ipa_cp_c_finalize (void);
+/* In ipa-cp.cc  */
+void ipa_cp_cc_finalize (void);
 
 #endif /* IPA_PROP_H */

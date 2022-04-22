@@ -1,5 +1,5 @@
 /* Internals of libgccjit: classes for recording calls made to the JIT API.
-   Copyright (C) 2013-2021 Free Software Foundation, Inc.
+   Copyright (C) 2013-2022 Free Software Foundation, Inc.
    Contributed by David Malcolm <dmalcolm@redhat.com>.
 
 This file is part of GCC.
@@ -149,6 +149,17 @@ public:
 	      type *type,
 	      const char *name);
 
+  rvalue *
+  new_ctor (location *loc,
+	    type *type,
+	    size_t num_values,
+	    field **fields,
+	    rvalue **values);
+
+  void
+  new_global_init_rvalue (lvalue *variable,
+			  rvalue *init);
+
   template <typename HOST_TYPE>
   rvalue *
   new_rvalue_from_const (type *type,
@@ -193,6 +204,11 @@ public:
   new_cast (location *loc,
 	    rvalue *expr,
 	    type *type_);
+
+  rvalue *
+  new_bitcast (location *loc,
+	       rvalue *expr,
+	       type *type_);
 
   lvalue *
   new_array_access (location *loc,
@@ -545,9 +561,15 @@ public:
   virtual bool is_float () const = 0;
   virtual bool is_bool () const = 0;
   virtual type *is_pointer () = 0;
+  virtual type *is_volatile () { return NULL; }
+  virtual type *is_const () { return NULL; }
   virtual type *is_array () = 0;
+  virtual struct_ *is_struct () { return NULL; }
+  virtual bool is_union () const { return false; }
   virtual bool is_void () const { return false; }
+  virtual vector_type *is_vector () { return NULL; }
   virtual bool has_known_size () const { return true; }
+  virtual bool is_signed () const = 0;
 
   bool is_numeric () const
   {
@@ -588,12 +610,21 @@ public:
   bool accepts_writes_from (type *rtype) FINAL OVERRIDE
   {
     if (m_kind == GCC_JIT_TYPE_VOID_PTR)
-      if (rtype->is_pointer ())
-	{
-	  /* LHS (this) is type (void *), and the RHS is a pointer:
-	     accept it:  */
-	  return true;
-	}
+      {
+	if (rtype->is_pointer ())
+	  {
+	    /* LHS (this) is type (void *), and the RHS is a pointer:
+	       accept it:  */
+	    return true;
+	  }
+      } else if (is_int ()
+		 && rtype->is_int ()
+		 && get_size () == rtype->get_size ()
+		 && is_signed () == rtype->is_signed ())
+      {
+	/* LHS (this) is an integer of the same size and sign as rtype.  */
+	return true;
+      }
 
     return type::accepts_writes_from (rtype);
   }
@@ -604,6 +635,7 @@ public:
   type *is_pointer () FINAL OVERRIDE { return dereference (); }
   type *is_array () FINAL OVERRIDE { return NULL; }
   bool is_void () const FINAL OVERRIDE { return m_kind == GCC_JIT_TYPE_VOID; }
+  bool is_signed () const FINAL OVERRIDE;
 
 public:
   void replay_into (replayer *r) FINAL OVERRIDE;
@@ -637,6 +669,7 @@ public:
   bool is_bool () const FINAL OVERRIDE { return false; }
   type *is_pointer () FINAL OVERRIDE { return m_other_type; }
   type *is_array () FINAL OVERRIDE { return NULL; }
+  bool is_signed () const FINAL OVERRIDE { return false; }
 
 private:
   string * make_debug_string () FINAL OVERRIDE;
@@ -658,11 +691,15 @@ public:
 
   type *dereference () FINAL OVERRIDE { return m_other_type->dereference (); }
 
+  size_t get_size () FINAL OVERRIDE { return m_other_type->get_size (); };
+
   bool is_int () const FINAL OVERRIDE { return m_other_type->is_int (); }
   bool is_float () const FINAL OVERRIDE { return m_other_type->is_float (); }
   bool is_bool () const FINAL OVERRIDE { return m_other_type->is_bool (); }
   type *is_pointer () FINAL OVERRIDE { return m_other_type->is_pointer (); }
   type *is_array () FINAL OVERRIDE { return m_other_type->is_array (); }
+  struct_ *is_struct () FINAL OVERRIDE { return m_other_type->is_struct (); }
+  bool is_signed () const FINAL OVERRIDE { return m_other_type->is_signed (); }
 
 protected:
   type *m_other_type;
@@ -684,6 +721,15 @@ public:
   /* Strip off the "const", giving the underlying type.  */
   type *unqualified () FINAL OVERRIDE { return m_other_type; }
 
+  virtual bool is_same_type_as (type *other)
+  {
+    if (!other->is_const ())
+      return false;
+    return m_other_type->is_same_type_as (other->is_const ());
+  }
+
+  virtual type *is_const () { return m_other_type; }
+
   void replay_into (replayer *) FINAL OVERRIDE;
 
 private:
@@ -698,8 +744,17 @@ public:
   memento_of_get_volatile (type *other_type)
   : decorated_type (other_type) {}
 
+  virtual bool is_same_type_as (type *other)
+  {
+    if (!other->is_volatile ())
+      return false;
+    return m_other_type->is_same_type_as (other->is_volatile ());
+  }
+
   /* Strip off the "volatile", giving the underlying type.  */
   type *unqualified () FINAL OVERRIDE { return m_other_type; }
+
+  virtual type *is_volatile () { return m_other_type; }
 
   void replay_into (replayer *) FINAL OVERRIDE;
 
@@ -745,6 +800,8 @@ public:
 
   void replay_into (replayer *) FINAL OVERRIDE;
 
+  vector_type *is_vector () FINAL OVERRIDE { return this; }
+
 private:
   string * make_debug_string () FINAL OVERRIDE;
   void write_reproducer (reproducer &r) FINAL OVERRIDE;
@@ -774,6 +831,7 @@ class array_type : public type
   type *is_pointer () FINAL OVERRIDE { return NULL; }
   type *is_array () FINAL OVERRIDE { return m_element_type; }
   int num_elements () { return m_num_elements; }
+  bool is_signed () const FINAL OVERRIDE { return false; }
 
   void replay_into (replayer *) FINAL OVERRIDE;
 
@@ -807,6 +865,7 @@ public:
   bool is_bool () const FINAL OVERRIDE { return false; }
   type *is_pointer () FINAL OVERRIDE { return NULL; }
   type *is_array () FINAL OVERRIDE { return NULL; }
+  bool is_signed () const FINAL OVERRIDE { return false; }
 
   void replay_into (replayer *) FINAL OVERRIDE;
 
@@ -920,6 +979,7 @@ public:
   bool is_bool () const FINAL OVERRIDE { return false; }
   type *is_pointer () FINAL OVERRIDE { return NULL; }
   type *is_array () FINAL OVERRIDE { return NULL; }
+  bool is_signed () const FINAL OVERRIDE { return false; }
 
   bool has_known_size () const FINAL OVERRIDE { return m_fields != NULL; }
 
@@ -950,6 +1010,8 @@ public:
   void replay_into (replayer *r) FINAL OVERRIDE;
 
   const char *access_as_type (reproducer &r) FINAL OVERRIDE;
+
+  struct_ *is_struct () FINAL OVERRIDE { return this; }
 
 private:
   string * make_debug_string () FINAL OVERRIDE;
@@ -989,6 +1051,8 @@ public:
 
   void replay_into (replayer *r) FINAL OVERRIDE;
 
+  virtual bool is_union () const FINAL OVERRIDE { return true; }
+
 private:
   string * make_debug_string () FINAL OVERRIDE;
   void write_reproducer (reproducer &r) FINAL OVERRIDE;
@@ -997,7 +1061,7 @@ private:
 /* An abstract base class for operations that visit all rvalues within an
    expression tree.
    Currently the only implementation is class rvalue_usage_validator within
-   jit-recording.c.  */
+   jit-recording.cc.  */
 
 class rvalue_visitor
 {
@@ -1105,8 +1169,12 @@ public:
   lvalue (context *ctxt,
 	  location *loc,
 	  type *type_)
-    : rvalue (ctxt, loc, type_)
-    {}
+  : rvalue (ctxt, loc, type_),
+    m_link_section (NULL),
+    m_reg_name (NULL),
+    m_tls_model (GCC_JIT_TLS_MODEL_NONE),
+    m_alignment (0)
+  {}
 
   playback::lvalue *
   playback_lvalue () const
@@ -1127,6 +1195,17 @@ public:
   const char *access_as_rvalue (reproducer &r) OVERRIDE;
   virtual const char *access_as_lvalue (reproducer &r);
   virtual bool is_global () const { return false; }
+  void set_tls_model (enum gcc_jit_tls_model model);
+  void set_link_section (const char *name);
+  void set_register_name (const char *reg_name);
+  void set_alignment (unsigned bytes);
+  unsigned get_alignment () const { return m_alignment; }
+
+protected:
+  string *m_link_section;
+  string *m_reg_name;
+  enum gcc_jit_tls_model m_tls_model;
+  unsigned m_alignment;
 };
 
 class param : public lvalue
@@ -1386,6 +1465,23 @@ public:
     m_initializer_num_bytes = num_bytes;
   }
 
+  void set_flags (int flag_fields)
+  {
+    m_flags = (enum global_var_flags)(m_flags | flag_fields);
+  }
+  /* Returns true if any of the flags in the argument is set.  */
+  bool test_flags_anyof (int flag_fields) const
+  {
+    return m_flags & flag_fields;
+  }
+
+  enum gcc_jit_global_kind get_kind () const
+  {
+    return m_kind;
+  }
+
+  void set_rvalue_init (rvalue *val) { m_rvalue_init = val; }
+
 private:
   string * make_debug_string () FINAL OVERRIDE { return m_name; }
   template <typename T>
@@ -1398,8 +1494,10 @@ private:
 
 private:
   enum gcc_jit_global_kind m_kind;
+  enum global_var_flags m_flags = GLOBAL_VAR_FLAGS_NONE;
   string *m_name;
   void *m_initializer;
+  rvalue *m_rvalue_init = nullptr; /* Only needed for write_dump.  */
   size_t m_initializer_num_bytes;
 };
 
@@ -1482,6 +1580,32 @@ private:
 private:
   vector_type *m_vector_type;
   auto_vec<rvalue *> m_elements;
+};
+
+class ctor : public rvalue
+{
+public:
+  ctor (context *ctxt,
+	location *loc,
+	type *type)
+  : rvalue (ctxt, loc, type)
+  { }
+
+  void replay_into (replayer *r) FINAL OVERRIDE;
+
+  void visit_children (rvalue_visitor *) FINAL OVERRIDE;
+
+private:
+  string * make_debug_string () FINAL OVERRIDE;
+  void write_reproducer (reproducer &r) FINAL OVERRIDE;
+  enum precedence get_precedence () const FINAL OVERRIDE
+  {
+    return PRECEDENCE_PRIMARY;
+  }
+
+public:
+  auto_vec<field *> m_fields;
+  auto_vec<rvalue *> m_values;
 };
 
 class unary_op : public rvalue
@@ -1577,6 +1701,33 @@ public:
 	location *loc,
 	rvalue *a,
 	type *type_)
+  : rvalue (ctxt, loc, type_),
+    m_rvalue (a)
+  {}
+
+  void replay_into (replayer *r) FINAL OVERRIDE;
+
+  void visit_children (rvalue_visitor *v) FINAL OVERRIDE;
+
+private:
+  string * make_debug_string () FINAL OVERRIDE;
+  void write_reproducer (reproducer &r) FINAL OVERRIDE;
+  enum precedence get_precedence () const FINAL OVERRIDE
+  {
+    return PRECEDENCE_CAST;
+  }
+
+private:
+  rvalue *m_rvalue;
+};
+
+class bitcast : public rvalue
+{
+public:
+  bitcast (context *ctxt,
+	   location *loc,
+	   rvalue *a,
+	   type *type_)
   : rvalue (ctxt, loc, type_),
     m_rvalue (a)
   {}
@@ -2327,6 +2478,24 @@ private:
   string *m_asm_stmts;
 };
 
+class global_init_rvalue : public memento
+{
+public:
+  global_init_rvalue (context *ctxt, lvalue *variable, rvalue *init) :
+    memento (ctxt), m_variable (variable), m_init (init) {};
+
+  void write_to_dump (dump &d) FINAL OVERRIDE;
+
+private:
+  void replay_into (replayer *r) FINAL OVERRIDE;
+  string * make_debug_string () FINAL OVERRIDE;
+  void write_reproducer (reproducer &r) FINAL OVERRIDE;
+
+private:
+  lvalue *m_variable;
+  rvalue *m_init;
+};
+
 } // namespace gcc::jit::recording
 
 /* Create a recording::memento_of_new_rvalue_from_const instance and add
@@ -2344,6 +2513,23 @@ recording::context::new_rvalue_from_const (recording::type *type,
     new memento_of_new_rvalue_from_const <HOST_TYPE> (this, NULL, type, value);
   record (result);
   return result;
+}
+
+/* Don't call this directly.  Call types_kinda_same.  */
+bool
+types_kinda_same_internal (recording::type *a,
+			   recording::type *b);
+
+/* Strip all qualifiers and count pointer depth, returning true
+   if the types and pointer depth are the same, otherwise false.
+
+   For array and vector types the number of element also
+   has to match, aswell as the element types themself.  */
+static inline bool
+types_kinda_same (recording::type *a, recording::type *b)
+{
+  /* Handle trivial case here, to allow for inlining.  */
+  return a == b || types_kinda_same_internal (a, b);
 }
 
 } // namespace gcc::jit
