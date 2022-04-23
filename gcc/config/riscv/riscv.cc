@@ -4584,7 +4584,6 @@ riscv_valid_stack_push_pop_p (rtx op, bool push_p)
   rtx elt;
   rtx elt_reg;
   rtx elt_plus;
-  enum rtx_code dest_code = push_p ? MEM : REG;
 
   if (!(TARGET_ZCMP || TARGET_ZCMPE))
     return false;
