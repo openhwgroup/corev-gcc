@@ -4058,6 +4058,10 @@ riscv_use_push_pop (const struct riscv_frame_info *frame, const HOST_WIDE_INT fr
   if (!(TARGET_ZCMP || TARGET_ZCMPE))
     return false;
 
+  /* We do not handler variable argument cases currently.  */
+  if (cfun->machine->varargs_size != 0)
+    return false;
+
   HOST_WIDE_INT base_size = riscv_push_pop_base_sp_adjust (frame->mask);
   /*
      Pr 960215-1.c in rv64 ouputs
