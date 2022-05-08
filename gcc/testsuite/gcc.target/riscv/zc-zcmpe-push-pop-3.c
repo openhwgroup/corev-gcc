@@ -13,5 +13,5 @@ int foo1(int a, int b, int c, int d)
     return 0;
 }
 
-/* { dg-final { scan-assembler "cm.push\t{ra,s0},-32" } } */
-/* { dg-final { scan-assembler "cm.popretz\t{ra,s0},32" } } */
+/* { dg-final { scan-assembler "cm.push\t{ra,s0-s1},-32" } } */
+/* { dg-final { scan-assembler "cm.popretz\t{ra,s0-s1},32" } } */

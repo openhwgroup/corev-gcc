@@ -11,6 +11,4 @@ int foo()
 }
 
 /* { dg-final { scan-assembler "cm.push\t{ra,s0},-64" } } */
-/* { dg-final { scan-assembler "cm.addi\tsp,sp,-464" } } */
-/* { dg-final { scan-assembler "cm.addi\tsp,sp,464" } } */
 /* { dg-final { scan-assembler "cm.popret\t{ra,s0},64" } } */
