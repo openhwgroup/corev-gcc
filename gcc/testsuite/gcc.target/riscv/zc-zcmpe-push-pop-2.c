@@ -1,5 +1,5 @@
 /* { dg-do compile } */
-/* { dg-options "-march=rv32e_zca_zcmp -mabi=ilp32d -O0" } */
+/* { dg-options "-march=rv32e_zca_zcmpe -mabi=ilp32e -O0" } */
 
 void foo2 (int a, int b);
 
@@ -14,4 +14,4 @@ int foo1(int a, int b)
 }
 
 /* { dg-final { scan-assembler "cm.push\t{ra,s0},-32" } } */
-/* { dg-final { scan-assembler "cm.popretz\t{ra,s0},32" } } */
+/* { dg-final { scan-assembler "cm.popret\t{ra,s0},32" } } */
