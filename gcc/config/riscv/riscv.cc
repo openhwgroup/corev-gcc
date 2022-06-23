@@ -4415,7 +4415,7 @@ riscv_emit_pop_insn (struct riscv_frame_info *frame, HOST_WIDE_INT offset, HOST_
 
   /* sp adjust pattern */
   int max_allow_sp_adjust = riscv_push_pop_base_sp_adjust (frame->mask) + 48;
-  int aligned_size = (size + 15) & (~0xf);
+  int aligned_size = size;
 
   /* if sp adjustment is too large, we should split it first. */
   if (aligned_size > max_allow_sp_adjust)
