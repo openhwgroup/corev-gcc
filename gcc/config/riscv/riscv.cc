@@ -4438,7 +4438,7 @@ riscv_emit_pop_insn (struct riscv_frame_info *frame, HOST_WIDE_INT offset, HOST_
       sp_adjust = max_allow_sp_adjust;
     }
   else
-    sp_adjust = aligned_size;
+    sp_adjust = (aligned_size + 15) & (~0xf);
 
   /* register save sequence. */
   for (unsigned i = 1; i < veclen; ++i)
