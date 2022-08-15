@@ -1,3 +1,17 @@
+2022-08-15  Charlie Keaney  <charlie.keaney@embecosm.com>
+
+	* gcc.target/riscv/zc-zca-arch.c: New test for march args
+	being passed from compiler to assembler.
+	* gcc.target/riscv/zc-zcb-arch.c: Likewise.
+	* gcc.target/riscv/zc-zcb-m-arch.c: Likewise.
+	* gcc.target/riscv/zc-zcb-zba-arch.c: Likewise.
+	* gcc.target/riscv/zc-zcf-arch.c: Likewise.
+	* gcc.target/riscv/zc-zcb-zbb-arch.c: Likewise.
+	* gcc.target/riscv/zc-zcmb-arch.c: Likewise.
+	* gcc.target/riscv/zc-zcmp-arch.c: Likewise.
+	* gcc.target/riscv/zc-zcmpe-arch.c: Likewise.
+	* gcc.target/riscv/zc-zcmt-arch.c: Likewise.
+
 2022-04-21  Segher Boessenkool  <segher@kernel.crashing.org>
 
 	PR target/103197
