@@ -1,3 +1,7 @@
+2022-08-22  Charlie Keaney  <charlie.keaney@embecosm.com>
+	
+	* common/config/riscv/riscv-common.cc: Fix Zc ISA versions.
+
 2022-04-21  Segher Boessenkool  <segher@kernel.crashing.org>
 
 	PR target/103197
