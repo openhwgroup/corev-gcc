@@ -67,6 +67,9 @@ enum stack_protector_guard {
   SSP_GLOBAL			/* global canary */
 };
 
+#define MASK_COREV_BI   (1 << 0)
+#define TARGET_COREV_BI ((corev_bi_ext & MASK_COREV_BI) != 0)
+
 #define MASK_ZICSR    (1 << 0)
 #define MASK_ZIFENCEI (1 << 1)
 

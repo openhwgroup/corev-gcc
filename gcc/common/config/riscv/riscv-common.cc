@@ -49,6 +49,7 @@ struct riscv_implied_info_t
 static const riscv_implied_info_t riscv_implied_info[] =
 {
   {"d", "f"},
+  {"xcorev", "xcorevbi"},
   {"f", "zicsr"},
   {"d", "zicsr"},
 
@@ -206,6 +207,8 @@ static const struct riscv_ext_version riscv_ext_version_table[] =
   {"zvl16384b", ISA_SPEC_CLASS_NONE, 1, 0},
   {"zvl32768b", ISA_SPEC_CLASS_NONE, 1, 0},
   {"zvl65536b", ISA_SPEC_CLASS_NONE, 1, 0},
+
+  {"xcorevbi", ISA_SPEC_CLASS_NONE, 1, 0},
 
   /* Terminate the list.  */
   {NULL, ISA_SPEC_CLASS_NONE, 0, 0}
@@ -1164,6 +1167,8 @@ static const riscv_ext_flag_table_t riscv_ext_flag_table[] =
   {"d", &gcc_options::x_target_flags, MASK_DOUBLE_FLOAT},
   {"c", &gcc_options::x_target_flags, MASK_RVC},
   {"v", &gcc_options::x_target_flags, MASK_VECTOR},
+
+  {"xcorevbi", &gcc_options::x_corev_bi_ext, MASK_COREV_BI},
 
   {"zicsr",    &gcc_options::x_riscv_zi_subext, MASK_ZICSR},
   {"zifencei", &gcc_options::x_riscv_zi_subext, MASK_ZIFENCEI},

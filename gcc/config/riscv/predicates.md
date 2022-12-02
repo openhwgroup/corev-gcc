@@ -255,3 +255,9 @@
 (define_predicate "pop_return_value_constant"
   (and (match_code "const_int")
        (match_test "INTVAL (op) == 0")))
+
+;; CORE-V predicates
+
+(define_predicate "branch_simm5_operand"
+  (and (match_code "const_int")
+       (match_test "IN_RANGE (INTVAL (op), -16, 15)")))

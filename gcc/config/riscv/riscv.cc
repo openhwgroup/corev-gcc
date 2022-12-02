@@ -2557,8 +2557,11 @@ riscv_emit_int_compare (enum rtx_code *code, rtx *op0, rtx *op1)
 
       if (*code == EQ || *code == NE)
 	{
+	  if (TARGET_COREV_BI && (GET_CODE(*op1) == CONST_INT)
+	    && (IN_RANGE(INTVAL(*op1),-16,15)))
+	      ;
 	  /* Convert e.g. OP0 == 2048 into OP0 - 2048 == 0.  */
-	  if (SMALL_OPERAND (-rhs))
+	  else if (SMALL_OPERAND (-rhs))
 	    {
 	      *op0 = riscv_force_binary (GET_MODE (*op0), PLUS, *op0,
 					 GEN_INT (-rhs));
@@ -2596,7 +2599,10 @@ riscv_emit_int_compare (enum rtx_code *code, rtx *op0, rtx *op1)
 
   *op0 = force_reg (word_mode, *op0);
   if (*op1 != const0_rtx)
-    *op1 = force_reg (word_mode, *op1);
+    if (!(TARGET_COREV_BI && (*code == EQ || *code == NE)
+      && (GET_CODE(*op1) == CONST_INT)
+      && (IN_RANGE(INTVAL(*op1),-16,15))))
+      *op1 = force_reg (word_mode, *op1);
 }
 
 /* Like riscv_emit_int_compare, but for floating-point comparisons.  */
