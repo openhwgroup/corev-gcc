@@ -122,6 +122,9 @@ AVAIL (crypto_zksed32, TARGET_ZKSED && !TARGET_64BIT)
 AVAIL (crypto_zksed64, TARGET_ZKSED && TARGET_64BIT)
 AVAIL (always,     (!0))
 
+//COREV AVAIL
+AVAIL (cvelw, TARGET_XCOREVELW && !TARGET_64BIT)
+
 /* Construct a riscv_builtin_description from the given arguments.
 
    INSN is the name of the associated instruction pattern, without the
@@ -174,6 +177,7 @@ AVAIL (always,     (!0))
 static const struct riscv_builtin_description riscv_builtins[] = {
   #include "riscv-cmo.def"
   #include "riscv-scalar-crypto.def"
+  #include "corev.def"
 
   DIRECT_BUILTIN (frflags, RISCV_USI_FTYPE, hard_float),
   DIRECT_NO_TARGET_BUILTIN (fsflags, RISCV_VOID_FTYPE_USI, hard_float),

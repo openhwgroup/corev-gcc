@@ -100,6 +100,9 @@
 
   ;; Zihintpause unspec
   UNSPECV_PAUSE
+
+  ;;CORE-V Event Load
+  UNSPECV_CV_ELW
 ])
 
 (define_constants
@@ -3095,6 +3098,13 @@
   "TARGET_ZICBOP"
   "prefetch.i\t%a0"
 )
+
+(define_insn "riscv_cv_elw_si"
+  [(set (match_operand:SI 0 "register_operand" "=r")
+  (unspec_volatile [(mem:SI (match_operand:P 1 "address_operand" "p"))] UNSPECV_CV_ELW))]
+
+  "TARGET_XCOREVELW"
+       "cv.elw\t%0,%a1")
 
 (include "bitmanip.md")
 (include "crypto.md")

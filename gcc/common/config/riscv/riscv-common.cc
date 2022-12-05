@@ -108,6 +108,8 @@ static const riscv_implied_info_t riscv_implied_info[] =
   {"zhinx", "zhinxmin"},
   {"zhinxmin", "zfinx"},
 
+  {"xcorev", "xcorevelw"},
+
   {NULL, NULL}
 };
 
@@ -221,6 +223,9 @@ static const struct riscv_ext_version riscv_ext_version_table[] =
 
   {"svinval", ISA_SPEC_CLASS_NONE, 1, 0},
   {"svnapot", ISA_SPEC_CLASS_NONE, 1, 0},
+
+  {"xcorev",    ISA_SPEC_CLASS_NONE, 1, 0},
+  {"xcorevelw", ISA_SPEC_CLASS_NONE, 1, 0},
 
   /* Terminate the list.  */
   {NULL, ISA_SPEC_CLASS_NONE, 0, 0}
@@ -1247,6 +1252,9 @@ static const riscv_ext_flag_table_t riscv_ext_flag_table[] =
 
   {"svinval", &gcc_options::x_riscv_sv_subext, MASK_SVINVAL},
   {"svnapot", &gcc_options::x_riscv_sv_subext, MASK_SVNAPOT},
+
+  {"xcorev",    &gcc_options::x_riscv_xcorev_flags, MASK_XCOREV},
+  {"xcorevelw", &gcc_options::x_riscv_xcorev_flags, MASK_XCOREVELW},
 
   {NULL, NULL, 0}
 };
