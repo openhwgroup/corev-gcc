@@ -169,4 +169,12 @@ enum stack_protector_guard {
    ? 0 \
    : 32 << (__builtin_popcount (riscv_zvl_flags) - 1))
 
+
+#define MASK_XCOREV       (1 <<  0)
+#define MASK_XCOREVELW    (1 <<  1)
+
+#define TARGET_XCOREV       ((riscv_xcorev_flags & MASK_XCOREV)    != 0)
+#define TARGET_XCOREVELW    ((riscv_xcorev_flags & MASK_XCOREVELW) != 0)
+
+
 #endif /* ! GCC_RISCV_OPTS_H */
