@@ -1,0 +1,2 @@
+// xcorevelw
+RISCV_BUILTIN (cv_elw_si, "cv_elw", RISCV_BUILTIN_DIRECT, RISCV_USI_FTYPE_VOID_PTR, cvelw),
