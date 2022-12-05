@@ -126,6 +126,7 @@
   ;; XTheadFmv unspec
   UNSPEC_XTHEADFMV
   UNSPEC_XTHEADFMV_HW
+
 ])
 
 (define_constants
