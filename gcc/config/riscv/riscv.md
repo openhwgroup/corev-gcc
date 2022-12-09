@@ -3101,10 +3101,14 @@
 
 (define_insn "riscv_cv_elw_si"
   [(set (match_operand:SI 0 "register_operand" "=r")
-  (unspec_volatile [(mem:SI (match_operand:P 1 "address_operand" "p"))] UNSPECV_CV_ELW))]
+  (unspec_volatile [(mem:SI (match_operand:SI 1 "address_operand" "p"))] 
+  UNSPECV_CV_ELW))]
 
-  "TARGET_XCOREVELW"
-       "cv.elw\t%0,%a1")
+  "TARGET_XCOREVELW && !TARGET_64BIT"
+  "cv.elw\t%0,%a1"
+
+  [(set_attr "type" "load")
+  (set_attr "mode" "SI")])
 
 (include "bitmanip.md")
 (include "crypto.md")
