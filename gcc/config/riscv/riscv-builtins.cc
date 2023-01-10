@@ -40,6 +40,9 @@ along with GCC; see the file COPYING3.  If not see
 /* Macros to create an enumeration identifier for a function prototype.  */
 #define RISCV_FTYPE_NAME0(A) RISCV_##A##_FTYPE
 #define RISCV_FTYPE_NAME1(A, B) RISCV_##A##_FTYPE_##B
+#define RISCV_FTYPE_NAME3(A, B, C, D) RISCV_##A##_FTYPE_##B##_##C##_##D
+#define RISCV_FTYPE_NAME4(A, B, C, D, E) \
+  RISCV_##A##_FTYPE_##B##_##C##_##D##_##E
 
 /* Classifies the prototype of a built-in function.  */
 enum riscv_function_type {
@@ -89,6 +92,7 @@ AVAIL (hard_float, TARGET_HARD_FLOAT)
 
 //COREV AVAIL
 AVAIL (cvelw, TARGET_XCOREVELW && !TARGET_64BIT)
+AVAIL (cvmac, TARGET_XCOREVMAC && !TARGET_64BIT)
 
 /* Construct a riscv_builtin_description from the given arguments.
 
@@ -121,7 +125,9 @@ AVAIL (cvelw, TARGET_XCOREVELW && !TARGET_64BIT)
 
 /* Argument types.  */
 #define RISCV_ATYPE_VOID void_type_node
+#define RISCV_ATYPE_UQI unsigned_intQI_type_node
 #define RISCV_ATYPE_USI unsigned_intSI_type_node
+#define RISCV_ATYPE_SI intSI_type_node
 #define RISCV_ATYPE_VOID_PTR ptr_type_node
 
 /* RISCV_FTYPE_ATYPESN takes N RISCV_FTYPES-like type codes and lists
@@ -130,6 +136,11 @@ AVAIL (cvelw, TARGET_XCOREVELW && !TARGET_64BIT)
   RISCV_ATYPE_##A
 #define RISCV_FTYPE_ATYPES1(A, B) \
   RISCV_ATYPE_##A, RISCV_ATYPE_##B
+#define RISCV_FTYPE_ATYPES3(A, B, C, D) \
+  RISCV_ATYPE_##A, RISCV_ATYPE_##B, RISCV_ATYPE_##C, RISCV_ATYPE_##D
+#define RISCV_FTYPE_ATYPES4(A, B, C, D, E) \
+  RISCV_ATYPE_##A, RISCV_ATYPE_##B, RISCV_ATYPE_##C, RISCV_ATYPE_##D, \
+  RISCV_ATYPE_##E
 
 static const struct riscv_builtin_description riscv_builtins[] = {
   #include "corev.def"

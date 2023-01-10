@@ -2887,3 +2887,4 @@
 (include "pic.md")
 (include "generic.md")
 (include "sifive-7.md")
+(include "corev.md")
