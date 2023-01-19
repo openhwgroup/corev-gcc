@@ -55,6 +55,11 @@
   (and (match_code "const_int")
        (match_test "ival == 2")))
 
+(define_constraint "c03"
+  "Constant value 3"
+  (and (match_code "const_int")
+       (match_test "ival == 3")))
+
 (define_constraint "c04"
   "Constant value 4"
   (and (match_code "const_int")
@@ -167,6 +172,16 @@
   "A 2-bit unsigned immediate for CORE-V bitmanip."
   (and (match_code "const_int")
        (match_test "IN_RANGE (ival, 0, 3)")))
+
+(define_constraint "CVs6"
+  "A 6-bit signed immediate for SIMD."
+  (and (match_code "const_int")
+       (match_test "IN_RANGE (ival, -32, 31)")))
+
+(define_constraint "CVu6"
+  "A 6-bit unsigned immediate for SIMD."
+  (and (match_code "const_int")
+       (match_test "IN_RANGE (ival, 0, 63)")))
 
 ;; Vector constraints.
 
