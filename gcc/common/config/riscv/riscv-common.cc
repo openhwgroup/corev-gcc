@@ -111,6 +111,7 @@ static const riscv_implied_info_t riscv_implied_info[] =
   {"xcorev", "xcorevelw"},
   {"xcorev", "xcorevmac"},
   {"xcorev", "xcorevbitmanip"},
+  {"xcorev", "xcorevsimd"},
 
   {NULL, NULL}
 };
@@ -230,6 +231,7 @@ static const struct riscv_ext_version riscv_ext_version_table[] =
   {"xcorevelw", ISA_SPEC_CLASS_NONE, 1, 0},
   {"xcorevmac", ISA_SPEC_CLASS_NONE, 1, 0},
   {"xcorevbitmanip", ISA_SPEC_CLASS_NONE, 1, 0},
+  {"xcorevsimd", ISA_SPEC_CLASS_NONE, 1, 0},
 
   /* Terminate the list.  */
   {NULL, ISA_SPEC_CLASS_NONE, 0, 0}
@@ -1261,6 +1263,7 @@ static const riscv_ext_flag_table_t riscv_ext_flag_table[] =
   {"xcorevelw", &gcc_options::x_riscv_xcorev_flags, MASK_XCOREVELW},
   {"xcorevmac", &gcc_options::x_riscv_xcorev_flags, MASK_XCOREVMAC},
   {"xcorevbitmanip", &gcc_options::x_riscv_xcorev_flags, MASK_XCOREVBITMANIP},
+  {"xcorevsimd", &gcc_options::x_riscv_xcorev_flags, MASK_XCOREVSIMD},
 
   {NULL, NULL, 0}
 };
