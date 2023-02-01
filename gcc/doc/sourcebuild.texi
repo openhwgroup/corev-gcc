@@ -2508,6 +2508,9 @@ Test system has support for the CORE-V ELW extension.
 @item cv_bi
 Test system has support for the CORE-V BI extension.
 
+@item cv_bitmanip
+Test system has support for the CORE-V BITMANIP extension.
+
 @end table
 
 @subsubsection Other hardware attributes
