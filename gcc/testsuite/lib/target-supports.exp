@@ -12344,3 +12344,15 @@ proc check_effective_target_corev_mac { } {
         }
     } "-march=rv32ixcorevmac1p0" ]
 }
+
+proc check_effective_target_corev_bitmanip { } {
+    if { !([istarget riscv*-*-*]) } {
+         return 0
+     }
+    return [check_no_compiler_messages corev_bitmanip object {
+        void foo (void)
+        {
+          asm ("cv.extract t0, t1, 20, 20");
+        }
+    } "-march=rv32ixcorevbitmanip1p0" ]
+}

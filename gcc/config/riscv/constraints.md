@@ -118,6 +118,17 @@
   (and (match_operand 0 "move_operand")
        (match_test "CONSTANT_P (op)")))
 
+;; CORE-V Constraints
+(define_constraint "M"
+  "A 10-bit unsigned immediate for CORE-V bitmanip."
+  (and (match_code "const_int")
+       (match_test "IN_RANGE (ival, 0, 1023)")))
+
+(define_constraint "N"
+  "A 2-bit unsigned immediate for CORE-V bitmanip."
+  (and (match_code "const_int")
+       (match_test "IN_RANGE (ival, 0, 3)")))
+
 ;; Vector constraints.
 
 (define_register_constraint "vr" "TARGET_VECTOR ? V_REGS : NO_REGS"

@@ -127,6 +127,7 @@ AVAIL (always,     (!0))
 //COREV AVAIL
 AVAIL (cvelw, TARGET_XCOREVELW && !TARGET_64BIT)
 AVAIL (cvmac, TARGET_XCOREVMAC && !TARGET_64BIT)
+AVAIL (cvbitmanip, TARGET_XCOREVBITMANIP && !TARGET_64BIT)
 
 /* Construct a riscv_builtin_description from the given arguments.
 
@@ -160,6 +161,7 @@ AVAIL (cvmac, TARGET_XCOREVMAC && !TARGET_64BIT)
 /* Argument types.  */
 #define RISCV_ATYPE_VOID void_type_node
 #define RISCV_ATYPE_UQI unsigned_intQI_type_node
+#define RISCV_ATYPE_UHI unsigned_intHI_type_node
 #define RISCV_ATYPE_USI unsigned_intSI_type_node
 #define RISCV_ATYPE_QI intQI_type_node
 #define RISCV_ATYPE_HI intHI_type_node
