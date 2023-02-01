@@ -173,9 +173,11 @@ enum stack_protector_guard {
 #define MASK_XCOREV       (1 <<  0)
 #define MASK_XCOREVELW    (1 <<  1)
 #define MASK_XCOREVMAC    (1 <<  2)
+#define MASK_XCOREVBITMANIP (1 << 3)
 
 #define TARGET_XCOREV       ((riscv_xcorev_flags & MASK_XCOREV)    != 0)
 #define TARGET_XCOREVELW    ((riscv_xcorev_flags & MASK_XCOREVELW) != 0)
 #define TARGET_XCOREVMAC    ((riscv_xcorev_flags & MASK_XCOREVMAC) != 0)
+#define TARGET_XCOREVBITMANIP    ((riscv_xcorev_flags & MASK_XCOREVBITMANIP) != 0)
 
 #endif /* ! GCC_RISCV_OPTS_H */
