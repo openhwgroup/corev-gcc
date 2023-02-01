@@ -253,3 +253,8 @@
    A 5-bit signed immediate for CORE-V Immediate Branch."
   (and (match_code "const_int")
        (match_test "IN_RANGE (ival, -16, 15)")))
+
+(define_constraint "CV_bit_si10"
+  "A 10-bit unsigned immediate for CORE-V bitmanip."
+  (and (match_code "const_int")
+       (match_test "IN_RANGE (ival, 0, 1023)")))
