@@ -13327,6 +13327,19 @@ proc check_effective_target_cv_bi { } {
     } "-march=rv32i_xcvbi" ]
 }
 
+# Return 1 if the CORE-V BITMANIP extension is available.
+proc check_effective_target_cv_bitmanip { } {
+    if { !([istarget riscv*-*-*]) } {
+         return 0
+     }
+    return [check_no_compiler_messages cv_bitmanip object {
+        void foo (void)
+        {
+          asm ("cv.extract t0, t1, 20, 20");
+        }
+    } "-march=rv32i_xcvbitmanip" ]
+}
+
 proc check_effective_target_loongarch_sx { } {
     return [check_no_compiler_messages loongarch_lsx assembly {
        #if !defined(__loongarch_sx)

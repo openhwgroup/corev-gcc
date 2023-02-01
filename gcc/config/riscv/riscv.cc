@@ -5899,6 +5899,19 @@ riscv_print_operand (FILE *file, rtx op, int letter)
 	output_addr_const (file, newop);
 	break;
       }
+    case 'Y':
+      {
+	rtx newop = GEN_INT (INTVAL (op) & 31);
+	output_addr_const (file, newop);
+	break;
+      }
+    case 'Z':
+      {
+	int ival = INTVAL (op) >> 5;
+	rtx newop = GEN_INT (ival & 31);
+	output_addr_const (file, newop);
+	break;
+      }
     default:
       switch (code)
 	{
