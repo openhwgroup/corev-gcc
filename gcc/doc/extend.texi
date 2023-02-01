@@ -21862,6 +21862,59 @@ architecture. For more information on CORE-V ELW builtins, please see
 Generated assembler @code{cv.elw}
 @end deftypefn
 
+These built-in functions are available for the CORE-V bit manipulation machine
+architecture. For more information on CORE-V built-ins, please see
+@uref{https://github.com/openhwgroup/core-v-sw/blob/master/specifications/corev-builtin-spec.md#pulp-bit-manipulation-builtins-for-32-bit-cores}
+
+@deftypefn {Built-in Function} {int32_t} __builtin_riscv_cv_bitmanip_extract (uint32_t, uint16_t)
+Generated assembler @code{cv.extract} if the uint16_t operand is a constant. Generated assembler
+@code{cv.extractr} if the uint16_t operand is a register.
+@end deftypefn
+
+@deftypefn {Built-in Function} {uint32_t} __builtin_riscv_cv_bitmanip_extractu (uint32_t, uint16_t)
+Generated assembler @code{cv.extractu} if the uint16_t operand is a constant. Generated assembler
+@code{cv.extractur} if the uint16_t operand is a register.
+@end deftypefn
+
+@deftypefn {Built-in Function} {uint32_t} __builtin_riscv_cv_bitmanip_insert (uint32_t, uint16_t, uint32_t)
+Generated assembler @code{cv.insert} if the uint16_t operand is a constant. Generated assembler
+@code{cv.insertr} if the uint16_t operand is a register.
+@end deftypefn
+
+@deftypefn {Built-in Function} {uint32_t} __builtin_riscv_cv_bitmanip_bclr (uint32_t, uint16_t)
+Generated assembler @code{cv.bclr} if the uint16_t operand is a constant. Generated assembler
+@code{cv.bclrr} if the uint16_t operand is a register.
+@end deftypefn
+
+@deftypefn {Built-in Function} {uint32_t} __builtin_riscv_cv_bitmanip_bset (uint32_t, uint16_t)
+Generated assembler @code{cv.bset} if the uint16_t operand is a constant. Generated assembler
+@code{cv.bsetr} if the uint16_t operand is a register.
+@end deftypefn
+
+@deftypefn {Built-in Function} {uint8_t} __builtin_riscv_cv_bitmanip_ff1 (uint32_t)
+Generated assembler @code{cv.ff1}
+@end deftypefn
+
+@deftypefn {Built-in Function} {uint8_t} __builtin_riscv_cv_bitmanip_fl1 (uint32_t)
+Generated assembler @code{cv.fl1}
+@end deftypefn
+
+@deftypefn {Built-in Function} {uint8_t} __builtin_riscv_cv_bitmanip_clb (uint32_t)
+Generated assembler @code{cv.clb}
+@end deftypefn
+
+@deftypefn {Built-in Function} {uint8_t} __builtin_riscv_cv_bitmanip_cnt (uint32_t)
+Generated assembler @code{cv.cnt}
+@end deftypefn
+
+@deftypefn {Built-in Function} {uint32_t} __builtin_riscv_cv_bitmanip_ror (uint32_t, uint32_t)
+Generated assembler @code{cv.ror}
+@end deftypefn
+
+@deftypefn {Built-in Function} {uint32_t} __builtin_riscv_cv_bitmanip_bitrev (uint32_t, uint8_t, uint8_t)
+Generated assembler @code{cv.bitrev}
+@end deftypefn
+
 @node RX Built-in Functions
 @subsection RX Built-in Functions
 GCC supports some of the RX instructions which cannot be expressed in

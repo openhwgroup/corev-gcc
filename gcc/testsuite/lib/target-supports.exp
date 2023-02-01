@@ -12844,6 +12844,19 @@ proc check_effective_target_cv_elw { } {
     } "-march=rv32i_xcvelw" ]
 }
 
+# Return 1 if the CORE-V BITMANIP extension is available.
+proc check_effective_target_cv_bitmanip { } {
+    if { !([istarget riscv*-*-*]) } {
+         return 0
+     }
+    return [check_no_compiler_messages cv_bitmanip object {
+        void foo (void)
+        {
+          asm ("cv.extract t0, t1, 20, 20");
+        }
+    } "-march=rv32i_xcvbitmanip" ]
+}
+
 # Appends necessary Python flags to extra-tool-flags if Python.h is supported.
 # Otherwise, modifies dg-do-what.
 proc dg-require-python-h { args } {
