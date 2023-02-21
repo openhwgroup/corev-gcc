@@ -263,6 +263,7 @@
 	return true;
 })
 
+
 ;;CORE-V Predicates:
 (define_predicate "const_int10_operand"
   (and (match_code "const_int")
@@ -279,6 +280,26 @@
 (define_predicate "const_int2_operand"
   (and (match_code "const_int")
        (match_test "IN_RANGE (INTVAL (op), 0, 3)")))
+
+(define_predicate "const_int6s_operand"
+  (and (match_code "const_int")
+       (match_test "IN_RANGE (INTVAL (op), -32, 31)")))
+
+(define_predicate "int6s_operand"
+  (ior (match_operand 0 "const_int6s_operand")
+       (match_operand 0 "register_operand")))
+
+(define_predicate "const_int6_operand"
+  (and (match_code "const_int")
+       (match_test "IN_RANGE (INTVAL (op), 0, 63)")))
+
+(define_predicate "int6_operand"
+  (ior (match_operand 0 "const_int6_operand")
+       (match_operand 0 "register_operand")))
+
+(define_predicate "const_int2_operand"
+  (and (match_code "const_int")
+       (match_test "IN_RANGE (INTVAL (op), 0, 4)")))
 
 ;; Predicates for the V extension.
 (define_special_predicate "vector_length_operand"

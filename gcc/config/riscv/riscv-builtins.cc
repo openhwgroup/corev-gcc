@@ -47,8 +47,7 @@ along with GCC; see the file COPYING3.  If not see
 #define RISCV_FTYPE_NAME1(A, B) RISCV_##A##_FTYPE_##B
 #define RISCV_FTYPE_NAME2(A, B, C) RISCV_##A##_FTYPE_##B##_##C
 #define RISCV_FTYPE_NAME3(A, B, C, D) RISCV_##A##_FTYPE_##B##_##C##_##D
-#define RISCV_FTYPE_NAME4(A, B, C, D, E) \
-  RISCV_##A##_FTYPE_##B##_##C##_##D##_##E
+#define RISCV_FTYPE_NAME4(A, B, C, D, E) RISCV_##A##_FTYPE_##B##_##C##_##D##_##E
 
 /* Classifies the prototype of a built-in function.  */
 enum riscv_function_type {
@@ -128,6 +127,7 @@ AVAIL (always,     (!0))
 AVAIL (cvelw, TARGET_XCOREVELW && !TARGET_64BIT)
 AVAIL (cvmac, TARGET_XCOREVMAC && !TARGET_64BIT)
 AVAIL (cvbitmanip, TARGET_XCOREVBITMANIP && !TARGET_64BIT)
+AVAIL (cvsimd, TARGET_XCOREVSIMD && !TARGET_64BIT)
 
 /* Construct a riscv_builtin_description from the given arguments.
 
