@@ -42,8 +42,7 @@ along with GCC; see the file COPYING3.  If not see
 #define RISCV_FTYPE_NAME1(A, B) RISCV_##A##_FTYPE_##B
 #define RISCV_FTYPE_NAME2(A, B, C) RISCV_##A##_FTYPE_##B##_##C
 #define RISCV_FTYPE_NAME3(A, B, C, D) RISCV_##A##_FTYPE_##B##_##C##_##D
-#define RISCV_FTYPE_NAME4(A, B, C, D, E) \
-  RISCV_##A##_FTYPE_##B##_##C##_##D##_##E
+#define RISCV_FTYPE_NAME4(A, B, C, D, E) RISCV_##A##_FTYPE_##B##_##C##_##D##_##E
 
 /* Classifies the prototype of a built-in function.  */
 enum riscv_function_type {
@@ -95,6 +94,7 @@ AVAIL (hard_float, TARGET_HARD_FLOAT)
 AVAIL (cvelw, TARGET_XCOREVELW && !TARGET_64BIT)
 AVAIL (cvmac, TARGET_XCOREVMAC && !TARGET_64BIT)
 AVAIL (cvbitmanip, TARGET_XCOREVBITMANIP && !TARGET_64BIT)
+AVAIL (cvsimd, TARGET_XCOREVSIMD && !TARGET_64BIT)
 
 /* Construct a riscv_builtin_description from the given arguments.
 
@@ -127,11 +127,13 @@ AVAIL (cvbitmanip, TARGET_XCOREVBITMANIP && !TARGET_64BIT)
 
 /* Argument types.  */
 #define RISCV_ATYPE_VOID void_type_node
-#define RISCV_ATYPE_UQI unsigned_intQI_type_node
-#define RISCV_ATYPE_UHI unsigned_intHI_type_node
-#define RISCV_ATYPE_USI unsigned_intSI_type_node
-#define RISCV_ATYPE_SI intSI_type_node
 #define RISCV_ATYPE_VOID_PTR ptr_type_node
+#define RISCV_ATYPE_USI unsigned_intSI_type_node
+#define RISCV_ATYPE_UHI unsigned_intHI_type_node
+#define RISCV_ATYPE_UQI unsigned_intQI_type_node
+#define RISCV_ATYPE_SI intSI_type_node
+#define RISCV_ATYPE_HI intHI_type_node
+#define RISCV_ATYPE_QI intQI_type_node
 
 /* RISCV_FTYPE_ATYPESN takes N RISCV_FTYPES-like type codes and lists
    their associated RISCV_ATYPEs.  */
