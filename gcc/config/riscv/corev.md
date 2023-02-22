@@ -765,7 +765,6 @@
   "cv.bitrev\t%0,%1,%2,%3"
   [(set_attr "type" "bitmanip")
   (set_attr "mode" "SI")])
-=======
 
 ;;CORE-V SIMD
 ;;CORE-V SIMD ALU
