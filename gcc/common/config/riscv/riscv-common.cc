@@ -227,7 +227,6 @@ static const struct riscv_ext_version riscv_ext_version_table[] =
   {"svinval", ISA_SPEC_CLASS_NONE, 1, 0},
   {"svnapot", ISA_SPEC_CLASS_NONE, 1, 0},
 
-  {"xcv",    ISA_SPEC_CLASS_NONE, 1, 0},
   {"xcvelw", ISA_SPEC_CLASS_NONE, 1, 0},
   {"xcvmac", ISA_SPEC_CLASS_NONE, 1, 0},
   {"xcvbitmanip", ISA_SPEC_CLASS_NONE, 1, 0},
@@ -1259,7 +1258,6 @@ static const riscv_ext_flag_table_t riscv_ext_flag_table[] =
   {"svinval", &gcc_options::x_riscv_sv_subext, MASK_SVINVAL},
   {"svnapot", &gcc_options::x_riscv_sv_subext, MASK_SVNAPOT},
 
-  {"xcv",    &gcc_options::x_riscv_xcv_flags, MASK_XCV},
   {"xcvelw", &gcc_options::x_riscv_xcv_flags, MASK_XCVELW},
   {"xcvmac", &gcc_options::x_riscv_xcv_flags, MASK_XCVMAC},
   {"xcvbitmanip", &gcc_options::x_riscv_xcv_flags, MASK_XCVBITMANIP},
