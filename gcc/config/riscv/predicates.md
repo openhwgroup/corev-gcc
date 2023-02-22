@@ -297,7 +297,7 @@
   (ior (match_operand 0 "const_int6_operand")
        (match_operand 0 "register_operand")))
 
-(define_predicate "const_int2_operand"
+(define_predicate "const_int2_simd_operand"
   (and (match_code "const_int")
        (match_test "IN_RANGE (INTVAL (op), 0, 4)")))
 

@@ -14716,6 +14716,7 @@ instructions, but allow the compiler to schedule those calls.
 * PowerPC Matrix-Multiply Assist Built-in Functions::
 * PRU Built-in Functions::
 * RISC-V Built-in Functions::
+* CORE-V Built-in Functions::
 * RX Built-in Functions::
 * S/390 System z Built-in Functions::
 * SH Built-in Functions::
@@ -21170,6 +21171,7 @@ Xgnuzihintpausestate extension, which redefines the @code{pause} instruction to
 change architectural state.
 @end deftypefn
 
+@node CORE-V Built-in Functions
 @subsection CORE-V Built-in Functions
 For more information on all CORE-V built-ins, please see
 @uref{https://github.com/openhwgroup/core-v-sw/blob/master/specifications/corev-builtin-spec.md}

@@ -119,7 +119,6 @@
        (match_test "CONSTANT_P (op)")))
 
 ;; CORE-V Constraints
-<<<<<<< HEAD
 (define_constraint "M"
   "A 10-bit unsigned immediate for CORE-V bitmanip."
   (and (match_code "const_int")
@@ -129,11 +128,12 @@
   "A 2-bit unsigned immediate for CORE-V bitmanip."
   (and (match_code "const_int")
        (match_test "IN_RANGE (ival, 0, 3)")))
-=======
+
 (define_constraint "CV6"
   "A 6-bit signed immediate for SIMD."
   (and (match_code "const_int")
        (match_test "IN_RANGE (ival, -32, 31)")))
+
 (define_constraint "CS6"
   "A 6-bit signed immediate for SIMD."
   (and (match_code "const_int")
@@ -158,7 +158,6 @@
   "Shifting immediate for SIMD complex number, div operations, add and sub."
   (and (match_code "const_int")
        (match_test "ival == 3")))
->>>>>>> CV32E40Pv2 220 CORE-V SIMD Builtins Version 1
 
 ;; Vector constraints.
 
