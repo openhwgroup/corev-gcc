@@ -1,7 +1,7 @@
-// XCOREVELW
+// XCVELW
 RISCV_BUILTIN (cv_elw_si, "cv_elw", RISCV_BUILTIN_DIRECT, RISCV_USI_FTYPE_VOID_PTR, cvelw),
 
-// XCOREVMAC
+// XCVMAC
 RISCV_BUILTIN (cv_mac_mac,       "cv_mac_mac",    RISCV_BUILTIN_DIRECT, RISCV_SI_FTYPE_SI_SI_SI,      cvmac),
 RISCV_BUILTIN (cv_mac_msu,       "cv_mac_msu",    RISCV_BUILTIN_DIRECT, RISCV_SI_FTYPE_SI_SI_SI,      cvmac),
 RISCV_BUILTIN (cv_mac_muluN,     "cv_mac_muluN",      RISCV_BUILTIN_DIRECT, RISCV_USI_FTYPE_USI_USI_UQI,  cvmac),
@@ -21,7 +21,7 @@ RISCV_BUILTIN (cv_mac_machhuRN,  "cv_mac_machhuRN",   RISCV_BUILTIN_DIRECT, RISC
 RISCV_BUILTIN (cv_mac_macsRN,    "cv_mac_macsRN",     RISCV_BUILTIN_DIRECT, RISCV_SI_FTYPE_SI_SI_SI_UQI,      cvmac),
 RISCV_BUILTIN (cv_mac_machhsRN,  "cv_mac_machhsRN",   RISCV_BUILTIN_DIRECT, RISCV_SI_FTYPE_SI_SI_SI_UQI,      cvmac),
 
-// XCOREVBITMANIP
+// XCVBITMANIP
 RISCV_BUILTIN (cv_bitmanip_extract,     "cv_bitmanip_extract",     RISCV_BUILTIN_DIRECT, RISCV_SI_FTYPE_USI_UHI,         cvbitmanip),
 RISCV_BUILTIN (cv_bitmanip_extractu,    "cv_bitmanip_extractu",    RISCV_BUILTIN_DIRECT, RISCV_USI_FTYPE_USI_UHI,        cvbitmanip),
 RISCV_BUILTIN (cv_bitmanip_insert,      "cv_bitmanip_insert",      RISCV_BUILTIN_DIRECT, RISCV_USI_FTYPE_USI_UHI_USI,    cvbitmanip),
@@ -34,7 +34,7 @@ RISCV_BUILTIN (cv_bitmanip_cnt,         "cv_bitmanip_cnt",         RISCV_BUILTIN
 RISCV_BUILTIN (cv_bitmanip_ror,         "cv_bitmanip_ror",         RISCV_BUILTIN_DIRECT, RISCV_USI_FTYPE_USI_USI,        cvbitmanip),
 RISCV_BUILTIN (cv_bitmanip_bitrev,      "cv_bitmanip_bitrev",      RISCV_BUILTIN_DIRECT, RISCV_USI_FTYPE_USI_UQI_UQI,    cvbitmanip),
 
-// XCOREVSIMD
+// XCVSIMD
 //ALU Operations
 RISCV_BUILTIN (cv_simd_add_h_si,		"cv_simd_add_h",	RISCV_BUILTIN_DIRECT, RISCV_USI_FTYPE_USI_USI_UQI, 	cvsimd),
 RISCV_BUILTIN (cv_simd_add_b_si,		"cv_simd_add_b",	RISCV_BUILTIN_DIRECT, RISCV_USI_FTYPE_USI_USI, 		cvsimd),

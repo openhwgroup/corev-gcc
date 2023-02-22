@@ -213,7 +213,7 @@ TargetVariable
 int riscv_zvl_flags
 
 TargetVariable
-int riscv_xcorev_flags
+int riscv_xcv_flags
 
 Enum
 Name(isa_spec_class) Type(enum riscv_isa_spec_class)
