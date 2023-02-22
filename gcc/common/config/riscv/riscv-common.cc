@@ -106,10 +106,10 @@ static const riscv_implied_info_t riscv_implied_info[] =
   {"zvl32768b", "zvl16384b"},
   {"zvl65536b", "zvl32768b"},
 
-  {"xcorev", "xcorevelw"},
-  {"xcorev", "xcorevmac"},
-  {"xcorev", "xcorevbitmanip"},
-  {"xcorev", "xcorevsimd"},
+  {"xcv", "xcvelw"},
+  {"xcv", "xcvmac"},
+  {"xcv", "xcvbitmanip"},
+  {"xcv", "xcvsimd"},
 
   {NULL, NULL}
 };
@@ -212,11 +212,11 @@ static const struct riscv_ext_version riscv_ext_version_table[] =
   {"zvl32768b", ISA_SPEC_CLASS_NONE, 1, 0},
   {"zvl65536b", ISA_SPEC_CLASS_NONE, 1, 0},
 
-  {"xcorev",    ISA_SPEC_CLASS_NONE, 1, 0},
-  {"xcorevelw", ISA_SPEC_CLASS_NONE, 1, 0},
-  {"xcorevmac", ISA_SPEC_CLASS_NONE, 1, 0},
-  {"xcorevbitmanip", ISA_SPEC_CLASS_NONE, 1, 0},
-  {"xcorevsimd", ISA_SPEC_CLASS_NONE, 1, 0},
+  {"xcv",    ISA_SPEC_CLASS_NONE, 1, 0},
+  {"xcvelw", ISA_SPEC_CLASS_NONE, 1, 0},
+  {"xcvmac", ISA_SPEC_CLASS_NONE, 1, 0},
+  {"xcvbitmanip", ISA_SPEC_CLASS_NONE, 1, 0},
+  {"xcvsimd", ISA_SPEC_CLASS_NONE, 1, 0},
 
   /* Terminate the list.  */
   {NULL, ISA_SPEC_CLASS_NONE, 0, 0}
@@ -1233,11 +1233,11 @@ static const riscv_ext_flag_table_t riscv_ext_flag_table[] =
   {"zvl32768b", &gcc_options::x_riscv_zvl_flags, MASK_ZVL32768B},
   {"zvl65536b", &gcc_options::x_riscv_zvl_flags, MASK_ZVL65536B},
 
-  {"xcorev",    &gcc_options::x_riscv_xcorev_flags, MASK_XCOREV},
-  {"xcorevelw", &gcc_options::x_riscv_xcorev_flags, MASK_XCOREVELW},
-  {"xcorevmac", &gcc_options::x_riscv_xcorev_flags, MASK_XCOREVMAC},
-  {"xcorevbitmanip", &gcc_options::x_riscv_xcorev_flags, MASK_XCOREVBITMANIP},
-  {"xcorevsimd", &gcc_options::x_riscv_xcorev_flags, MASK_XCOREVSIMD},
+  {"xcv",    &gcc_options::x_riscv_xcv_flags, MASK_XCV},
+  {"xcvelw", &gcc_options::x_riscv_xcv_flags, MASK_XCVELW},
+  {"xcvmac", &gcc_options::x_riscv_xcv_flags, MASK_XCVMAC},
+  {"xcvbitmanip", &gcc_options::x_riscv_xcv_flags, MASK_XCVBITMANIP},
+  {"xcvsimd", &gcc_options::x_riscv_xcv_flags, MASK_XCVSIMD},
 
   {NULL, NULL, 0}
 };

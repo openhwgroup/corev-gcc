@@ -2873,7 +2873,7 @@
   (unspec_volatile [(mem:SI (match_operand:SI 1 "address_operand" "p"))] 
   UNSPECV_CV_ELW))]
 
-  "TARGET_XCOREVELW && !TARGET_64BIT"
+  "TARGET_XCVELW && !TARGET_64BIT"
   "cv.elw\t%0,%a1"
 
   [(set_attr "type" "load")

@@ -91,10 +91,10 @@ struct riscv_builtin_description {
 AVAIL (hard_float, TARGET_HARD_FLOAT)
 
 //COREV AVAIL
-AVAIL (cvelw, TARGET_XCOREVELW && !TARGET_64BIT)
-AVAIL (cvmac, TARGET_XCOREVMAC && !TARGET_64BIT)
-AVAIL (cvbitmanip, TARGET_XCOREVBITMANIP && !TARGET_64BIT)
-AVAIL (cvsimd, TARGET_XCOREVSIMD && !TARGET_64BIT)
+AVAIL (cvelw, TARGET_XCVELW && !TARGET_64BIT)
+AVAIL (cvmac, TARGET_XCVMAC && !TARGET_64BIT)
+AVAIL (cvbitmanip, TARGET_XCVBITMANIP && !TARGET_64BIT)
+AVAIL (cvsimd, TARGET_XCVSIMD && !TARGET_64BIT)
 
 /* Construct a riscv_builtin_description from the given arguments.
 
