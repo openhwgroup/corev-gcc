@@ -106,11 +106,6 @@ static const riscv_implied_info_t riscv_implied_info[] =
   {"zvl32768b", "zvl16384b"},
   {"zvl65536b", "zvl32768b"},
 
-  {"xcv", "xcvelw"},
-  {"xcv", "xcvmac"},
-  {"xcv", "xcvbitmanip"},
-  {"xcv", "xcvsimd"},
-
   {NULL, NULL}
 };
 
