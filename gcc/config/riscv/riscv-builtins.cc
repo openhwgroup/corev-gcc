@@ -128,12 +128,14 @@ AVAIL (cvsimd, TARGET_XCVSIMD && !TARGET_64BIT)
 /* Argument types.  */
 #define RISCV_ATYPE_VOID void_type_node
 #define RISCV_ATYPE_VOID_PTR ptr_type_node
+#define RISCV_ATYPE_INT_PTR integer_ptr_type_node
 #define RISCV_ATYPE_USI unsigned_intSI_type_node
 #define RISCV_ATYPE_UHI unsigned_intHI_type_node
 #define RISCV_ATYPE_UQI unsigned_intQI_type_node
 #define RISCV_ATYPE_SI intSI_type_node
 #define RISCV_ATYPE_HI intHI_type_node
 #define RISCV_ATYPE_QI intQI_type_node
+
 
 /* RISCV_FTYPE_ATYPESN takes N RISCV_FTYPES-like type codes and lists
    their associated RISCV_ATYPEs.  */

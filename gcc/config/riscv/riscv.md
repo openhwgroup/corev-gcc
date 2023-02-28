@@ -70,8 +70,6 @@
   UNSPEC_SSP_SET
   UNSPEC_SSP_TEST
 
-  ;;CORE-V Event Load
-  UNSPECV_CV_ELW
 ])
 
 (define_constants
@@ -2867,18 +2865,6 @@
   ""
   "<load>\t%3, %1\;<load>\t%0, %2\;xor\t%0, %3, %0\;li\t%3, 0"
   [(set_attr "length" "12")])
-
-(define_insn "riscv_cv_elw_si"
-  [(set (match_operand:SI 0 "register_operand" "=r")
-  (unspec_volatile [(mem:SI (match_operand:SI 1 "address_operand" "p"))] 
-  UNSPECV_CV_ELW))]
-
-  "TARGET_XCVELW && !TARGET_64BIT"
-  "cv.elw\t%0,%a1"
-
-  [(set_attr "type" "load")
-  (set_attr "mode" "SI")])
-
 
 (include "bitmanip.md")
 (include "zc.md")
