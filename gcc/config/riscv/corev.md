@@ -19,6 +19,9 @@
 
 (define_c_enum "unspec" [
 
+  ;;CORE-V EVENT LOAD
+  UNSPECV_CV_ELW
+
   ;;CORE-V BITMANIP
   UNSPEC_CV_BITMANIP_EXTRACT
   UNSPEC_CV_BITMANIP_EXTRACT_INSN
@@ -195,6 +198,18 @@
   UNSPEC_CV_SUBROTMJ
 
 ])
+
+(define_insn "riscv_cv_elw_elw_si"
+  [(set (match_operand:SI 0 "register_operand" "=r")
+  (unspec_volatile [(mem:SI (match_operand:SI 1 "address_operand" "p"))]
+  UNSPECV_CV_ELW))]
+
+  "TARGET_XCVELW && !TARGET_64BIT"
+  "cv.elw\t%0,%a1"
+
+  [(set_attr "type" "load")
+  (set_attr "mode" "SI")])
+
 
 (define_insn "riscv_cv_mac_mac"
   [(set (match_operand:SI 0 "register_operand" "=r")
