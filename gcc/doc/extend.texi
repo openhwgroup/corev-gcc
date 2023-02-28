@@ -21176,6 +21176,14 @@ change architectural state.
 For more information on all CORE-V built-ins, please see
 @uref{https://github.com/openhwgroup/core-v-sw/blob/master/specifications/corev-builtin-spec.md}
 
+These built-in functions are available for the CORE-V Event Load machine
+architecture. For more information on CORE-V SIMD built-ins, please see
+@uref{https://github.com/openhwgroup/core-v-sw/blob/master/specifications/corev-builtin-spec.md#listing-of-event-load-word-builtins-xcvelw}
+
+@deftypefn {Built-in Function} {uint32_t} __builtin_riscv_cv_elw_elw (uint32_t *)
+Generated assembler @code{cv.elw}
+@end deftypefn
+
 These built-in functions are available for the CORE-V SIMD machine
 architecture. For more information on CORE-V SIMD built-ins, please see
 @uref{https://github.com/openhwgroup/core-v-sw/blob/master/specifications/corev-builtin-spec.md#listing-of-pulp-816-bit-simd-builtins-xcvsimd}
