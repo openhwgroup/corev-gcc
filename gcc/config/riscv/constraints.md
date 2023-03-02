@@ -121,3 +121,158 @@
   "Shifting immediate for SIMD complex number, div operations, add and sub."
   (and (match_code "const_int")
        (match_test "ival == 3")))
+
+(define_constraint "PALU31"
+  "Checking for ALU clip if it's a power of 2"
+  (and (match_code "const_int")
+       (match_test "ival == 1073741823")))
+
+(define_constraint "PALU30"
+  "Checking for ALU clip if it's a power of 2"
+  (and (match_code "const_int")
+       (match_test "ival == 536870911")))
+
+(define_constraint "PALU29"
+  "Checking for ALU clip if it's a power of 2"
+  (and (match_code "const_int")
+       (match_test "ival == 268435455")))
+
+(define_constraint "PALU28"
+  "Checking for ALU clip if it's a power of 2"
+  (and (match_code "const_int")
+       (match_test "ival == 134217727")))
+
+(define_constraint "PALU27"
+  "Checking for ALU clip if it's a power of 2"
+  (and (match_code "const_int")
+       (match_test "ival == 67108863")))
+
+(define_constraint "PALU26"
+  "Checking for ALU clip if it's a power of 2"
+  (and (match_code "const_int")
+       (match_test "ival == 33554431")))
+
+(define_constraint "PALU25"
+  "Checking for ALU clip if it's a power of 2"
+  (and (match_code "const_int")
+       (match_test "ival == 16777215")))
+
+(define_constraint "PALU24"
+  "Checking for ALU clip if it's a power of 2"
+  (and (match_code "const_int")
+       (match_test "ival == 8388607")))
+
+(define_constraint "PALU23"
+  "Checking for ALU clip if it's a power of 2"
+  (and (match_code "const_int")
+       (match_test "ival == 4194303")))
+
+(define_constraint "PALU22"
+  "Checking for ALU clip if it's a power of 2"
+  (and (match_code "const_int")
+       (match_test "ival == 2097151")))
+
+(define_constraint "PALU21"
+  "Checking for ALU clip if it's a power of 2"
+  (and (match_code "const_int")
+       (match_test "ival == 1048575")))
+
+(define_constraint "PALU20"
+  "Checking for ALU clip if it's a power of 2"
+  (and (match_code "const_int")
+       (match_test "ival == 524287")))
+
+(define_constraint "PALU19"
+  "Checking for ALU clip if it's a power of 2"
+  (and (match_code "const_int")
+       (match_test "ival == 262143")))
+
+(define_constraint "PALU18"
+  "Checking for ALU clip if it's a power of 2"
+  (and (match_code "const_int")
+       (match_test "ival == 131071")))
+
+(define_constraint "PALU17"
+  "Checking for ALU clip if it's a power of 2"
+  (and (match_code "const_int")
+       (match_test "ival == 65535")))
+
+(define_constraint "PALU16"
+  "Checking for ALU clip if it's a power of 2"
+  (and (match_code "const_int")
+       (match_test "ival == 32767")))
+
+(define_constraint "PALU15"
+  "Checking for ALU clip if it's a power of 2"
+  (and (match_code "const_int")
+       (match_test "ival == 16383")))
+
+(define_constraint "PALU14"
+  "Checking for ALU clip if it's a power of 2"
+  (and (match_code "const_int")
+       (match_test "ival == 8191")))
+
+(define_constraint "PALU13"
+  "Checking for ALU clip if it's a power of 2"
+  (and (match_code "const_int")
+       (match_test "ival == 4095")))
+
+(define_constraint "PALU12"
+  "Checking for ALU clip if it's a power of 2"
+  (and (match_code "const_int")
+       (match_test "ival == 2047")))
+
+(define_constraint "PALU11"
+  "Checking for ALU clip if it's a power of 2"
+  (and (match_code "const_int")
+       (match_test "ival == 1023")))
+
+(define_constraint "PALU10"
+  "Checking for ALU clip if it's a power of 2"
+  (and (match_code "const_int")
+       (match_test "ival == 511")))
+
+(define_constraint "PALU09"
+  "Checking for ALU clip if it's a power of 2"
+  (and (match_code "const_int")
+       (match_test "ival == 255")))
+
+(define_constraint "PALU08"
+  "Checking for ALU clip if it's a power of 2"
+  (and (match_code "const_int")
+       (match_test "ival == 127")))
+
+(define_constraint "PALU07"
+  "Checking for ALU clip if it's a power of 2"
+  (and (match_code "const_int")
+       (match_test "ival == 63")))
+
+(define_constraint "PALU06"
+  "Checking for ALU clip if it's a power of 2"
+  (and (match_code "const_int")
+       (match_test "ival == 31")))
+
+(define_constraint "PALU05"
+  "Checking for ALU clip if it's a power of 2"
+  (and (match_code "const_int")
+       (match_test "ival == 15")))
+
+(define_constraint "PALU04"
+  "Checking for ALU clip if it's a power of 2"
+  (and (match_code "const_int")
+       (match_test "ival == 7")))
+
+(define_constraint "PALU03"
+  "Checking for ALU clip if it's a power of 2"
+  (and (match_code "const_int")
+       (match_test "ival == 3")))
+
+(define_constraint "PALU02"
+  "Checking for ALU clip if it's a power of 2"
+  (and (match_code "const_int")
+       (match_test "ival == 1")))
+
+(define_constraint "PALU01"
+  "Checking for ALU clip if it's a power of 2"
+  (and (match_code "const_int")
+       (match_test "ival == 0")))
