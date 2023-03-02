@@ -293,3 +293,7 @@
 (define_predicate "const_int2_simd_operand"
   (and (match_code "const_int")
        (match_test "IN_RANGE (INTVAL (op), 0, 4)")))
+
+(define_predicate "immediate_register_operand"
+  (ior (match_operand 0 "register_operand")
+       (match_code "const_int")))
