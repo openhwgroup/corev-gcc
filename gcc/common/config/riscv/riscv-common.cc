@@ -108,6 +108,17 @@ static const riscv_implied_info_t riscv_implied_info[] =
   {"zhinx", "zhinxmin"},
   {"zhinxmin", "zfinx"},
 
+  {"zce",  "zca"},
+  {"zce",  "zcb"},
+  {"zce",  "zcf"},
+  {"zce",  "zcmp"},
+  {"zce",  "zcmt"},
+  {"zcf",  "zca"},
+  {"zcd",  "zca"},
+  {"zcb",  "zca"},
+  {"zcmp", "zca"},
+  {"zcmt", "zca"},
+
   {NULL, NULL}
 };
 
@@ -218,6 +229,14 @@ static const struct riscv_ext_version riscv_ext_version_table[] =
   {"zfhmin",    ISA_SPEC_CLASS_NONE, 1, 0},
 
   {"zmmul", ISA_SPEC_CLASS_NONE, 1, 0},
+
+  {"zca",  ISA_SPEC_CLASS_NONE, 1, 0},
+  {"zcb",  ISA_SPEC_CLASS_NONE, 1, 0},
+  {"zce",  ISA_SPEC_CLASS_NONE, 1, 0},
+  {"zcf",  ISA_SPEC_CLASS_NONE, 1, 0},
+  {"zcd",  ISA_SPEC_CLASS_NONE, 1, 0},
+  {"zcmp", ISA_SPEC_CLASS_NONE, 1, 0},
+  {"zcmt", ISA_SPEC_CLASS_NONE, 1, 0},
 
   {"svinval", ISA_SPEC_CLASS_NONE, 1, 0},
   {"svnapot", ISA_SPEC_CLASS_NONE, 1, 0},
@@ -1250,6 +1269,15 @@ static const riscv_ext_flag_table_t riscv_ext_flag_table[] =
   {"zfh",       &gcc_options::x_riscv_zf_subext, MASK_ZFH},
 
   {"zmmul", &gcc_options::x_riscv_zm_subext, MASK_ZMMUL},
+
+  /* Code-size reduction extensions.  */
+  {"zca",     &gcc_options::x_riscv_zc_subext, MASK_ZCA},
+  {"zcb",     &gcc_options::x_riscv_zc_subext, MASK_ZCB},
+  {"zce",     &gcc_options::x_riscv_zc_subext, MASK_ZCE},
+  {"zcf",     &gcc_options::x_riscv_zc_subext, MASK_ZCF},
+  {"zcd",     &gcc_options::x_riscv_zc_subext, MASK_ZCD},
+  {"zcmp",    &gcc_options::x_riscv_zc_subext, MASK_ZCMP},
+  {"zcmt",    &gcc_options::x_riscv_zc_subext, MASK_ZCMT},
 
   {"svinval", &gcc_options::x_riscv_sv_subext, MASK_SVINVAL},
   {"svnapot", &gcc_options::x_riscv_sv_subext, MASK_SVNAPOT},
