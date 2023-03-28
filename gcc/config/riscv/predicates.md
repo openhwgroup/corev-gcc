@@ -454,3 +454,19 @@
   (and (match_code "const_int")
        (ior (match_operand 0 "not_uimm_extra_bit_operand")
 	    (match_operand 0 "const_nottwobits_operand"))))
+
+(define_special_predicate "riscv_stack_push_operation"
+  (match_code "parallel")
+{
+  return riscv_valid_stack_push_pop_p (op, true);
+})
+
+(define_special_predicate "riscv_stack_pop_operation"
+  (match_code "parallel")
+{
+  return riscv_valid_stack_push_pop_p (op, false);
+})
+
+(define_predicate "pop_return_value_constant"
+  (and (match_code "const_int")
+       (match_test "INTVAL (op) == 0")))
