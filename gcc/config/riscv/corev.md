@@ -2716,8 +2716,8 @@
 
 (define_insn "riscv_cv_alu_addN"
   [(set (match_operand:SI 0 "register_operand" "=r,r")
-  (unspec:SI [(match_operand:SI 1 "register_operand" "r,r") 
-                      (match_operand:SI 2 "register_operand" "r,r") 
+  (unspec:SI [(match_operand:SI 1 "register_operand" "r,0")
+                      (match_operand:SI 2 "register_operand" "r,r")
                       (match_operand:QI 3 "csr_operand" "K,r")]
     UNSPEC_CV_ALU_ADDN))]
   "TARGET_XCVALU && !TARGET_64BIT"
@@ -2730,8 +2730,8 @@
 
 (define_insn "riscv_cv_alu_adduN"
   [(set (match_operand:SI 0 "register_operand" "=r,r")
-  (unspec:SI [(match_operand:SI 1 "register_operand" "r,r")
-  					(match_operand:SI 2 "register_operand" "r,r") 
+  (unspec:SI [(match_operand:SI 1 "register_operand" "r,0")
+					(match_operand:SI 2 "register_operand" "r,r")
 					(match_operand:QI 3 "csr_operand" "K,r")]
     UNSPEC_CV_ALU_ADDUN))]
   "TARGET_XCVALU && !TARGET_64BIT"
@@ -2744,7 +2744,7 @@
 
   (define_insn "riscv_cv_alu_addRN"
   [(set (match_operand:SI 0 "register_operand" "=r,r")
-  (unspec:SI [(match_operand:SI 1 "register_operand" "r,r")
+  (unspec:SI [(match_operand:SI 1 "register_operand" "r,0")
   (match_operand:SI 2 "register_operand" "r,r") 
   (match_operand:QI 3 "csr_operand" "K,r")]
     UNSPEC_CV_ALU_ADDRN))]
@@ -2758,7 +2758,7 @@
 
   (define_insn "riscv_cv_alu_adduRN"
   [(set (match_operand:SI 0 "register_operand" "=r,r")
-  (unspec:SI [(match_operand:SI 1 "register_operand" "r,r") 
+  (unspec:SI [(match_operand:SI 1 "register_operand" "r,0")
   (match_operand:SI 2 "register_operand" "r,r") 
   (match_operand:QI 3 "csr_operand" "K,r")]
     UNSPEC_CV_ALU_ADDURN))]
@@ -2772,7 +2772,7 @@
 
   (define_insn "riscv_cv_alu_subN"
   [(set (match_operand:SI 0 "register_operand" "=r,r")
-  (unspec:SI [(match_operand:SI 1 "register_operand" "r,r") 
+  (unspec:SI [(match_operand:SI 1 "register_operand" "r,0")
   (match_operand:SI 2 "register_operand" "r,r") 
   (match_operand:QI 3 "csr_operand" "K,r")]
     UNSPEC_CV_ALU_SUBN))]
@@ -2786,7 +2786,7 @@
 
   (define_insn "riscv_cv_alu_subuN"
   [(set (match_operand:SI 0 "register_operand" "=r,r")
-  (unspec:SI [(match_operand:SI 1 "register_operand" "r,r")
+  (unspec:SI [(match_operand:SI 1 "register_operand" "r,0")
   (match_operand:SI 2 "register_operand" "r,r")
   (match_operand:QI 3 "csr_operand" "K,r")]
     UNSPEC_CV_ALU_SUBUN))]
@@ -2800,7 +2800,7 @@
 
   (define_insn "riscv_cv_alu_subRN"
   [(set (match_operand:SI 0 "register_operand" "=r,r")
-  (unspec:SI [(match_operand:SI 1 "register_operand" "r,r") 
+  (unspec:SI [(match_operand:SI 1 "register_operand" "r,0")
   (match_operand:SI 2 "register_operand" "r,r") 
   (match_operand:QI 3 "csr_operand" "K,r")]
     UNSPEC_CV_ALU_SUBRN))]
@@ -2814,7 +2814,7 @@
 
   (define_insn "riscv_cv_alu_subuRN"
   [(set (match_operand:SI 0 "register_operand" "=r,r")
-  (unspec:SI [(match_operand:SI 1 "register_operand" "r,r") 
+  (unspec:SI [(match_operand:SI 1 "register_operand" "r,0")
   (match_operand:SI 2 "register_operand" "r,r") 
   (match_operand:QI 3 "csr_operand" "K,r")]
     UNSPEC_CV_ALU_SUBURN))]
