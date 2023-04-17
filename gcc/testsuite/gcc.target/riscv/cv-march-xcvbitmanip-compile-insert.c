@@ -19,6 +19,6 @@ foo (uint32_t a, uint32_t b)
   return res1 + res2 + res3;
 }
 
-/* { dg-final { scan-assembler-times "cv\.insert\t\(\?\:t\[0-6\]\|a\[0-7\]\|s\[1-11\]\),\(\?\:t\[0-6\]\|a\[0-7\]\|s\[1-11\]\),6,8" 1 } } */
+/* { dg-final { scan-assembler-times "cv\.insert\t\(\?\:t\[0-6\]\|a\[0-7\]\|s\[1-11\]\),\(\?\:t\[0-6\]\|a\[0-7\]\|s\[1-11\]\),8,6" 1 } } */
 /* { dg-final { scan-assembler-times "cv\.insert\t\(\?\:t\[0-6\]\|a\[0-7\]\|s\[1-11\]\),\(\?\:t\[0-6\]\|a\[0-7\]\|s\[1-11\]\),0,0" 1 } } */
-/* { dg-final { scan-assembler-times "cv\.insert\t\(\?\:t\[0-6\]\|a\[0-7\]\|s\[1-11\]\),\(\?\:t\[0-6\]\|a\[0-7\]\|s\[1-11\]\),0,31" 1 } } */
+/* { dg-final { scan-assembler-times "cv\.insert\t\(\?\:t\[0-6\]\|a\[0-7\]\|s\[1-11\]\),\(\?\:t\[0-6\]\|a\[0-7\]\|s\[1-11\]\),31,0" 1 } } */
