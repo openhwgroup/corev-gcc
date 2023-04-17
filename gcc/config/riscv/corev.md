@@ -484,7 +484,7 @@
          UNSPEC_CV_BITMANIP_EXTRACT_INSN))]
 
   "TARGET_XCVBITMANIP && !TARGET_64BIT"
-  "cv.extract\t%0,%1,%2,%3"
+  "cv.extract\t%0,%1,%3,%2"
   [(set_attr "type" "bitmanip")
   (set_attr "mode" "SI")])
 
@@ -537,7 +537,7 @@
          UNSPEC_CV_BITMANIP_EXTRACTU_INSN))]
 
   "TARGET_XCVBITMANIP && !TARGET_64BIT"
-  "cv.extractu\t%0,%1,%2,%3"
+  "cv.extractu\t%0,%1,%3,%2"
   [(set_attr "type" "bitmanip")
   (set_attr "mode" "SI")])
 
@@ -588,7 +588,7 @@
          UNSPEC_CV_BITMANIP_INSERT_INSN))]
 
   "TARGET_XCVBITMANIP && !TARGET_64BIT"
-  "cv.insert\t%0,%1,%2,%3"
+  "cv.insert\t%0,%1,%3,%2"
   [(set_attr "type" "bitmanip")
   (set_attr "mode" "SI")])
 
@@ -642,7 +642,7 @@
          UNSPEC_CV_BITMANIP_BCLR_INSN))]
 
   "TARGET_XCVBITMANIP && !TARGET_64BIT"
-  "cv.bclr\t%0,%1,%2,%3"
+  "cv.bclr\t%0,%1,%3,%2"
   [(set_attr "type" "bitmanip")
   (set_attr "mode" "SI")])
 
@@ -692,7 +692,7 @@
          UNSPEC_CV_BITMANIP_BSET_INSN))]
 
   "TARGET_XCVBITMANIP && !TARGET_64BIT"
-  "cv.bset\t%0,%1,%2,%3"
+  "cv.bset\t%0,%1,%3,%2"
   [(set_attr "type" "bitmanip")
   (set_attr "mode" "SI")])
 
