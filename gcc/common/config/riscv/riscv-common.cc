@@ -1287,6 +1287,7 @@ static const riscv_ext_flag_table_t riscv_ext_flag_table[] =
   {"xcvbitmanip", &gcc_options::x_riscv_xcv_flags, MASK_XCVBITMANIP},
   {"xcvsimd", &gcc_options::x_riscv_xcv_flags, MASK_XCVSIMD},
   {"xcvalu", &gcc_options::x_riscv_xcv_flags, MASK_XCVALU},
+  {"xcvbi", &gcc_options::x_riscv_xcv_flags, MASK_XCVBI},
 
   {NULL, NULL, 0}
 };

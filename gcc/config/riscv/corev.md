@@ -2825,3 +2825,17 @@
 
   [(set_attr "type" "arith")
   (set_attr "mode" "SI")])
+
+;;CORE-V Immediate Branching
+(define_insn "cv_branch<mode>"
+  [(set (pc)
+	(if_then_else
+	 (match_operator 1 "equality_operator"
+			 [(match_operand:X 2 "register_operand" "r")
+			  (match_operand:X 3 "const_int5s_operand" "BI5")])
+	 (label_ref (match_operand 0 "" ""))
+	 (pc)))]
+  "TARGET_XCVBI"
+  "cv.b%C1imm\t%2,%3,%0"
+  [(set_attr "type" "branch")
+   (set_attr "mode" "none")])

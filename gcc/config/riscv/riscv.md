@@ -442,6 +442,14 @@
 (define_asm_attributes
   [(set_attr "type" "multi")])
 
+;; ..............................
+;;
+;;	Machine Description Patterns
+;;
+;; ..............................
+
+(include "corev.md")
+
 ;; Ghost instructions produce no real code and introduce no hazards.
 ;; They exist purely to express an effect on dataflow.
 (define_insn_reservation "ghost" 0
@@ -3108,4 +3116,3 @@
 (include "generic.md")
 (include "sifive-7.md")
 (include "vector.md")
-(include "corev.md")
