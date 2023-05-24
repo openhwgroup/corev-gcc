@@ -183,6 +183,11 @@
   (and (match_code "const_int")
        (match_test "IN_RANGE (ival, 0, 63)")))
 
+(define_constraint "BI5"
+  "A 5-bit signed immediate for Immediate Branch."
+  (and (match_code "const_int")
+       (match_test "IN_RANGE (ival, -16, 15)")))
+
 ;; Vector constraints.
 
 (define_register_constraint "vr" "TARGET_VECTOR ? V_REGS : NO_REGS"

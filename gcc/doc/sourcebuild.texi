@@ -2490,6 +2490,9 @@ Test system has support for the CORE-V BITMANIP extension.
 @item cv_simd
 Test system has support for the CORE-V SIMD extension.
 
+@item cv_bi
+Test system has support for the CORE-V BI extension.
+
 @end table
 
 @subsubsection Other hardware attributes
