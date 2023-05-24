@@ -2734,6 +2734,10 @@
 	 (pc)))]
   ""
 {
+  if (TARGET_XCVBI && const_int5s_operand (operands[3], SImode)
+	&& (GET_CODE (operands[1]) == EQ || GET_CODE (operands[1]) == NE))
+    return "cv.b%C1imm\t%2,%3,%0";
+
   if (get_attr_length (insn) == 12)
     return "b%N1\t%2,%z3,1f; jump\t%l0,ra; 1:";
 
