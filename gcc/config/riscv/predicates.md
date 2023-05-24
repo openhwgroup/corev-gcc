@@ -305,6 +305,11 @@
   (ior (match_operand 0 "register_operand")
        (match_code "const_int")))
 
+(define_predicate "const_int5s_operand"
+  (and (match_code "const_int")
+       (match_test "IN_RANGE (INTVAL (op), -16, 15)")))
+
+
 ;; Predicates for the V extension.
 (define_special_predicate "vector_length_operand"
   (ior (match_operand 0 "pmode_register_operand")
