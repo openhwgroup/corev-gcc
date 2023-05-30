@@ -230,9 +230,9 @@
 
 (define_insn "riscv_cv_mac_mac"
   [(set (match_operand:SI 0 "register_operand" "=r")
-        (fma:SI (match_operand:SI 1 "register_operand" "r")
-                (match_operand:SI 2 "register_operand" "r")
-                (match_operand:SI 3 "register_operand" "0")))]
+        (plus:SI (mult:SI (match_operand:SI 1 "register_operand" "r")
+                		 (match_operand:SI 2 "register_operand" "r"))
+						 (match_operand:SI 3 "register_operand" "0")))]
 
   "TARGET_XCVMAC && !TARGET_64BIT"
   "cv.mac\t%0,%1,%2"
