@@ -17,5 +17,5 @@ sub2 (void)
 
 void __attribute__ ((interrupt ("hypervisor")))
 sub3 (void)
-{ /* { dg-warning "argument to" } */
+{ /* { dg-warning "argument 1 is not" } */
 }
