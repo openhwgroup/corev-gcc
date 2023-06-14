@@ -170,6 +170,14 @@ struct GTY(()) mode_switching_info {
     }
 };
 
+struct GTY(()) riscv_interrupt_type {
+  /* The privilege mode for this interrupt.  */
+  enum riscv_privilege_levels mode;
+  /* Whether the interrupt function is responsible for saving call used
+     registers.  */
+  bool save_call_used_p;
+};
+
 struct GTY(())  machine_function {
   /* The number of extra stack bytes taken up by register varargs.
      This area is allocated by the callee at the very top of the frame.  */
@@ -180,8 +188,9 @@ struct GTY(())  machine_function {
 
   /* True if current function is an interrupt function.  */
   bool interrupt_handler_p;
-  /* For an interrupt handler, indicates the privilege level.  */
-  enum riscv_privilege_levels interrupt_mode;
+
+  /* For an interrupt handler, indicates the type of interrupt.  */
+  struct riscv_interrupt_type interrupt_type;
 
   /* True if attributes on current function have been checked.  */
   bool attributes_checked_p;
@@ -496,7 +505,7 @@ TARGET_GNU_ATTRIBUTES (riscv_attribute_table,
   { "naked",	0,  0, true, false, false, false,
     riscv_handle_fndecl_attribute, NULL },
   /* This attribute generates prologue/epilogue for interrupt handlers.  */
-  { "interrupt", 0, 1, false, true, true, false,
+  { "interrupt", 0, 2, false, true, true, false,
     riscv_handle_type_attribute, NULL },
 
   /* The following two are used for the built-in properties of the Vector type
@@ -5474,29 +5483,59 @@ riscv_handle_type_attribute (tree *node ATTRIBUTE_UNUSED, tree name, tree args,
   /* Check for an argument.  */
   if (is_attribute_p ("interrupt", name))
     {
-      if (args)
+      int narg = 0;
+      while (args)
 	{
+	  narg++;
 	  tree cst = TREE_VALUE (args);
 	  const char *string;
 
 	  if (TREE_CODE (cst) != STRING_CST)
 	    {
 	      warning (OPT_Wattributes,
-		       "%qE attribute requires a string argument",
-		       name);
+		       "%qE attribute argument %d is not a string",
+		       name, narg);
 	      *no_add_attrs = true;
 	      return NULL_TREE;
 	    }
 
 	  string = TREE_STRING_POINTER (cst);
+
+	  /* Optional "corev-fast" argument.  If given, must be first argument.
+	  */
+	  if (narg == 1 && !(strcmp (string, "corev-fast")))
+	    {
+	      args = TREE_CHAIN (args);
+	      continue;
+	    }
+
+	  /* Optional mode argument.  */
 	  if (strcmp (string, "user") && strcmp (string, "supervisor")
 	      && strcmp (string, "machine"))
 	    {
+	      if (narg == 1)
+		warning (OPT_Wattributes,
+			 "%qE attribute argument %d is not a type "
+			 "(%<\"corev-fast\"%>) or mode (%<\"user\"%>, "
+			 "%<\"supervisor\"%>, or %<\"machine\"%>)", name, narg);
+	      else
+		warning (OPT_Wattributes,
+			 "%qE attribute argument %d is not %<\"user\"%>, "
+			 "%<\"supervisor\"%>, or %<\"machine\"%>", name, narg);
+
+	      *no_add_attrs = true;
+	      return NULL_TREE;
+	    }
+	  /* There should be no more arguments after the mode argument.  */
+	  else if (TREE_CHAIN (args))
+	    {
 	      warning (OPT_Wattributes,
-		       "argument to %qE attribute is not %<\"user\"%>, %<\"supervisor\"%>, "
-		       "or %<\"machine\"%>", name);
+		       "unexpected argument to %qE attribute after mode argument",
+		       name);
 	      *no_add_attrs = true;
 	    }
+
+	  return NULL_TREE;
 	}
     }
 
@@ -6278,6 +6317,11 @@ riscv_save_reg_p (unsigned int regno)
   bool might_clobber = crtl->saves_all_registers
 		       || df_regs_ever_live_p (regno);
 
+  /* This type of interrupt does not need to save return address.  */
+  if (regno == RETURN_ADDR_REGNUM && cfun->machine->interrupt_handler_p
+      && !cfun->machine->interrupt_type.save_call_used_p)
+    return false;
+
   if (call_saved && might_clobber)
     return true;
 
@@ -6305,6 +6349,12 @@ riscv_save_reg_p (unsigned int regno)
 
       /* By convention, we assume that gp and tp are safe.  */
       if (regno == GP_REGNUM || regno == THREAD_POINTER_REGNUM)
+	return false;
+
+      /* This type of interrupt does not need to save call used registers,
+	 possibly because the hardware saves them instead.  */
+      if (call_used_or_fixed_reg_p (regno)
+	  && !cfun->machine->interrupt_type.save_call_used_p)
 	return false;
 
       /* We must save every register used in this function.  If this is not a
@@ -7685,7 +7735,7 @@ riscv_expand_epilogue (int style)
   /* Return from interrupt.  */
   if (cfun->machine->interrupt_handler_p)
     {
-      enum riscv_privilege_levels mode = cfun->machine->interrupt_mode;
+      enum riscv_privilege_levels mode = cfun->machine->interrupt_type.mode;
 
       gcc_assert (mode != UNKNOWN_MODE);
 
@@ -7710,6 +7760,10 @@ riscv_epilogue_uses (unsigned int regno)
 
   if (epilogue_completed && cfun->machine->interrupt_handler_p)
     {
+      if (!cfun->machine->interrupt_type.save_call_used_p
+	  && call_used_or_fixed_reg_p (regno))
+	return false;
+
       /* An interrupt function restores temp regs, so we must indicate that
 	 they are live at function end.  */
       if (df_regs_ever_live_p (regno)
@@ -9274,16 +9328,19 @@ riscv_function_ok_for_sibcall (tree decl ATTRIBUTE_UNUSED,
   return true;
 }
 
-/* Get the interrupt type, return UNKNOWN_MODE if it's not
+/* Get the interrupt type, return {UNKNOWN_MODE, false} if it's not
    interrupt function. */
-static enum riscv_privilege_levels
+static struct riscv_interrupt_type
 riscv_get_interrupt_type (tree decl)
 {
+  /* Interrupt functions are machine mode by default and expected to save call
+     used registers.  */
+  struct riscv_interrupt_type type = {MACHINE_MODE, true};
   gcc_assert (decl != NULL_TREE);
 
   if ((TREE_CODE(decl) != FUNCTION_DECL)
       || (!riscv_interrupt_type_p (TREE_TYPE (decl))))
-    return UNKNOWN_MODE;
+    return {UNKNOWN_MODE, false};
 
   tree attr_args
     = TREE_VALUE (lookup_attribute ("interrupt",
@@ -9293,16 +9350,26 @@ riscv_get_interrupt_type (tree decl)
     {
       const char *string = TREE_STRING_POINTER (TREE_VALUE (attr_args));
 
+      if (!(strcmp (string, "corev-fast")))
+	{
+	  /* For corev-fast interrupt functions do not need to save call used
+	     registers, instead the hardware is expected to take care of this.
+	  */
+	  type.save_call_used_p = false;
+	  attr_args = TREE_CHAIN(attr_args);
+	  if (attr_args)
+	    string = TREE_STRING_POINTER (TREE_VALUE (attr_args));
+	}
+
       if (!strcmp (string, "user"))
-	return USER_MODE;
+	type.mode = USER_MODE;
       else if (!strcmp (string, "supervisor"))
-	return SUPERVISOR_MODE;
-      else /* Must be "machine".  */
-	return MACHINE_MODE;
+	type.mode = SUPERVISOR_MODE;
+      /* Otherwise must be "machine" and type.mode was already set to
+	 MACHINE_MODE.  */
     }
-  else
-    /* Interrupt attributes are machine mode by default.  */
-    return MACHINE_MODE;
+
+  return type;
 }
 
 /* Implement `TARGET_SET_CURRENT_FUNCTION'.  Unpack the codegen decisions
@@ -9342,9 +9409,9 @@ riscv_set_current_function (tree decl)
 	  if (args && TREE_CODE (TREE_VALUE (args)) != VOID_TYPE)
 	    error ("%qs function cannot have arguments", "interrupt");
 
-	  cfun->machine->interrupt_mode = riscv_get_interrupt_type (decl);
+	  cfun->machine->interrupt_type = riscv_get_interrupt_type (decl);
 
-	  gcc_assert (cfun->machine->interrupt_mode != UNKNOWN_MODE);
+	  gcc_assert (cfun->machine->interrupt_type.mode != UNKNOWN_MODE);
 	}
 
       /* Don't print the above diagnostics more than once.  */
@@ -9386,15 +9453,17 @@ riscv_merge_decl_attributes (tree olddecl, tree newdecl)
 {
   tree combined_attrs;
 
-  enum riscv_privilege_levels old_interrupt_type
+  struct riscv_interrupt_type old_interrupt_type
     = riscv_get_interrupt_type (olddecl);
-  enum riscv_privilege_levels new_interrupt_type
+  struct riscv_interrupt_type new_interrupt_type
     = riscv_get_interrupt_type (newdecl);
 
   /* Check old and new has same interrupt type. */
-  if ((old_interrupt_type != UNKNOWN_MODE)
-      && (new_interrupt_type != UNKNOWN_MODE)
-      && (old_interrupt_type != new_interrupt_type))
+  if ((old_interrupt_type.mode != UNKNOWN_MODE)
+      && (new_interrupt_type.mode != UNKNOWN_MODE)
+      && ((old_interrupt_type.mode != new_interrupt_type.mode)
+	  || (old_interrupt_type.save_call_used_p
+	      != new_interrupt_type.save_call_used_p)))
     error ("%qs function cannot have different interrupt type", "interrupt");
 
   /* Create combined attributes.  */
