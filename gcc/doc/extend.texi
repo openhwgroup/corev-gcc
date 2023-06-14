@@ -6299,6 +6299,8 @@ depended upon to work reliably and are not supported.
 
 @cindex @code{interrupt} function attribute, RISC-V
 @item interrupt
+@itemx interrupt (mode)
+@itemx interrupt ("corev-fast", mode)
 Use this attribute to indicate that the specified function is an interrupt
 handler.  The compiler generates function entry and exit sequences suitable
 for use in an interrupt handler when this attribute is present.
@@ -6313,6 +6315,11 @@ void f (void) __attribute__ ((interrupt ("user")));
 Permissible values for this parameter are @code{user}, @code{supervisor},
 and @code{machine}.  If there is no parameter, then it defaults to
 @code{machine}.
+
+The optional @code{"corev-fast"} parameter specifies that the function is a
+CORE-V fast interrupt handler, which behaves the same as a normal interrupt
+handler except caller saved registers (including @code{ra}) are not saved by the
+function.
 
 @cindex @code{riscv_vector_cc} function attribute, RISC-V
 @item riscv_vector_cc
