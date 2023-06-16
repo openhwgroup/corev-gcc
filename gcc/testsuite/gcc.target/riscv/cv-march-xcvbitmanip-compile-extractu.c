@@ -1,6 +1,6 @@
 /* { dg-do compile } */
 /* { dg-require-effective-target cv_bitmanip } */
-/* { dg-options "-march=rv32i_xcvbitmanip1p0 -mabi=ilp32" } */
+/* { dg-options "-march=rv32i_xcvbitmanip -mabi=ilp32" } */
 
 #include <stdint.h>
 #include <stdio.h>

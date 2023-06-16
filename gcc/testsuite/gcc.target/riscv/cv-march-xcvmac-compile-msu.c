@@ -1,6 +1,6 @@
 /* { dg-do compile } */
 /* { dg-require-effective-target cv_mac } */
-/* { dg-options "-march=rv32i_xcvmac1p0 -mabi=ilp32" } */
+/* { dg-options "-march=rv32i_xcvmac -mabi=ilp32" } */
 
 int foo(int a, int b, int c)
 {

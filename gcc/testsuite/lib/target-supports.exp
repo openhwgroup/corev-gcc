@@ -12342,7 +12342,7 @@ proc check_effective_target_cv_mac { } {
         {
           asm ("cv.mac t0, t1, t2");
         }
-    } "-march=rv32ixcvmac1p0" ]
+    } "-march=rv32ixcvmac" ]
 }
 
 proc check_effective_target_cv_bitmanip { } {
@@ -12354,7 +12354,7 @@ proc check_effective_target_cv_bitmanip { } {
         {
           asm ("cv.extract t0, t1, 20, 20");
         }
-    } "-march=rv32ixcvbitmanip1p0" ]
+    } "-march=rv32ixcvbitmanip" ]
 }
 
 proc check_effective_target_cv_alu { } {
@@ -12366,5 +12366,5 @@ proc check_effective_target_cv_alu { } {
         {
           asm ("cv.addN t0, t1, t2, 0");
         }
-    } "-march=rv32i_xcvalu1p0" ]
+    } "-march=rv32i_xcvalu" ]
 }
