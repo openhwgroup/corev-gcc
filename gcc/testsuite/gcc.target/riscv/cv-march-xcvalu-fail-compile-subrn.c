@@ -1,7 +1,7 @@
 
 /* { dg-do compile } */
 /* { dg-require-effective-target cv_alu } */
-/* { dg-options "-march=rv32i_xcvalu1p0 -mabi=ilp32" } */
+/* { dg-options "-march=rv32i_xcvalu -mabi=ilp32" } */
 
 extern int d;
 

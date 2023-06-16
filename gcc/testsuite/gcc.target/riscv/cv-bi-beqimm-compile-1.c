@@ -1,5 +1,5 @@
 /* { dg-do compile } */
-/* { dg-options "-march=rv32i_xcvbi1p0 -mabi=ilp32" } */
+/* { dg-options "-march=rv32i_xcvbi -mabi=ilp32" } */
 /* { dg-skip-if "" { *-*-* }  { "-O0" } { "" } } */
 
 /* __builtin_expect is used to provide the compiler with

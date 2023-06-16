@@ -1,5 +1,5 @@
 /* { dg-do compile } */
-/* { dg-options "-march=rv32i_xcvsimd1p0 -mabi=ilp32" } */
+/* { dg-options "-march=rv32i_xcvsimd -mabi=ilp32" } */
 
 int foo1 (int a, int b)
 {
