@@ -794,7 +794,7 @@
          UNSPEC_CV_BITMANIP_BITREV))]
 
   "TARGET_XCVBITMANIP && !TARGET_64BIT"
-  "cv.bitrev\t%0,%1,%2,%3"
+  "cv.bitrev\t%0,%1,%3,%2"
   [(set_attr "type" "bitmanip")
   (set_attr "mode" "SI")])
 
