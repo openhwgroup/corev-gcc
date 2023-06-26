@@ -23,8 +23,8 @@ foo (uint32_t a)
   return res1 + res2 + res3 + res4 + res5;
 }
 
-/* { dg-final { scan-assembler-times "cv\.bitrev\t\(\?\:t\[0-6\]\|a\[0-7\]\|s\[1-11\]\),\(\?\:t\[0-6\]\|a\[0-7\]\|s\[1-11\]\),20,2" 1 } } */
+/* { dg-final { scan-assembler-times "cv\.bitrev\t\(\?\:t\[0-6\]\|a\[0-7\]\|s\[1-11\]\),\(\?\:t\[0-6\]\|a\[0-7\]\|s\[1-11\]\),2,20" 1 } } */
 /* { dg-final { scan-assembler-times "cv\.bitrev\t\(\?\:t\[0-6\]\|a\[0-7\]\|s\[1-11\]\),\(\?\:t\[0-6\]\|a\[0-7\]\|s\[1-11\]\),0,0" 1 } } */
-/* { dg-final { scan-assembler-times "cv\.bitrev\t\(\?\:t\[0-6\]\|a\[0-7\]\|s\[1-11\]\),\(\?\:t\[0-6\]\|a\[0-7\]\|s\[1-11\]\),31,0" 1 } } */
-/* { dg-final { scan-assembler-times "cv\.bitrev\t\(\?\:t\[0-6\]\|a\[0-7\]\|s\[1-11\]\),\(\?\:t\[0-6\]\|a\[0-7\]\|s\[1-11\]\),0,3" 1 } } */
-/* { dg-final { scan-assembler-times "cv\.bitrev\t\(\?\:t\[0-6\]\|a\[0-7\]\|s\[1-11\]\),\(\?\:t\[0-6\]\|a\[0-7\]\|s\[1-11\]\),31,3" 1 } } */
+/* { dg-final { scan-assembler-times "cv\.bitrev\t\(\?\:t\[0-6\]\|a\[0-7\]\|s\[1-11\]\),\(\?\:t\[0-6\]\|a\[0-7\]\|s\[1-11\]\),0,31" 1 } } */
+/* { dg-final { scan-assembler-times "cv\.bitrev\t\(\?\:t\[0-6\]\|a\[0-7\]\|s\[1-11\]\),\(\?\:t\[0-6\]\|a\[0-7\]\|s\[1-11\]\),3,0" 1 } } */
+/* { dg-final { scan-assembler-times "cv\.bitrev\t\(\?\:t\[0-6\]\|a\[0-7\]\|s\[1-11\]\),\(\?\:t\[0-6\]\|a\[0-7\]\|s\[1-11\]\),3,31" 1 } } */
