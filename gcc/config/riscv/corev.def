@@ -1,5 +1,5 @@
 // XCVELW
-RISCV_BUILTIN (cv_elw_elw_si, "cv_elw_elw", RISCV_BUILTIN_DIRECT, RISCV_USI_FTYPE_INT_PTR, cvelw),
+RISCV_BUILTIN (cv_elw_elw_si, "cv_elw_elw", RISCV_BUILTIN_DIRECT, RISCV_USI_FTYPE_VOID_PTR, cvelw),
 
 // XCVMAC
 RISCV_BUILTIN (cv_mac_mac,       "cv_mac_mac",    RISCV_BUILTIN_DIRECT, RISCV_SI_FTYPE_SI_SI_SI,      cvmac),
