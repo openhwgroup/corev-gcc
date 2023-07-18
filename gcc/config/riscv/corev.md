@@ -144,8 +144,8 @@
   UNSPEC_CV_SHUFFLE_SCI_B
   UNSPEC_CV_SHUFFLE2_H
   UNSPEC_CV_SHUFFLE2_B
-  UNSPEC_CV_PACK
-  UNSPEC_CV_PACK_H
+  UNSPEC_CV_PACKHI_H
+  UNSPEC_CV_PACKLO_H
   UNSPEC_CV_PACKHI_B
   UNSPEC_CV_PACKLO_B
 
@@ -1942,25 +1942,28 @@
 	[(set_attr "type" "arith")
 	(set_attr "mode" "SI")])
 
-(define_insn "riscv_cv_simd_pack_si"
+
+(define_insn "riscv_cv_simd_packhi_h_si"
 	[(set (match_operand:SI 0 "register_operand" "=r")
 		(unspec:SI [(match_operand:SI 1 "register_operand" "r")
 		(match_operand:SI 2 "register_operand" "r")]
-	UNSPEC_CV_PACK))]
+	UNSPEC_CV_PACKHI_H))]
+	"TARGET_XCVSIMD && !TARGET_64BIT"
+	"cv.pack.h\\t%0,%1,%2"
+	[(set_attr "type" "arith")
+	(set_attr "mode" "SI")])
+
+
+(define_insn "riscv_cv_simd_packlo_h_si"
+	[(set (match_operand:SI 0 "register_operand" "=r")
+		(unspec:SI [(match_operand:SI 1 "register_operand" "r")
+		(match_operand:SI 2 "register_operand" "r")]
+	UNSPEC_CV_PACKLO_H))]
 	"TARGET_XCVSIMD && !TARGET_64BIT"
 	"cv.pack\\t%0,%1,%2"
 	[(set_attr "type" "arith")
 	(set_attr "mode" "SI")])
 
-(define_insn "riscv_cv_simd_pack_h_si"
-	[(set (match_operand:SI 0 "register_operand" "=r")
-		(unspec:SI [(match_operand:SI 1 "register_operand" "r")
-		(match_operand:SI 2 "register_operand" "r")]
-	UNSPEC_CV_PACK_H))]
-	"TARGET_XCVSIMD && !TARGET_64BIT"
-	"cv.pack.h\\t%0,%1,%2"
-	[(set_attr "type" "arith")
-	(set_attr "mode" "SI")])
 
 (define_insn "riscv_cv_simd_packhi_b_si"
 	[(set (match_operand:SI 0 "register_operand" "=r")
@@ -1973,6 +1976,7 @@
 	[(set_attr "type" "arith")
 	(set_attr "mode" "SI")])
 
+
 (define_insn "riscv_cv_simd_packlo_b_si"
 	[(set (match_operand:SI 0 "register_operand" "=r")
 		(unspec:SI [(match_operand:SI 1 "register_operand" "r")
@@ -1983,6 +1987,7 @@
 	"cv.packlo.b\\t%0,%1,%2"
 	[(set_attr "type" "arith")
 	(set_attr "mode" "SI")])
+
 
 ;;CORE-V SIMD COMPARISON
 (define_insn "riscv_cv_simd_cmpeq_h_si"

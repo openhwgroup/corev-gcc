@@ -21737,11 +21737,11 @@ Generated assembler @code{cv.shuffle2.h}
 Generated assembler @code{cv.shuffle2.b}
 @end deftypefn
 
-@deftypefn {Built-in Function} {uint32_t} __builtin_riscv_cv_simd_pack (uint32_t, uint32_t)
+@deftypefn {Built-in Function} {uint32_t} __builtin_riscv_cv_simd_packlo_h (uint32_t, uint32_t)
 Generated assembler @code{cv.pack}
 @end deftypefn
 
-@deftypefn {Built-in Function} {uint32_t} __builtin_riscv_cv_simd_pack_h (uint32_t, uint32_t)
+@deftypefn {Built-in Function} {uint32_t} __builtin_riscv_cv_simd_packhi_h (uint32_t, uint32_t)
 Generated assembler @code{cv.pack.h}
 @end deftypefn
 

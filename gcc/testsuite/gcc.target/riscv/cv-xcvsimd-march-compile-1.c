@@ -826,13 +826,13 @@ int foo137 (int a, int b, int c)
 
 int foo138 (int a, int b)
 {
-	return __builtin_riscv_cv_simd_pack(a, b);
+	return __builtin_riscv_cv_simd_packlo_h(a, b);
 }
 
 
 int foo139 (int a, int b)
 {
-	return __builtin_riscv_cv_simd_pack_h(a, b);
+	return __builtin_riscv_cv_simd_packhi_h(a, b);
 }
 
 
