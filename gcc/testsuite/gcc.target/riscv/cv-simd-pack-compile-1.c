@@ -3,7 +3,7 @@
 
 int foo1 (int a, int b)
 {
-	return __builtin_riscv_cv_simd_pack(a, b);
+	return __builtin_riscv_cv_simd_packlo_h(a, b);
 }
 
 /* { dg-final { scan-assembler-times "cv\\.pack" 1 } } */
