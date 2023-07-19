@@ -21269,19 +21269,19 @@ Generated assembler @code{cv.avgu.h}
 Generated assembler @code{cv.avgu.b}
 @end deftypefn
 
-@deftypefn {Built-in Function} {uint32_t} __builtin_riscv_cv_simd_avgu_sc_h (uint32_t, int16_t)
+@deftypefn {Built-in Function} {uint32_t} __builtin_riscv_cv_simd_avgu_sc_h (uint32_t, uint16_t)
 Generated assembler @code{cv.avgu.sc.h}
 @end deftypefn
 
-@deftypefn {Built-in Function} {uint32_t} __builtin_riscv_cv_simd_avgu_sc_h (uint32_t, int6_t)
+@deftypefn {Built-in Function} {uint32_t} __builtin_riscv_cv_simd_avgu_sc_h (uint32_t, uint6_t)
 Generated assembler @code{cv.avgu.sci.h}
 @end deftypefn
 
-@deftypefn {Built-in Function} {uint32_t} __builtin_riscv_cv_simd_avgu_sc_b (uint32_t, int8_t)
+@deftypefn {Built-in Function} {uint32_t} __builtin_riscv_cv_simd_avgu_sc_b (uint32_t, uint8_t)
 Generated assembler @code{cv.avgu.sc.b}
 @end deftypefn
 
-@deftypefn {Built-in Function} {uint32_t} __builtin_riscv_cv_simd_avgu_sc_b (uint32_t, int6_t)
+@deftypefn {Built-in Function} {uint32_t} __builtin_riscv_cv_simd_avgu_sc_b (uint32_t, uint6_t)
 Generated assembler @code{cv.avgu.sci.b}
 @end deftypefn
 

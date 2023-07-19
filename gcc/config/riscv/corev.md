@@ -979,7 +979,7 @@
 (define_insn "riscv_cv_simd_avgu_sc_h_si"
 	[(set (match_operand:SI 0 "register_operand" "=r,r")
 		(unspec:SI [(match_operand:SI 1 "register_operand" "r,r")
-		(match_operand:HI 2 "int6s_operand" "CV6,r")]
+		(match_operand:HI 2 "int6_operand" "CS6,r")]
 	UNSPEC_CV_AVGU_SC_H))]
 	"TARGET_XCVSIMD && !TARGET_64BIT"
 	"@
@@ -992,7 +992,7 @@
 (define_insn "riscv_cv_simd_avgu_sc_b_si"
 	[(set (match_operand:SI 0 "register_operand" "=r,r")
 		(unspec:SI [(match_operand:SI 1 "register_operand" "r,r")
-		(match_operand:QI 2 "int6s_operand" "CV6,r")]
+		(match_operand:QI 2 "int6_operand" "CS6,r")]
 	UNSPEC_CV_AVGU_SC_B))]
 	"TARGET_XCVSIMD && !TARGET_64BIT"
 	"@
