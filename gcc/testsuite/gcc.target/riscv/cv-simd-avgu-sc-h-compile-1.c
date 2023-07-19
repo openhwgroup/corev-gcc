@@ -8,18 +8,13 @@ int foo1 (int a, int b)
 
 int foo2 (int a)
 {
-	return __builtin_riscv_cv_simd_avgu_sc_h(a, -32);
+	return __builtin_riscv_cv_simd_avgu_sc_h(a, 0);
 }
 
 int foo3 (int a)
 {
-	return __builtin_riscv_cv_simd_avgu_sc_h(a, 0);
-}
-
-int foo4 (int a)
-{
-	return __builtin_riscv_cv_simd_avgu_sc_h(a, 31);
+	return __builtin_riscv_cv_simd_avgu_sc_h(a, 63);
 }
 
 /* { dg-final { scan-assembler-times "cv\\.avgu\\.sc\\.h" 1 } } */
-/* { dg-final { scan-assembler-times "cv\\.avgu\\.sci\\.h" 3 } } */
+/* { dg-final { scan-assembler-times "cv\\.avgu\\.sci\\.h" 2 } } */
