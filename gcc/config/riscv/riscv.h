@@ -46,6 +46,8 @@ along with GCC; see the file COPYING3.  If not see
 #define RISCV_TUNE_STRING_DEFAULT "rocket"
 #endif
 
+#define TARGET_MEM_CONSTRAINT 'w'
+
 extern const char *riscv_expand_arch (int argc, const char **argv);
 extern const char *riscv_expand_arch_from_cpu (int argc, const char **argv);
 extern const char *riscv_default_mtune (int argc, const char **argv);
@@ -1203,7 +1205,9 @@ extern void riscv_remove_unneeded_save_restore_calls (void);
    e.g. RVVMF64BI vs RVVMF1BI on zvl512b, which is [1, 1] vs [64, 64].  */
 #define MAX_POLY_VARIANT 64
 
-#define HAVE_POST_MODIFY_DISP TARGET_XTHEADMEMIDX
+#define HAVE_POST_MODIFY_DISP (TARGET_XTHEADMEMIDX || TARGET_XCVMEM)
 #define HAVE_PRE_MODIFY_DISP  TARGET_XTHEADMEMIDX
+
+#define HAVE_POST_MODIFY_REG TARGET_XCVMEM
 
 #endif /* ! GCC_RISCV_H */
