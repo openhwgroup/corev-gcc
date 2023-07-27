@@ -1651,13 +1651,13 @@
 
 (define_expand "zero_extendsidi2"
   [(set (match_operand:DI 0 "register_operand")
-	(zero_extend:DI (match_operand:SI 1 "nonimmediate_operand")))]
+	(zero_extend:DI (match_operand:SI 1 "nonimmediate_nonpostinc")))]
   "TARGET_64BIT")
 
 (define_insn_and_split "*zero_extendsidi2_internal"
   [(set (match_operand:DI     0 "register_operand"     "=r,r")
 	(zero_extend:DI
-	    (match_operand:SI 1 "nonimmediate_operand" " r,m")))]
+	    (match_operand:SI 1 "nonimmediate_nonpostinc" " r,m")))]
   "TARGET_64BIT && !TARGET_ZBA && !TARGET_XTHEADBB
    && !(register_operand (operands[1], SImode)
         && reg_or_subregno (operands[1]) == VL_REGNUM)"
@@ -1679,13 +1679,13 @@
 (define_expand "zero_extendhi<GPR:mode>2"
   [(set (match_operand:GPR    0 "register_operand")
 	(zero_extend:GPR
-	    (match_operand:HI 1 "nonimmediate_operand")))]
+	    (match_operand:HI 1 "nonimmediate_nonpostinc")))]
   "")
 
 (define_insn_and_split "*zero_extendhi<GPR:mode>2"
   [(set (match_operand:GPR    0 "register_operand"     "=r,r")
 	(zero_extend:GPR
-	    (match_operand:HI 1 "nonimmediate_operand" " r,m")))]
+	    (match_operand:HI 1 "nonimmediate_nonpostinc" " r,m")))]
   "!TARGET_ZBB && !TARGET_XTHEADBB"
   "@
    #
@@ -1708,7 +1708,7 @@
 (define_insn "zero_extendqi<SUPERQI:mode>2"
   [(set (match_operand:SUPERQI 0 "register_operand"    "=r,r")
 	(zero_extend:SUPERQI
-	    (match_operand:QI 1 "nonimmediate_operand" " r,m")))]
+	    (match_operand:QI 1 "nonimmediate_nonpostinc" " r,m")))]
   ""
   "@
    andi\t%0,%1,0xff
@@ -1727,7 +1727,7 @@
 (define_insn "extendsidi2"
   [(set (match_operand:DI     0 "register_operand"     "=r,r")
 	(sign_extend:DI
-	    (match_operand:SI 1 "nonimmediate_operand" " r,m")))]
+	    (match_operand:SI 1 "nonimmediate_nonpostinc" " r,m")))]
   "TARGET_64BIT"
   "@
    sext.w\t%0,%1
@@ -1738,13 +1738,13 @@
 
 (define_expand "extend<SHORT:mode><SUPERQI:mode>2"
   [(set (match_operand:SUPERQI 0 "register_operand")
-	(sign_extend:SUPERQI (match_operand:SHORT 1 "nonimmediate_operand")))]
+	(sign_extend:SUPERQI (match_operand:SHORT 1 "nonimmediate_nonpostinc")))]
   "")
 
 (define_insn_and_split "*extend<SHORT:mode><SUPERQI:mode>2"
   [(set (match_operand:SUPERQI   0 "register_operand"     "=r,r")
 	(sign_extend:SUPERQI
-	    (match_operand:SHORT 1 "nonimmediate_operand" " r,m")))]
+	    (match_operand:SHORT 1 "nonimmediate_nonpostinc" " r,m")))]
   "!TARGET_ZBB && !TARGET_XTHEADBB"
   "@
    #
@@ -1803,7 +1803,7 @@
 })
 
 (define_insn "*movhf_hardfloat"
-  [(set (match_operand:HF 0 "nonimmediate_operand" "=f,   f,f,f,m,m,*f,*r,  *r,*r,*m")
+  [(set (match_operand:HF 0 "nonimmediate_nonpostinc" "=f,   f,f,f,m,m,*f,*r,  *r,*r,*m")
 	(match_operand:HF 1 "move_operand"         " f,zfli,G,m,f,G,*r,*f,*G*r,*m,*r"))]
   "TARGET_ZFHMIN
    && (register_operand (operands[0], HFmode)
@@ -1814,7 +1814,7 @@
    (set_attr "mode" "HF")])
 
 (define_insn "*movhf_softfloat"
-  [(set (match_operand:HF 0 "nonimmediate_operand" "=f, r,r,m,*f,*r")
+  [(set (match_operand:HF 0 "nonimmediate_nonpostinc" "=f, r,r,m,*f,*r")
 	(match_operand:HF 1 "move_operand"         " f,Gr,m,r,*r,*f"))]
   "!TARGET_ZFHMIN
    && (register_operand (operands[0], HFmode)
@@ -2035,7 +2035,7 @@
 })
 
 (define_insn "*movdi_32bit"
-  [(set (match_operand:DI 0 "nonimmediate_operand" "=r,r,r,m,  *f,*f,*r,*f,*m,r")
+  [(set (match_operand:DI 0 "nonimmediate_nonpostinc" "=r,r,r,m,  *f,*f,*r,*f,*m,r")
 	(match_operand:DI 1 "move_operand"         " r,i,m,r,*J*r,*m,*f,*f,*f,vp"))]
   "!TARGET_64BIT
    && (register_operand (operands[0], DImode)
@@ -2047,7 +2047,7 @@
    (set_attr "ext" "base,base,base,base,d,d,d,d,d,vector")])
 
 (define_insn "*movdi_64bit"
-  [(set (match_operand:DI 0 "nonimmediate_operand" "=r,r,r, m,  *f,*f,*r,*f,*m,r")
+  [(set (match_operand:DI 0 "nonimmediate_nonpostinc" "=r,r,r, m,  *f,*f,*r,*f,*m,r")
 	(match_operand:DI 1 "move_operand"         " r,T,m,rJ,*r*J,*m,*f,*f,*f,vp"))]
   "TARGET_64BIT
    && (register_operand (operands[0], DImode)
@@ -2070,7 +2070,7 @@
 })
 
 (define_insn "*movsi_internal"
-  [(set (match_operand:SI 0 "nonimmediate_operand" "=r,r,r, m,  *f,*f,*r,*m,r")
+  [(set (match_operand:SI 0 "nonimmediate_nonpostinc" "=r,r,r, m,  *f,*f,*r,*m,r")
 	(match_operand:SI 1 "move_operand"         " r,T,m,rJ,*r*J,*m,*f,*f,vp"))]
   "(register_operand (operands[0], SImode)
     || reg_or_0_operand (operands[1], SImode))
@@ -2099,7 +2099,7 @@
 })
 
 (define_insn "*movhi_internal"
-  [(set (match_operand:HI 0 "nonimmediate_operand" "=r,r,r, m,  *f,*r,r")
+  [(set (match_operand:HI 0 "nonimmediate_nonpostinc" "=r,r,r, m,  *f,*r,r")
 	(match_operand:HI 1 "move_operand"	   " r,T,m,rJ,*r*J,*f,vp"))]
   "(register_operand (operands[0], HImode)
     || reg_or_0_operand (operands[1], HImode))"
@@ -2143,7 +2143,7 @@
 })
 
 (define_insn "*movqi_internal"
-  [(set (match_operand:QI 0 "nonimmediate_operand" "=r,r,r, m,  *f,*r,r")
+  [(set (match_operand:QI 0 "nonimmediate_nonpostinc" "=r,r,r, m,  *f,*r,r")
 	(match_operand:QI 1 "move_operand"         " r,I,m,rJ,*r*J,*f,vp"))]
   "(register_operand (operands[0], QImode)
     || reg_or_0_operand (operands[1], QImode))"
@@ -2165,7 +2165,7 @@
 })
 
 (define_insn "*movsf_hardfloat"
-  [(set (match_operand:SF 0 "nonimmediate_operand" "=f,   f,f,f,m,m,*f,*r,  *r,*r,*m")
+  [(set (match_operand:SF 0 "nonimmediate_nonpostinc" "=f,   f,f,f,m,m,*f,*r,  *r,*r,*m")
 	(match_operand:SF 1 "move_operand"         " f,zfli,G,m,f,G,*r,*f,*G*r,*m,*r"))]
   "TARGET_HARD_FLOAT
    && (register_operand (operands[0], SFmode)
@@ -2176,7 +2176,7 @@
    (set_attr "mode" "SF")])
 
 (define_insn "*movsf_softfloat"
-  [(set (match_operand:SF 0 "nonimmediate_operand" "= r,r,m")
+  [(set (match_operand:SF 0 "nonimmediate_nonpostinc" "= r,r,m")
 	(match_operand:SF 1 "move_operand"         " Gr,m,r"))]
   "!TARGET_HARD_FLOAT
    && (register_operand (operands[0], SFmode)
@@ -2201,7 +2201,7 @@
 ;; In RV32, we lack fmv.x.d and fmv.d.x.  Go through memory instead.
 ;; (However, we can still use fcvt.d.w to zero a floating-point register.)
 (define_insn "*movdf_hardfloat_rv32"
-  [(set (match_operand:DF 0 "nonimmediate_operand" "=f,   f,f,f,m,m,*zmvf,*zmvr,  *r,*r,*m")
+  [(set (match_operand:DF 0 "nonimmediate_nonpostinc" "=f,   f,f,f,m,m,*zmvf,*zmvr,  *r,*r,*m")
 	(match_operand:DF 1 "move_operand"         " f,zfli,G,m,f,G,*zmvr,*zmvf,*r*G,*m,*r"))]
   "!TARGET_64BIT && TARGET_DOUBLE_FLOAT
    && (register_operand (operands[0], DFmode)
@@ -2212,7 +2212,7 @@
    (set_attr "mode" "DF")])
 
 (define_insn "*movdf_hardfloat_rv64"
-  [(set (match_operand:DF 0 "nonimmediate_operand" "=f,   f,f,f,m,m,*f,*r,  *r,*r,*m")
+  [(set (match_operand:DF 0 "nonimmediate_nonpostinc" "=f,   f,f,f,m,m,*f,*r,  *r,*r,*m")
 	(match_operand:DF 1 "move_operand"         " f,zfli,G,m,f,G,*r,*f,*r*G,*m,*r"))]
   "TARGET_64BIT && TARGET_DOUBLE_FLOAT
    && (register_operand (operands[0], DFmode)
@@ -2223,7 +2223,7 @@
    (set_attr "mode" "DF")])
 
 (define_insn "*movdf_softfloat"
-  [(set (match_operand:DF 0 "nonimmediate_operand" "= r,r, m")
+  [(set (match_operand:DF 0 "nonimmediate_nonpostinc" "= r,r, m")
 	(match_operand:DF 1 "move_operand"         " rG,m,rG"))]
   "!TARGET_DOUBLE_FLOAT
    && (register_operand (operands[0], DFmode)
@@ -2270,7 +2270,7 @@
    (set_attr "mode" "DF")])
 
 (define_split
-  [(set (match_operand:MOVE64 0 "nonimmediate_operand")
+  [(set (match_operand:MOVE64 0 "nonimmediate_nonpostinc")
 	(match_operand:MOVE64 1 "move_operand"))]
   "reload_completed
    && riscv_split_64bit_move_p (operands[0], operands[1])"

@@ -175,7 +175,7 @@ struct GTY(()) riscv_interrupt_type {
   bool save_call_used_p;
 };
 
-struct GTY(())  machine_function {
+struct GTY(()) machine_function {
   /* The number of extra stack bytes taken up by register varargs.
      This area is allocated by the callee at the very top of the frame.  */
   int varargs_size;
@@ -1342,6 +1342,16 @@ riscv_classify_address (struct riscv_address_info *info, rtx x,
       info->offset = const0_rtx;
       return riscv_valid_base_register_p (info->reg, mode, strict_p);
 
+    case POST_MODIFY:
+      /* For instructions using post inc, the offset can either be register
+       * or 12-bit immediate. */
+       info->type = ADDRESS_REG_INC;
+       info->reg = XEXP (x, 0);
+       info->offset = XEXP ((XEXP (x, 1)), 1);
+       return (riscv_valid_base_register_p (info->reg, mode, strict_p)
+       && (riscv_valid_base_register_p (info->offset, mode, strict_p)
+	       || riscv_valid_offset_p (info->offset, mode)));
+
     case PLUS:
       /* RVV load/store disallow any offset.  */
       if (riscv_v_ext_mode_p (mode))
@@ -1351,7 +1361,8 @@ riscv_classify_address (struct riscv_address_info *info, rtx x,
       info->reg = XEXP (x, 0);
       info->offset = XEXP (x, 1);
       return (riscv_valid_base_register_p (info->reg, mode, strict_p)
-	      && riscv_valid_offset_p (info->offset, mode));
+	      && (riscv_valid_offset_p (info->offset, mode)
+		  || (TARGET_XCVMEM && riscv_valid_base_register_p (info->offset, mode, strict_p))));
 
     case LO_SUM:
       /* RVV load/store disallow LO_SUM.  */
@@ -2466,6 +2477,30 @@ riscv_v_adjust_scalable_frame (rtx target, poly_int64 offset, bool epilogue)
 			  NULL_RTX);
 
   REG_NOTES (insn) = dwarf;
+}
+
+/* Check if post inc instructions are valid. If not, make the address
+ * vaild. */
+bool
+riscv_legitimate_xcvmem_address_p (machine_mode mode, rtx x, bool strict_p)
+{
+  struct riscv_address_info addr;
+
+  switch (GET_CODE (x))
+    {
+    case POST_MODIFY:
+      if (riscv_classify_address (&addr, x, mode, strict_p))
+	return addr.type == ADDRESS_REG_INC;
+      return false;
+
+    case PLUS:
+      if (REG_P (XEXP (x, 1)) && riscv_classify_address (&addr, x, mode, strict_p))
+        return addr.type == ADDRESS_REG;
+      return false;
+
+    default:
+      return false;
+    }
 }
 
 /* If (set DEST SRC) is not a valid move instruction, emit an equivalent
@@ -5743,7 +5778,8 @@ riscv_print_operand_address (FILE *file, machine_mode mode ATTRIBUTE_UNUSED, rtx
     switch (addr.type)
       {
       case ADDRESS_REG:
-	output_addr_const (file, riscv_strip_unspec_address (addr.offset));
+	if (REG_P (addr.offset)) fprintf (file, "%s", reg_names[REGNO (addr.offset)]);
+	else output_addr_const (file, riscv_strip_unspec_address (addr.offset));
 	fprintf (file, "(%s)", reg_names[REGNO (addr.reg)]);
 	return;
 
@@ -5759,6 +5795,12 @@ riscv_print_operand_address (FILE *file, machine_mode mode ATTRIBUTE_UNUSED, rtx
 
       case ADDRESS_SYMBOLIC:
 	output_addr_const (file, riscv_strip_unspec_address (x));
+	return;
+
+      case ADDRESS_REG_INC:
+	fprintf (file, "(%s),", reg_names[REGNO (addr.reg)]);
+	if (REG_P (addr.offset)) fprintf (file, "%s", reg_names[REGNO (addr.offset)]);
+	else output_addr_const (file, addr.offset);
 	return;
       }
   gcc_unreachable ();

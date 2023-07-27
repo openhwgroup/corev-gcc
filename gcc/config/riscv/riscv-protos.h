@@ -56,7 +56,8 @@ enum riscv_address_type {
   ADDRESS_REG,
   ADDRESS_LO_SUM,
   ADDRESS_CONST_INT,
-  ADDRESS_SYMBOLIC
+  ADDRESS_SYMBOLIC,
+  ADDRESS_REG_INC
 };
 
 /* Information about an address described by riscv_address_type.
@@ -72,7 +73,13 @@ enum riscv_address_type {
        is the type of symbol it references.
 
    ADDRESS_SYMBOLIC
-       SYMBOL_TYPE is the type of symbol that the address references.  */
+       SYMBOL_TYPE is the type of symbol that the address references.
+
+   ADDRESS_REG_INC:
+       A base register + offset address access with post modify side-effect
+       (base register += offset).  The offset is an immediate or index
+       register.
+       */
 struct riscv_address_info {
   enum riscv_address_type type;
   rtx reg;
@@ -81,6 +88,7 @@ struct riscv_address_info {
 };
 
 /* Routines implemented in riscv.cc.  */
+bool riscv_legitimate_xcvmem_address_p (machine_mode, rtx, bool);
 extern enum riscv_symbol_type riscv_classify_symbolic_expression (rtx);
 extern bool riscv_symbolic_constant_p (rtx, enum riscv_symbol_type *);
 extern int riscv_float_const_rtx_index_for_fli (rtx);

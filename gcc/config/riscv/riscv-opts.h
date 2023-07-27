@@ -301,6 +301,7 @@ enum riscv_entity
 #define MASK_XCVBITMANIP (1 <<  3)
 #define MASK_XCVSIMD  (1 <<  4)
 #define MASK_XCVBI (1 <<  5)
+#define MASK_XCVMEM   (1 <<  6)
 
 #define MASK_XTHEADBA      (1 << 0)
 #define MASK_XTHEADBB      (1 << 1)
@@ -322,6 +323,7 @@ enum riscv_entity
 #define TARGET_XCVBITMANIP ((riscv_xcv_flags & MASK_XCVBITMANIP) != 0)
 #define TARGET_XCVSIMD   ((riscv_xcv_flags & MASK_XCVSIMD) != 0)
 #define TARGET_XCVBI     ((riscv_xcv_flags & MASK_XCVBI) != 0)
+#define TARGET_XCVMEM    ((riscv_xcv_flags & MASK_XCVMEM) != 0)
 
 #define TARGET_XTHEADBA      ((riscv_xthead_subext & MASK_XTHEADBA) != 0)
 #define TARGET_XTHEADBB      ((riscv_xthead_subext & MASK_XTHEADBB) != 0)
