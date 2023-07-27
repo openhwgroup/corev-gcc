@@ -212,6 +212,7 @@ enum stack_protector_guard {
 #define MASK_XCVSIMD            (1 <<  3)
 #define MASK_XCVALU             (1 <<  4)
 #define MASK_XCVBI              (1 <<  5)
+#define MASK_XCVMEM             (1 <<  6)
 
 #define TARGET_XCVELW           ((riscv_xcv_flags & MASK_XCVELW) != 0)
 #define TARGET_XCVMAC           ((riscv_xcv_flags & MASK_XCVMAC) != 0)
@@ -219,5 +220,6 @@ enum stack_protector_guard {
 #define TARGET_XCVSIMD          ((riscv_xcv_flags & MASK_XCVSIMD) != 0)
 #define TARGET_XCVALU           ((riscv_xcv_flags & MASK_XCVALU) != 0)
 #define TARGET_XCVBI            ((riscv_xcv_flags & MASK_XCVBI) != 0)
+#define TARGET_XCVMEM           ((riscv_xcv_flags & MASK_XCVMEM) != 0)
 
 #endif /* ! GCC_RISCV_OPTS_H */

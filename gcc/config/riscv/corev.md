@@ -2844,3 +2844,54 @@
   "cv.b%C1imm\t%2,%3,%0"
   [(set_attr "type" "branch")
    (set_attr "mode" "none")])
+
+;;CORE-V Post Increment Load/ Store
+;; Post Increment Register-Immediate and Register-Register Load/Store
+(define_insn "cv_load<mode>_postinc"
+   [(set (match_operand:ANYI 0 "register_operand" "=r")
+         (match_operand:ANYI 1 "mem_post_inc" "m"))]
+  "TARGET_XCVMEM && riscv_legitimate_post_inc_p (GET_MODE(XEXP(operands[1],0)) , XEXP(operands[1],0), (lra_in_progress || reload_completed))"
+  "cv.<load>\t%0,%1"
+  [(set_attr "type" "load")
+   (set_attr "mode" "<MODE>")])
+
+(define_insn "cv_load_<optab><SHORT:mode>_postinc"
+   [(set (match_operand:SI 0 "register_operand" "=r")
+     (any_extend:SI (match_operand:SHORT 1 "mem_post_inc" "m")))]
+  "TARGET_XCVMEM && riscv_legitimate_post_inc_p (GET_MODE(XEXP(operands[1],0)) , XEXP(operands[1],0), (lra_in_progress || reload_completed))"
+  "cv.<load><u>\t%0,%1"
+  [(set_attr "type" "load")
+   (set_attr "mode" "<MODE>")])
+
+(define_insn "cv_store<mode>_postinc"
+   [(set (match_operand:ANYI 0 "mem_post_inc" "=m")
+     (match_operand:ANYI 1 "register_operand" "r"))]
+  "TARGET_XCVMEM && riscv_legitimate_post_inc_p (GET_MODE(XEXP(operands[0],0)) , XEXP(operands[0],0), (lra_in_progress || reload_completed))"
+  "cv.<store>\t%1,%0"
+  [(set_attr "type" "store")
+   (set_attr "mode" "<MODE>")])
+
+;; Normal Register-Register Load/Store
+(define_insn "cv_load<mode>"
+   [(set (match_operand:ANYI 0 "register_operand" "=r")
+         (match_operand:ANYI 1 "mem_plus_reg" "m"))]
+  "TARGET_XCVMEM && riscv_legitimate_post_inc_p (GET_MODE(XEXP(operands[1],0)) , XEXP(operands[1],0), (lra_in_progress || reload_completed))"
+  "cv.<load>\t%0,%1"
+  [(set_attr "type" "load")
+   (set_attr "mode" "<MODE>")])
+
+(define_insn "cv_load_<optab><SHORT:mode>"
+   [(set (match_operand:SI 0 "register_operand" "=r")
+     (any_extend:SI (match_operand:SHORT 1 "mem_plus_reg" "m")))]
+  "TARGET_XCVMEM && riscv_legitimate_post_inc_p (GET_MODE(XEXP(operands[1],0)) , XEXP(operands[1],0), (lra_in_progress || reload_completed))"
+  "cv.<load><u>\t%0,%1"
+  [(set_attr "type" "load")
+   (set_attr "mode" "<MODE>")])
+
+(define_insn "cv_store<mode>"
+   [(set (match_operand:ANYI 0 "mem_plus_reg" "=m")
+     (match_operand:ANYI 1 "register_operand" "r"))]
+  "TARGET_XCVMEM && riscv_legitimate_post_inc_p (GET_MODE(XEXP(operands[0],0)) , XEXP(operands[0],0), (lra_in_progress || reload_completed))"
+  "cv.<store>\t%1,%0"
+  [(set_attr "type" "store")
+   (set_attr "mode" "<MODE>")])

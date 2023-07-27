@@ -95,12 +95,19 @@ along with GCC; see the file COPYING3.  If not see
        A signed 16-bit constant address.
 
    ADDRESS_SYMBOLIC:
-       A constant symbolic address.  */
+       A constant symbolic address.
+
+   ADDRESS_REG_INC:
+       CORE-V Post Increment Load/Store: Performs a load/store whilst a incrementing
+       the address used for the memory. A natural register + offset address. */
+
+
 enum riscv_address_type {
   ADDRESS_REG,
   ADDRESS_LO_SUM,
   ADDRESS_CONST_INT,
-  ADDRESS_SYMBOLIC
+  ADDRESS_SYMBOLIC,
+  ADDRESS_REG_INC
 };
 
 /* Information about a function's frame layout.  */
@@ -1051,12 +1058,23 @@ riscv_classify_address (struct riscv_address_info *info, rtx x,
 {
   switch (GET_CODE (x))
     {
+	    /* TODO: when printing the post inc register, GET_CODE(x) == REG. */
     case REG:
     case SUBREG:
       info->type = ADDRESS_REG;
       info->reg = x;
       info->offset = const0_rtx;
       return riscv_valid_base_register_p (info->reg, mode, strict_p);
+
+    case POST_MODIFY:
+      /* For instructions using post inc, the offset can either be register
+       * or 12-bit immediate. */
+       info->type = ADDRESS_REG_INC;
+       info->reg = XEXP (x, 0);
+       info->offset = XEXP ((XEXP (x, 1)), 1);
+       return (riscv_valid_base_register_p (info->reg, mode, strict_p)
+       && (riscv_valid_base_register_p (info->offset, mode, strict_p)
+	       || riscv_valid_offset_p (info->offset, mode)));
 
     case PLUS:
       /* RVV load/store disallow any offset.  */
@@ -1066,8 +1084,16 @@ riscv_classify_address (struct riscv_address_info *info, rtx x,
       info->type = ADDRESS_REG;
       info->reg = XEXP (x, 0);
       info->offset = XEXP (x, 1);
-      return (riscv_valid_base_register_p (info->reg, mode, strict_p)
-	      && riscv_valid_offset_p (info->offset, mode));
+      if (TARGET_XCVMEM && GET_CODE (XEXP (x, 0)) == REG && GET_CODE (XEXP (x, 1)) == REG)
+	{
+	  return (riscv_valid_base_register_p (info->reg, mode, strict_p)
+	  && riscv_valid_base_register_p (info->offset, mode, strict_p));
+	}
+      else
+	{
+	  return (riscv_valid_base_register_p (info->reg, mode, strict_p)
+	  && riscv_valid_offset_p (info->offset, mode));
+	}
 
     case LO_SUM:
       /* RVV load/store disallow LO_SUM.  */
@@ -2039,6 +2065,32 @@ riscv_v_adjust_scalable_frame (rtx target, poly_int64 offset, bool epilogue)
 			  NULL_RTX);
 
   REG_NOTES (insn) = dwarf;
+}
+
+/* Check if post inc instructions are valid. If not, make the address
+ * vaild. */
+bool
+riscv_legitimate_post_inc_p (machine_mode mode, rtx x, bool strict_p)
+{
+  struct riscv_address_info addr;
+
+  switch (GET_CODE (x))
+    {
+    case POST_MODIFY:
+      if (!riscv_classify_address (&addr, x, mode, strict_p))
+	return false;
+      else
+	return addr.type == ADDRESS_REG_INC;
+
+    case PLUS:
+      if (!riscv_classify_address (&addr, x, mode, strict_p))
+	return false;
+      else
+	return addr.type == ADDRESS_REG;
+
+    default:
+      return false;
+    }
 }
 
 /* If (set DEST SRC) is not a valid move instruction, emit an equivalent
@@ -4613,6 +4665,11 @@ riscv_print_operand_address (FILE *file, machine_mode mode ATTRIBUTE_UNUSED, rtx
 
       case ADDRESS_SYMBOLIC:
 	output_addr_const (file, riscv_strip_unspec_address (x));
+	return;
+
+      case ADDRESS_REG_INC:
+	riscv_print_operand (file, addr.offset, 0);
+	fprintf (file, "(%s!)", reg_names[REGNO (addr.reg)]);
 	return;
       }
   gcc_unreachable ();
