@@ -536,7 +536,7 @@ enum reg_class
    factor or added to another register (as well as added to a
    displacement).  */
 
-#define INDEX_REG_CLASS NO_REGS
+#define INDEX_REG_CLASS (TARGET_XCVMEM ? GR_REGS : NO_REGS)
 
 /* We generally want to put call-clobbered registers ahead of
    call-saved ones.  (IRA expects this.)  */
@@ -703,6 +703,12 @@ typedef struct {
    ? TRAMPOLINE_CODE_SIZE	\
    : (TRAMPOLINE_CODE_SIZE + POINTER_SIZE * 2))
 #define TRAMPOLINE_ALIGNMENT POINTER_SIZE
+
+/* CORE-V Specific */
+
+#define HAVE_POST_MODIFY_DISP TARGET_XCVMEM
+
+#define HAVE_POST_MODIFY_REG TARGET_XCVMEM
 
 /* Addressing modes, and classification of registers for them.  */
 

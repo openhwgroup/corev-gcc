@@ -246,6 +246,7 @@ static const struct riscv_ext_version riscv_ext_version_table[] =
   {"xcvbitmanip", ISA_SPEC_CLASS_NONE, 1, 0},
   {"xcvsimd", ISA_SPEC_CLASS_NONE, 1, 0},
   {"xcvalu", ISA_SPEC_CLASS_NONE, 1, 0},
+  {"xcvmem", ISA_SPEC_CLASS_NONE, 1, 0},
 
   /* Terminate the list.  */
   {NULL, ISA_SPEC_CLASS_NONE, 0, 0}
@@ -1288,6 +1289,7 @@ static const riscv_ext_flag_table_t riscv_ext_flag_table[] =
   {"xcvsimd", &gcc_options::x_riscv_xcv_flags, MASK_XCVSIMD},
   {"xcvalu", &gcc_options::x_riscv_xcv_flags, MASK_XCVALU},
   {"xcvbi", &gcc_options::x_riscv_xcv_flags, MASK_XCVBI},
+  {"xcvmem", &gcc_options::x_riscv_xcv_flags, MASK_XCVMEM},
 
   {NULL, NULL, 0}
 };
