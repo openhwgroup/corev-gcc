@@ -515,8 +515,8 @@
   {
     int op2_hi = (int)(INTVAL (operands[2]) >> 5);
     int op2_lo = INTVAL (operands[2]) - (op2_hi * 32);
-    rtx t3 = GEN_INT (op2_hi);
-    rtx t4 = GEN_INT (op2_lo);
+    rtx t3 = GEN_INT (op2_lo);
+    rtx t4 = GEN_INT (op2_hi);
     emit_insn (gen_riscv_cv_bitmanip_extract_insn (operands[0], operands[1], t3, t4));
     DONE;
   }
@@ -565,8 +565,8 @@
   {
     int op2_hi = (int)(INTVAL (operands[2]) >> 5);
     int op2_lo = INTVAL (operands[2]) - (op2_hi * 32);
-    rtx t3 = GEN_INT (op2_hi);
-    rtx t4 = GEN_INT (op2_lo);
+    rtx t3 = GEN_INT (op2_lo);
+    rtx t4 = GEN_INT (op2_hi);
     emit_insn (gen_riscv_cv_bitmanip_extractu_insn (operands[0], operands[1], t3, t4));
     DONE;
   }
@@ -620,8 +620,8 @@
     int op2_lo = INTVAL (operands[2]) - (op2_hi * 32);
     if ((op2_hi + op2_lo) >= 32)
       FAIL;
-    rtx t3 = GEN_INT (op2_hi);
-    rtx t4 = GEN_INT (op2_lo);
+    rtx t3 = GEN_INT (op2_lo);
+    rtx t4 = GEN_INT (op2_hi);
     emit_insn (gen_riscv_cv_bitmanip_insert_insn (operands[0], operands[1], t3, t4, operands[3]));
     DONE;
   }
