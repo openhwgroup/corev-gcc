@@ -104,8 +104,19 @@
   return false;
 })
 
+(define_predicate "mem_post_inc"
+  (and (match_code "mem")
+       (match_test "TARGET_XCVMEM && GET_CODE (XEXP (op, 0)) == POST_MODIFY")))
+
+(define_predicate "mem_plus_reg"
+  (and (match_code "mem")
+       (match_test "TARGET_XCVMEM && GET_CODE (XEXP (op, 0)) == PLUS
+		    && REG_P (XEXP (XEXP (op, 0), 1))")))
+
 (define_predicate "move_operand"
-  (match_operand 0 "general_operand")
+  (and (match_operand 0 "general_operand")
+  (and (not (match_operand 0 "mem_post_inc"))
+       (not (match_operand 0 "mem_plus_reg"))))
 {
   enum riscv_symbol_type symbol_type;
 
@@ -161,26 +172,10 @@
 	      && riscv_split_symbol_type (symbol_type)
 	      && symbol_type != SYMBOL_PCREL;
 
-    case POST_MODIFY:
-      if (TARGET_XCVMEM)
-	return false;
-
-    case PLUS:
-      if (TARGET_XCVMEM)
-	return false;
-
     default:
       return true;
     }
 })
-
-(define_predicate "mem_post_inc"
-  (and (match_code "mem")
-       (match_test "GET_CODE (XEXP (op,0)) == POST_MODIFY")))
-
-(define_predicate "mem_plus_reg"
-  (and (match_code "mem")
-       (match_test "GET_CODE (XEXP (op,0)) == PLUS")))
 
 (define_predicate "symbolic_operand"
   (match_code "const,symbol_ref,label_ref")

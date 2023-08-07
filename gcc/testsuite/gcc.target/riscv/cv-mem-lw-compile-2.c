@@ -2,6 +2,10 @@
 /* { dg-options "-march=rv32i_xcvmem -mabi=ilp32 -fno-unroll-loops" } */
 /* { dg-skip-if "" { *-*-* }  { "-O0" } { "" } } */
 
+/*
+ * Test for post-inc register-register loads.
+ */
+
 int fooSIsigned (signed int* array_int, int n, int j)
 {
   int int_sum = 1;
