@@ -98,8 +98,10 @@ along with GCC; see the file COPYING3.  If not see
        A constant symbolic address.
 
    ADDRESS_REG_INC:
-       CORE-V Post Increment Load/Store: Performs a load/store whilst a incrementing
-       the address used for the memory. A natural register + offset address. */
+       A base register + offset address access with post modify side-effect
+       (base register += offset).  The offset is an immediate or index
+       register.
+   */
 
 
 enum riscv_address_type {
@@ -1058,7 +1060,6 @@ riscv_classify_address (struct riscv_address_info *info, rtx x,
 {
   switch (GET_CODE (x))
     {
-	    /* TODO: when printing the post inc register, GET_CODE(x) == REG. */
     case REG:
     case SUBREG:
       info->type = ADDRESS_REG;
@@ -1084,16 +1085,9 @@ riscv_classify_address (struct riscv_address_info *info, rtx x,
       info->type = ADDRESS_REG;
       info->reg = XEXP (x, 0);
       info->offset = XEXP (x, 1);
-      if (TARGET_XCVMEM && GET_CODE (XEXP (x, 0)) == REG && GET_CODE (XEXP (x, 1)) == REG)
-	{
-	  return (riscv_valid_base_register_p (info->reg, mode, strict_p)
-	  && riscv_valid_base_register_p (info->offset, mode, strict_p));
-	}
-      else
-	{
-	  return (riscv_valid_base_register_p (info->reg, mode, strict_p)
-	  && riscv_valid_offset_p (info->offset, mode));
-	}
+      return (riscv_valid_base_register_p (info->reg, mode, strict_p)
+	      && (riscv_valid_offset_p (info->offset, mode)
+		  || TARGET_XCVMEM && riscv_valid_base_register_p (info->offset, mode, strict_p)));
 
     case LO_SUM:
       /* RVV load/store disallow LO_SUM.  */
@@ -2070,23 +2064,21 @@ riscv_v_adjust_scalable_frame (rtx target, poly_int64 offset, bool epilogue)
 /* Check if post inc instructions are valid. If not, make the address
  * vaild. */
 bool
-riscv_legitimate_post_inc_p (machine_mode mode, rtx x, bool strict_p)
+riscv_legitimate_xcvmem_address_p (machine_mode mode, rtx x, bool strict_p)
 {
   struct riscv_address_info addr;
 
   switch (GET_CODE (x))
     {
     case POST_MODIFY:
-      if (!riscv_classify_address (&addr, x, mode, strict_p))
-	return false;
-      else
+      if (riscv_classify_address (&addr, x, mode, strict_p))
 	return addr.type == ADDRESS_REG_INC;
+      return false;
 
     case PLUS:
-      if (!riscv_classify_address (&addr, x, mode, strict_p))
-	return false;
-      else
-	return addr.type == ADDRESS_REG;
+      if (REG_P (XEXP (x, 1)) && riscv_classify_address (&addr, x, mode, strict_p))
+        return addr.type == ADDRESS_REG;
+      return false;
 
     default:
       return false;

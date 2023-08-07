@@ -36,7 +36,7 @@ enum riscv_symbol_type {
 #define NUM_SYMBOL_TYPES (SYMBOL_TLS_GD + 1)
 
 /* Routines implemented in riscv.cc.  */
-bool riscv_legitimate_post_inc_p (machine_mode mode, rtx x, bool strict_p);
+bool riscv_legitimate_xcvmem_address_p (machine_mode, rtx, bool);
 extern enum riscv_symbol_type riscv_classify_symbolic_expression (rtx);
 extern bool riscv_symbolic_constant_p (rtx, enum riscv_symbol_type *);
 extern int riscv_regno_mode_ok_for_base_p (int, machine_mode, bool);

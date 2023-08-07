@@ -2,6 +2,10 @@
 /* { dg-options "-march=rv32i_xcvmem -mabi=ilp32 -fno-unroll-loops" } */
 /* { dg-skip-if "" { *-*-* }  { "-O0" } { "" } } */
 
+/*
+ * Test for normal register-register saves.
+ */
+
 int fooSIsigned (signed int* array_int, int i, int j)
 {
   int int_sum = 1;
