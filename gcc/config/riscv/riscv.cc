@@ -4660,8 +4660,8 @@ riscv_print_operand_address (FILE *file, machine_mode mode ATTRIBUTE_UNUSED, rtx
 	return;
 
       case ADDRESS_REG_INC:
+	fprintf (file, "(%s),", reg_names[REGNO (addr.reg)]);
 	riscv_print_operand (file, addr.offset, 0);
-	fprintf (file, "(%s!)", reg_names[REGNO (addr.reg)]);
 	return;
       }
   gcc_unreachable ();
