@@ -94,6 +94,8 @@ RISCV_BUILTIN (cv_simd_and_sc_h_si,		"cv_simd_and_sc_h",	RISCV_BUILTIN_DIRECT, R
 RISCV_BUILTIN (cv_simd_and_sc_b_si,		"cv_simd_and_sc_b",	RISCV_BUILTIN_DIRECT, RISCV_USI_FTYPE_USI_QI, 		cvsimd),
 RISCV_BUILTIN (cv_simd_abs_h_si,		"cv_simd_abs_h",	RISCV_BUILTIN_DIRECT, RISCV_USI_FTYPE_USI, 		cvsimd),
 RISCV_BUILTIN (cv_simd_abs_b_si,		"cv_simd_abs_b",	RISCV_BUILTIN_DIRECT, RISCV_USI_FTYPE_USI, 		cvsimd),
+RISCV_BUILTIN (cv_simd_neg_h_si,                "cv_simd_neg_h",        RISCV_BUILTIN_DIRECT, RISCV_USI_FTYPE_USI,              cvsimd),
+RISCV_BUILTIN (cv_simd_neg_b_si,                "cv_simd_neg_b",        RISCV_BUILTIN_DIRECT, RISCV_USI_FTYPE_USI,              cvsimd),
 //BIT MANIPULATION
 RISCV_BUILTIN (cv_simd_extract_h_si,		"cv_simd_extract_h",	RISCV_BUILTIN_DIRECT, RISCV_USI_FTYPE_USI_QI, 		cvsimd),
 RISCV_BUILTIN (cv_simd_extract_b_si,		"cv_simd_extract_b",	RISCV_BUILTIN_DIRECT, RISCV_USI_FTYPE_USI_QI, 		cvsimd),
