@@ -101,6 +101,8 @@
   UNSPEC_CV_AND_SC_B
   UNSPEC_CV_ABS_H
   UNSPEC_CV_ABS_B
+  UNSPEC_CV_NEG_H
+  UNSPEC_CV_NEG_B
 
   ;;CORE-V SIMD BIT MANIPULATION
   UNSPEC_CV_EXTRACT_H
@@ -1498,6 +1500,24 @@
 	"cv.abs.b\\t%0,%1"
 	[(set_attr "type" "arith")
 	(set_attr "mode" "SI")])
+
+
+(define_insn "riscv_cv_simd_neg_h_si"
+        [(set (match_operand:SI 0 "register_operand" "=r")
+                (unspec:SI [(match_operand:SI 1 "register_operand" "r")]UNSPEC_CV_NEG_H))]
+        "TARGET_XCVSIMD && !TARGET_64BIT"
+        "cv.sub.h\\t%0,zero,%1"
+        [(set_attr "type" "arith")
+        (set_attr "mode" "SI")])
+
+
+(define_insn "riscv_cv_simd_neg_b_si"
+        [(set (match_operand:SI 0 "register_operand" "=r")
+                (unspec:SI [(match_operand:SI 1 "register_operand" "r")]UNSPEC_CV_NEG_B))]
+        "TARGET_XCVSIMD && !TARGET_64BIT"
+        "cv.sub.b\\t%0,zero,%1"
+        [(set_attr "type" "arith")
+        (set_attr "mode" "SI")])
 
 
 ;;CORE-V SIMD BIT MANIPULATION
