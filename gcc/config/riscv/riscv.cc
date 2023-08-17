@@ -1087,7 +1087,7 @@ riscv_classify_address (struct riscv_address_info *info, rtx x,
       info->offset = XEXP (x, 1);
       return (riscv_valid_base_register_p (info->reg, mode, strict_p)
 	      && (riscv_valid_offset_p (info->offset, mode)
-		  || TARGET_XCVMEM && riscv_valid_base_register_p (info->offset, mode, strict_p)));
+		  || (TARGET_XCVMEM && riscv_valid_base_register_p (info->offset, mode, strict_p))));
 
     case LO_SUM:
       /* RVV load/store disallow LO_SUM.  */
