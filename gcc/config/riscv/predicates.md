@@ -320,6 +320,11 @@
   (and (match_code "const_int")
        (match_test "IN_RANGE (INTVAL (op), -16, 15)")))
 
+(define_predicate "nonimmediate_nonpostinc"
+  (and (match_operand 0 "nonimmediate_operand")
+	(and (not (match_operand 0 "mem_post_inc"))
+	     (not (match_operand 0 "mem_plus_reg")))))
+
 
 ;; Predicates for the V extension.
 (define_special_predicate "vector_length_operand"

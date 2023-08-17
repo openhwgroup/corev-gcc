@@ -2883,13 +2883,101 @@
   [(set_attr "type" "load")
    (set_attr "mode" "<MODE>")])
 
+(define_insn "cv_loadsf_postinc_hardfloat"
+   [(set (match_operand:SF 0 "register_operand" "=r")
+         (match_operand:SF 1 "mem_post_inc" "m"))]
+  "TARGET_HARD_FLOAT && TARGET_XCVMEM
+   && riscv_legitimate_xcvmem_address_p (SFmode, XEXP (operands[1], 0), (lra_in_progress || reload_completed))
+   && (register_operand (operands[0], SFmode)
+       || reg_or_0_operand (operands[1], SFmode))"
+  "cv.lw\t%0,%1"
+  [(set_attr "type" "load")
+   (set_attr "mode" "SF")])
+
+(define_insn "cv_loadsf_postinc_softfloat"
+   [(set (match_operand:SF 0 "register_operand" "=r")
+         (match_operand:SF 1 "mem_post_inc" "m"))]
+  "!TARGET_HARD_FLOAT && TARGET_XCVMEM
+   && riscv_legitimate_xcvmem_address_p (SFmode, XEXP (operands[1], 0), (lra_in_progress || reload_completed))
+   && (register_operand (operands[0], SFmode)
+       || reg_or_0_operand (operands[1], SFmode))"
+  "cv.lw\t%0,%1"
+  [(set_attr "type" "load")
+   (set_attr "mode" "SF")])
+
+(define_insn "cv_loadhf_postinc_hardfloat"
+   [(set (match_operand:HF 0 "register_operand" "=r")
+         (match_operand:HF 1 "mem_post_inc" "m"))]
+  "TARGET_HARD_FLOAT && TARGET_XCVMEM
+   && riscv_legitimate_xcvmem_address_p (HFmode, XEXP (operands[1], 0), (lra_in_progress || reload_completed))
+   && (register_operand (operands[0], HFmode)
+       || reg_or_0_operand (operands[1], HFmode))"
+  "cv.lh\t%0,%1"
+  [(set_attr "type" "load")
+   (set_attr "mode" "HF")])
+
+(define_insn "cv_loadhf_postinc_softfloat"
+   [(set (match_operand:HF 0 "register_operand" "=r")
+         (match_operand:HF 1 "mem_post_inc" "m"))]
+  "!TARGET_HARD_FLOAT && TARGET_XCVMEM
+   && riscv_legitimate_xcvmem_address_p (HFmode, XEXP (operands[1], 0), (lra_in_progress || reload_completed))
+   && (register_operand (operands[0], HFmode)
+       || reg_or_0_operand (operands[1], HFmode))"
+  "cv.lh\t%0,%1"
+  [(set_attr "type" "load")
+   (set_attr "mode" "HF")])
+
 (define_insn "cv_store<mode>_postinc"
    [(set (match_operand:ANYI 0 "mem_post_inc" "=m")
-     (match_operand:ANYI 1 "register_operand" "r"))]
+         (match_operand:ANYI 1 "register_operand" "r"))]
   "TARGET_XCVMEM && riscv_legitimate_xcvmem_address_p (<MODE>mode, XEXP (operands[0], 0), (lra_in_progress || reload_completed))"
   "cv.<store>\t%1,%0"
   [(set_attr "type" "store")
    (set_attr "mode" "<MODE>")])
+
+(define_insn "cv_storesf_postinc_hardfloat"
+   [(set (match_operand:SF 0 "mem_post_inc" "=m")
+         (match_operand:SF 1 "register_operand" "r"))]
+  "TARGET_HARD_FLOAT && TARGET_XCVMEM
+   && riscv_legitimate_xcvmem_address_p (SFmode, XEXP (operands[0], 0), (lra_in_progress || reload_completed))
+   && (register_operand (operands[0], SFmode)
+       || reg_or_0_operand (operands[1], SFmode))"
+  "cv.sw\t%1,%0"
+  [(set_attr "type" "store")
+   (set_attr "mode" "SF")])
+
+(define_insn "cv_storesf_postinc_softfloat"
+   [(set (match_operand:SF 0 "mem_post_inc" "=m")
+         (match_operand:SF 1 "register_operand" "r"))]
+  "!TARGET_HARD_FLOAT && TARGET_XCVMEM
+   && riscv_legitimate_xcvmem_address_p (SFmode, XEXP (operands[0], 0), (lra_in_progress || reload_completed))
+   && (register_operand (operands[0], SFmode)
+       || reg_or_0_operand (operands[1], SFmode))"
+  "cv.sw\t%1,%0"
+  [(set_attr "type" "store")
+   (set_attr "mode" "SF")])
+
+(define_insn "cv_storehf_postinc_hardfloat"
+   [(set (match_operand:HF 0 "mem_post_inc" "=m")
+         (match_operand:HF 1 "register_operand" "r"))]
+  "TARGET_HARD_FLOAT && TARGET_XCVMEM
+   && riscv_legitimate_xcvmem_address_p (HFmode, XEXP (operands[0], 0), (lra_in_progress || reload_completed))
+   && (register_operand (operands[0], HFmode)
+       || reg_or_0_operand (operands[1], HFmode))"
+  "cv.sh\t%1,%0"
+  [(set_attr "type" "store")
+   (set_attr "mode" "HF")])
+
+(define_insn "cv_storehf_postinc_softfloat"
+   [(set (match_operand:HF 0 "mem_post_inc" "=m")
+         (match_operand:HF 1 "register_operand" "r"))]
+  "!TARGET_HARD_FLOAT && TARGET_XCVMEM
+   && riscv_legitimate_xcvmem_address_p (HFmode, XEXP (operands[0], 0), (lra_in_progress || reload_completed))
+   && (register_operand (operands[0], HFmode)
+       || reg_or_0_operand (operands[1], HFmode))"
+  "cv.sh\t%1,%0"
+  [(set_attr "type" "store")
+   (set_attr "mode" "HF")])
 
 ;; Normal Register-Register Load/Store
 (define_insn "cv_load<mode>"
@@ -2908,6 +2996,50 @@
   [(set_attr "type" "load")
    (set_attr "mode" "<MODE>")])
 
+(define_insn "cv_loadsf_hardfloat"
+   [(set (match_operand:SF 0 "register_operand" "=r")
+         (match_operand:SF 1 "mem_plus_reg" "m"))]
+  "TARGET_HARD_FLOAT && TARGET_XCVMEM
+   && riscv_legitimate_xcvmem_address_p (SFmode, XEXP (operands[1], 0), (lra_in_progress || reload_completed))
+   && (register_operand (operands[0], SFmode)
+       || reg_or_0_operand (operands[1], SFmode))"
+  "cv.lw\t%0,%1"
+  [(set_attr "type" "load")
+   (set_attr "mode" "SF")])
+
+(define_insn "cv_loadsf_softfloat"
+   [(set (match_operand:SF 0 "register_operand" "=r")
+         (match_operand:SF 1 "mem_plus_reg" "m"))]
+  "!TARGET_HARD_FLOAT && TARGET_XCVMEM
+   && riscv_legitimate_xcvmem_address_p (SFmode, XEXP (operands[1], 0), (lra_in_progress || reload_completed))
+   && (register_operand (operands[0], SFmode)
+       || reg_or_0_operand (operands[1], SFmode))"
+  "cv.lw\t%0,%1"
+  [(set_attr "type" "load")
+   (set_attr "mode" "SF")])
+
+(define_insn "cv_loadhf_hardfloat"
+   [(set (match_operand:HF 0 "register_operand" "=r")
+         (match_operand:HF 1 "mem_plus_reg" "m"))]
+  "TARGET_HARD_FLOAT && TARGET_XCVMEM
+   && riscv_legitimate_xcvmem_address_p (HFmode, XEXP (operands[1], 0), (lra_in_progress || reload_completed))
+   && (register_operand (operands[0], HFmode)
+       || reg_or_0_operand (operands[1], HFmode))"
+  "cv.lh\t%0,%1"
+  [(set_attr "type" "load")
+   (set_attr "mode" "HF")])
+
+(define_insn "cv_loadhf_softfloat"
+   [(set (match_operand:HF 0 "register_operand" "=r")
+         (match_operand:HF 1 "mem_plus_reg" "m"))]
+  "!TARGET_HARD_FLOAT && TARGET_XCVMEM
+   && riscv_legitimate_xcvmem_address_p (HFmode, XEXP (operands[1], 0), (lra_in_progress || reload_completed))
+   && (register_operand (operands[0], HFmode)
+       || reg_or_0_operand (operands[1], HFmode))"
+  "cv.lh\t%0,%1"
+  [(set_attr "type" "load")
+   (set_attr "mode" "HF")])
+
 (define_insn "cv_store<mode>"
    [(set (match_operand:ANYI 0 "mem_plus_reg" "=m")
      (match_operand:ANYI 1 "register_operand" "r"))]
@@ -2915,3 +3047,47 @@
   "cv.<store>\t%1,%0"
   [(set_attr "type" "store")
    (set_attr "mode" "<MODE>")])
+
+(define_insn "cv_storesf_hardfloat"
+  [(set (match_operand:SF 0 "mem_plus_reg"     "=m")
+        (match_operand:SF 1 "register_operand" " r"))]
+  "TARGET_HARD_FLOAT && TARGET_XCVMEM
+   && riscv_legitimate_xcvmem_address_p (SFmode, XEXP (operands[0], 0), (lra_in_progress || reload_completed))
+   && (register_operand (operands[0], SFmode)
+       || reg_or_0_operand (operands[1], SFmode))"
+  "cv.sw\t%1,%0"
+  [(set_attr "move_type" "store")
+   (set_attr "mode" "SF")])
+
+(define_insn "cv_storesf_softfloat"
+  [(set (match_operand:SF 0 "mem_plus_reg"     "=m")
+        (match_operand:SF 1 "register_operand" " r"))]
+  "!TARGET_HARD_FLOAT && TARGET_XCVMEM
+   && riscv_legitimate_xcvmem_address_p (SFmode, XEXP (operands[0], 0), (lra_in_progress || reload_completed))
+   && (register_operand (operands[0], SFmode)
+       || reg_or_0_operand (operands[1], SFmode))"
+  "cv.sw\t%1,%0"
+  [(set_attr "move_type" "store")
+   (set_attr "mode" "SF")])
+
+(define_insn "cv_storehf_hardfloat"
+  [(set (match_operand:HF 0 "mem_plus_reg"     "=m")
+        (match_operand:HF 1 "register_operand" " r"))]
+  "TARGET_HARD_FLOAT && TARGET_XCVMEM
+   && riscv_legitimate_xcvmem_address_p (HFmode, XEXP (operands[0], 0), (lra_in_progress || reload_completed))
+   && (register_operand (operands[0], HFmode)
+       || reg_or_0_operand (operands[1], HFmode))"
+  "cv.sh\t%1,%0"
+  [(set_attr "move_type" "store")
+   (set_attr "mode" "HF")])
+
+(define_insn "cv_storehf_softfloat"
+  [(set (match_operand:HF 0 "mem_plus_reg"     "=m")
+        (match_operand:HF 1 "register_operand" " r"))]
+  "!TARGET_HARD_FLOAT && TARGET_XCVMEM
+   && riscv_legitimate_xcvmem_address_p (HFmode, XEXP (operands[0], 0), (lra_in_progress || reload_completed))
+   && (register_operand (operands[0], HFmode)
+       || reg_or_0_operand (operands[1], HFmode))"
+  "cv.sh\t%1,%0"
+  [(set_attr "move_type" "store")
+   (set_attr "mode" "HF")])
