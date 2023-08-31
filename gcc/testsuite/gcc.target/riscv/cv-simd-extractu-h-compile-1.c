@@ -1,19 +1,22 @@
 /* { dg-do compile } */
 /* { dg-options "-march=rv32i_xcvsimd -mabi=ilp32" } */
 
-int foo1 (int a)
+int
+foo1 (int a)
 {
-	return __builtin_riscv_cv_simd_extractu_h(a, -32);
+	return __builtin_riscv_cv_simd_extractu_h (a, 0);
 }
 
-int foo2 (int a)
+int
+foo2 (int a)
 {
-	return __builtin_riscv_cv_simd_extractu_h(a, 0);
+	return __builtin_riscv_cv_simd_extractu_h (a, 1);
 }
 
-int foo3 (int a)
+int
+foo3 (int a)
 {
-	return __builtin_riscv_cv_simd_extractu_h(a, 31);
+	return __builtin_riscv_cv_simd_extractu_h (a, 255);
 }
 
 /* { dg-final { scan-assembler-times "cv\\.extractu\\.h" 3 } } */
