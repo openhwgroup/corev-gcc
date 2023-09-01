@@ -1927,14 +1927,14 @@
 (define_insn "riscv_cv_simd_shuffle_sci_b_si"
 	[(set (match_operand:SI 0 "register_operand" "=r,r,r,r")
 		(unspec:SI [(match_operand:SI 1 "register_operand" "r,r,r,r")
-		(match_operand:QI 2 "const_int2_operand" "CF0,CF1,CF2,CF3")]
+		(match_operand:QI 2 "const_int_operand" "CS6,CI1,CI2,CI3")]
 	UNSPEC_CV_SHUFFLE_SCI_B))]
 	"TARGET_XCVSIMD && !TARGET_64BIT"
 	"@
-   cv.shufflei0.sci.b\\t%0,%1,%2
-   cv.shufflei1.sci.b\\t%0,%1,%2
-   cv.shufflei2.sci.b\\t%0,%1,%2
-   cv.shufflei3.sci.b\\t%0,%1,%2"
+   cv.shufflei0.sci.b\\t%0,%1,%x2
+   cv.shufflei1.sci.b\\t%0,%1,%x2
+   cv.shufflei2.sci.b\\t%0,%1,%x2
+   cv.shufflei3.sci.b\\t%0,%1,%x2"
 	[(set_attr "type" "arith")
 	(set_attr "mode" "SI")])
 

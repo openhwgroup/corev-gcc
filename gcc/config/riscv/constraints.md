@@ -139,6 +139,21 @@
   (and (match_code "const_int")
        (match_test "IN_RANGE (ival, 0, 63)")))
 
+(define_constraint "CI1"
+  "Shifting immediate for SIMD shufflei1."
+  (and (match_code "const_int")
+       (match_test "IN_RANGE (ival, 64, 127)")))
+
+(define_constraint "CI2"
+  "Shifting immediate for SIMD shufflei2."
+  (and (match_code "const_int")
+       (match_test "IN_RANGE (ival, -128, -65)")))
+
+(define_constraint "CI3"
+  "Shifting immediate for SIMD shufflei3."
+  (and (match_code "const_int")
+       (match_test "IN_RANGE (ival, -64, -1)")))
+
 (define_constraint "CF0"
   "Shifting immediate for SIMD complex number, div operations, add and sub."
   (and (match_code "const_int")

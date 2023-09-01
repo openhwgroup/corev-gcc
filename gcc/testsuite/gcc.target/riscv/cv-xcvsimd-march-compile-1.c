@@ -796,19 +796,19 @@ int foo132 (int a)
 
 int foo133 (int a)
 {
-	return __builtin_riscv_cv_simd_shuffle_sci_b(a, 1);
+	return __builtin_riscv_cv_simd_shuffle_sci_b(a, 64);
 }
 
 
 int foo134 (int a)
 {
-	return __builtin_riscv_cv_simd_shuffle_sci_b(a, 2);
+	return __builtin_riscv_cv_simd_shuffle_sci_b(a, 128);
 }
 
 
 int foo135 (int a)
 {
-	return __builtin_riscv_cv_simd_shuffle_sci_b(a, 3);
+	return __builtin_riscv_cv_simd_shuffle_sci_b(a, 192);
 }
 
 

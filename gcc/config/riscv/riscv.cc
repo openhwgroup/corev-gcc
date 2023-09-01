@@ -4404,6 +4404,8 @@ riscv_memmodel_needs_release_fence (enum memmodel model)
    'T'	Print shift-index of inverted single-bit mask OP.
    '~'	Print w if TARGET_64BIT is true; otherwise not print anything.
 
+   'x'  Print immediate for CORE-V.
+
    Note please keep this list and the list in riscv.md in sync.  */
 
 static void
@@ -4592,6 +4594,14 @@ riscv_print_operand (FILE *file, rtx op, int letter)
     case 'T':
       {
 	rtx newop = GEN_INT (ctz_hwi (~INTVAL (op)));
+	output_addr_const (file, newop);
+	break;
+      }
+    case 'x':
+      {
+	unsigned int imm = (UINTVAL (op) & 63);
+	gcc_assert (imm <= 63);
+	rtx newop = GEN_INT (imm);
 	output_addr_const (file, newop);
 	break;
       }
