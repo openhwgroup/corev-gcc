@@ -188,6 +188,21 @@
   (and (match_code "const_int")
        (match_test "IN_RANGE (ival, -16, 15)")))
 
+(define_constraint "CVi1"
+  "Shifting immediate for SIMD shufflei1."
+  (and (match_code "const_int")
+       (match_test "IN_RANGE (ival, 64, 127)")))
+
+(define_constraint "CVi2"
+  "Shifting immediate for SIMD shufflei2."
+  (and (match_code "const_int")
+       (match_test "IN_RANGE (ival, -128, -65)")))
+
+(define_constraint "CVi3"
+  "Shifting immediate for SIMD shufflei3."
+  (and (match_code "const_int")
+       (match_test "IN_RANGE (ival, -64, -1)")))
+
 ;; Vector constraints.
 
 (define_register_constraint "vr" "TARGET_VECTOR ? V_REGS : NO_REGS"
