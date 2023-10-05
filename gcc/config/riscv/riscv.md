@@ -2166,7 +2166,7 @@
 
 (define_insn "*movsf_hardfloat"
   [(set (match_operand:SF 0 "nonimmediate_nonpostinc" "=f,   f,f,f,m,m,*f,*r,  *r,*r,*m")
-	(match_operand:SF 1 "move_operand"         " f,zfli,G,m,f,G,*r,*f,*G*r,*m,*r"))]
+	(match_operand:SF 1 "move_operand"         " f,zfli,G,am,f,G,*r,*f,*G*r,*m,*r"))]
   "TARGET_HARD_FLOAT
    && (register_operand (operands[0], SFmode)
        || reg_or_0_operand (operands[1], SFmode))"

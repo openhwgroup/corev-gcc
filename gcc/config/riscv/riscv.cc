@@ -2494,7 +2494,7 @@ riscv_legitimate_xcvmem_address_p (machine_mode mode, rtx x, bool strict_p)
       return false;
 
     case PLUS:
-      if (REG_P (XEXP (x, 1)) && riscv_classify_address (&addr, x, mode, strict_p))
+      if (REG_P (XEXP (x, 0)) && REG_P (XEXP (x, 1)) && riscv_classify_address (&addr, x, mode, strict_p))
         return addr.type == ADDRESS_REG;
       return false;
 

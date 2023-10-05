@@ -240,8 +240,9 @@
 
 (define_predicate "mem_plus_reg"
   (and (match_code "mem")
-       (match_test "TARGET_XCVMEM && GET_CODE (XEXP (op, 0)) == PLUS
-		    && REG_P (XEXP (XEXP (op, 0), 1))")))
+       (match_test "GET_CODE (XEXP (op, 0)) == PLUS
+		    && REG_P (XEXP (XEXP (op, 0), 1))
+		    && REG_P (XEXP (XEXP (op, 0), 0))")))
 
 (define_predicate "move_operand"
   (and (match_operand 0 "general_operand")
@@ -449,9 +450,7 @@
 
 (define_predicate "nonimmediate_nonpostinc"
   (and (match_operand 0 "nonimmediate_operand")
-	(and (not (match_operand 0 "mem_post_inc"))
-	     (not (match_operand 0 "mem_plus_reg")))))
-
+	(not (match_operand 0 "mem_post_inc"))))
 
 ;; Predicates for the V extension.
 (define_special_predicate "vector_length_operand"
