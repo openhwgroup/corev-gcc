@@ -208,6 +208,32 @@
   (and (match_code "const_int")
        (match_test "IN_RANGE (ival, -64, -1)")))
 
+;; CORE-V constraints.
+
+(define_register_constraint "xcvl0s" "TARGET_XCVHWLP ? LP0START_REGS : NO_REGS"
+  "lpstart0 for Xcv")
+
+(define_register_constraint "xcvl0e" "TARGET_XCVHWLP ? LP0END_REGS : NO_REGS"
+  "lpend0 for Xcv")
+
+(define_register_constraint "xcvl0c" "TARGET_XCVHWLP ? LP0COUNT_REGS : NO_REGS"
+  "lpcount0 for Xcv")
+
+(define_register_constraint "xcvl1s" "TARGET_XCVHWLP ? LP1START_REGS : NO_REGS"
+  "lpstart0 for Xcv")
+
+(define_register_constraint "xcvl1e" "TARGET_XCVHWLP ? LP1END_REGS : NO_REGS"
+  "lpend0 for Xcv")
+
+(define_register_constraint "xcvl1c" "TARGET_XCVHWLP ? LP1COUNT_REGS : NO_REGS"
+  "lpcount0 for Xcv")
+
+(define_constraint "xcvu12"
+  "A 12-bit unsigned immediate to set up a loop counter with cv.setupi"
+  (and (match_code "const_int")
+       (match_test "IN_RANGE (ival, 0, 31)")))
+
+
 ;; Vector constraints.
 
 (define_register_constraint "vr" "TARGET_VECTOR ? V_REGS : NO_REGS"

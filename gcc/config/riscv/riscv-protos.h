@@ -587,4 +587,13 @@ th_mempair_output_move (rtx[4], bool, machine_mode, RTX_CODE);
 extern bool riscv_use_divmod_expander (void);
 void riscv_init_cumulative_args (CUMULATIVE_ARGS *, tree, rtx, tree, int);
 
+/* Routines implemented in corev.cc.  */
+rtl_opt_pass * make_pass_riscv_doloop_begin (gcc::context *ctxt);
+extern bool riscv_can_use_doloop_p (const widest_int &, const widest_int &,
+				    unsigned int, bool);
+extern const char *riscv_invalid_within_doloop (const rtx_insn *insn);
+extern bool hwloop_setupi_p (rtx insn, rtx start_ref, rtx end_ref);
+extern void add_label_op_ref (rtx_insn *insn, rtx label);
+
+
 #endif /* ! GCC_RISCV_PROTOS_H */
