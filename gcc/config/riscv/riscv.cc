@@ -329,8 +329,8 @@ const enum reg_class riscv_regno_to_class[FIRST_PSEUDO_REGISTER] = {
   FP_REGS,	FP_REGS,	FP_REGS,	FP_REGS,
   FP_REGS,	FP_REGS,	FP_REGS,	FP_REGS,
   FRAME_REGS,	FRAME_REGS,	NO_REGS,	NO_REGS,
-  NO_REGS,	NO_REGS,	NO_REGS,	NO_REGS,
-  NO_REGS,	NO_REGS,	NO_REGS,	NO_REGS,
+  NO_REGS,	NO_REGS,	LP0START_REGS,	LP0END_REGS,
+  LP0COUNT_REGS,LP1START_REGS,	LP1END_REGS,	LP1COUNT_REGS,
   NO_REGS,	NO_REGS,	NO_REGS,	NO_REGS,
   NO_REGS,	NO_REGS,	NO_REGS,	NO_REGS,
   NO_REGS,	NO_REGS,	NO_REGS,	NO_REGS,
@@ -3425,6 +3425,19 @@ riscv_output_move (rtx dest, rtx src)
 	  case 8:
 	    return "fmv.x.d\t%0,%1";
 	  }
+
+      if (src_code == REG && REGNO (src) == LPCOUNT0_REGNUM)
+	{
+	  gcc_assert (width == 4);
+	  gcc_assert ("TARGET_XCVHWLP");
+	  return "csrr %0, 0xcc2";
+	}
+      if (src_code == REG && REGNO (src) == LPCOUNT1_REGNUM)
+	{
+	  gcc_assert (width == 4);
+	  gcc_assert ("TARGET_XCVHWLP");
+	  return "csrr %0, 0xcc5";
+	}
 
       if (src_code == MEM)
 	switch (width)
@@ -9905,6 +9918,12 @@ riscv_preferred_else_value (unsigned ifn, tree vectype, unsigned int nops,
 
 #undef TARGET_EXPAND_BUILTIN
 #define TARGET_EXPAND_BUILTIN riscv_expand_builtin
+
+#undef TARGET_CAN_USE_DOLOOP_P
+#define TARGET_CAN_USE_DOLOOP_P riscv_can_use_doloop_p
+
+#undef TARGET_INVALID_WITHIN_DOLOOP
+#define TARGET_INVALID_WITHIN_DOLOOP riscv_invalid_within_doloop
 
 #undef TARGET_HARD_REGNO_NREGS
 #define TARGET_HARD_REGNO_NREGS riscv_hard_regno_nregs

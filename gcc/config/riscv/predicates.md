@@ -444,6 +444,10 @@
   (ior (match_operand 0 "const_int6_operand")
        (match_operand 0 "register_operand")))
 
+(define_predicate "label_register_operand"
+  (ior (match_operand 0 "register_operand")
+       (match_code "label_ref")))
+
 (define_predicate "const_int5s_operand"
   (and (match_code "const_int")
        (match_test "IN_RANGE (INTVAL (op), -16, 15)")))
@@ -451,6 +455,18 @@
 (define_predicate "nonimmediate_nonpostinc"
   (and (match_operand 0 "nonimmediate_operand")
 	(not (match_operand 0 "mem_post_inc"))))
+
+(define_predicate "lpstart_reg_op"
+  (and (match_code "reg")
+       (match_test "REGNO (op) == LPSTART0_REGNUM || REGNO (op) == LPSTART1_REGNUM")))
+
+(define_predicate "lpend_reg_op"
+  (and (match_code "reg")
+       (match_test "REGNO (op) == LPEND0_REGNUM || REGNO (op) == LPEND1_REGNUM")))
+
+(define_predicate "lpcount_reg_op"
+  (and (match_code "reg")
+       (match_test "REGNO (op) == LPCOUNT0_REGNUM || REGNO (op) == LPCOUNT1_REGNUM")))
 
 ;; Predicates for the V extension.
 (define_special_predicate "vector_length_operand"

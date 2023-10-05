@@ -7700,6 +7700,10 @@ Conditional branch instruction that decrements a register and
 jumps if the register is nonzero.  Operand 0 is the register to
 decrement and test; operand 1 is the label to jump to if the
 register is nonzero.
+Operand 2 is the original branch back to the loop latch; this is useful
+if you want to accept some nested loops, but need to analyze the nested
+loops, to tell the loop being handled from its nested loops, as they might
+share the loop latch.
 @xref{Looping Patterns}.
 
 This optional instruction pattern should be defined for machines with

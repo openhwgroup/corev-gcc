@@ -152,6 +152,14 @@ static const riscv_implied_info_t riscv_implied_info[] =
   {"ssstateen", "zicsr"},
   {"sstc", "zicsr"},
 
+  {"xcv", "xcvmac"},
+  {"xcv", "xcvbitmanip"},
+  {"xcv", "xcvsimd"},
+  {"xcv", "xcvalu"},
+  {"xcv", "xcvbi"},
+  {"xcv", "xcvmem"},
+  {"xcv", "xcvhwlp"},
+
   {NULL, NULL}
 };
 
@@ -310,6 +318,7 @@ static const struct riscv_ext_version riscv_ext_version_table[] =
   {"svnapot", ISA_SPEC_CLASS_NONE, 1, 0},
   {"svpbmt",  ISA_SPEC_CLASS_NONE, 1, 0},
 
+  {"xcv",         ISA_SPEC_CLASS_NONE, 1, 0},
   {"xcvmac", ISA_SPEC_CLASS_NONE, 1, 0},
   {"xcvalu", ISA_SPEC_CLASS_NONE, 1, 0},
   {"xcvelw", ISA_SPEC_CLASS_NONE, 1, 0},
@@ -317,6 +326,7 @@ static const struct riscv_ext_version riscv_ext_version_table[] =
   {"xcvsimd", ISA_SPEC_CLASS_NONE, 1, 0},
   {"xcvbi", ISA_SPEC_CLASS_NONE, 1, 0},
   {"xcvmem", ISA_SPEC_CLASS_NONE, 1, 0},
+  {"xcvhwlp", ISA_SPEC_CLASS_NONE, 1, 0},
 
   {"xtheadba", ISA_SPEC_CLASS_NONE, 1, 0},
   {"xtheadbb", ISA_SPEC_CLASS_NONE, 1, 0},
@@ -1495,6 +1505,11 @@ static const riscv_ext_flag_table_t riscv_ext_flag_table[] =
   {"xcvsimd",       &gcc_options::x_riscv_xcv_flags, MASK_XCVSIMD},
   {"xcvbi",        &gcc_options::x_riscv_xcv_flags, MASK_XCVBI},
   {"xcvmem",        &gcc_options::x_riscv_xcv_flags, MASK_XCVMEM},
+  {"xcvhwlp",     &gcc_options::x_riscv_xcv_flags, MASK_XCVHWLP},
+  /* All the CV32E40P options enabled with COREV_PULP == 1 */
+  {"xcv",         &gcc_options::x_riscv_xcv_flags,
+   (MASK_XCVMAC | MASK_XCVBITMANIP | MASK_XCVSIMD
+    | MASK_XCVALU |  MASK_XCVBI | MASK_XCVMEM |  MASK_XCVHWLP)},
 
   {"xtheadba",      &gcc_options::x_riscv_xthead_subext, MASK_XTHEADBA},
   {"xtheadbb",      &gcc_options::x_riscv_xthead_subext, MASK_XTHEADBB},
