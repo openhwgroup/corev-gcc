@@ -139,6 +139,27 @@ riscv_invalid_within_doloop (const rtx_insn *insn)
   return NULL;
 }
 
+/* Starting at INSN, try to find, within the next COUNT insn,
+   a doloop_end_i pattern that provides the label END .
+   If found, return the remaining value of COUNT, otherwise, 0.  */
+static unsigned
+doloop_end_range_check (rtx_insn *insn, rtx_insn *end, unsigned count)
+{
+  for (; count > 0; insn = NEXT_INSN (insn))
+    {
+      if (!active_insn_p (insn))
+	continue;
+      if (recog_memoized (insn) == CODE_FOR_doloop_end_i)
+	{
+	  rtx label_use = XVECEXP (PATTERN (insn), 0, 4);
+	  if (label_ref_label (XEXP (label_use, 0)) == end)
+	    break;
+	}
+      count--;
+    }
+  return count;
+}
+
 /* Determine if we can implement the loop setup MD_INSN with cv.setupi,
    considering the hardware loop starts at the labels in the LABEL_REFs
    START_REF and END_REF.  */
@@ -158,20 +179,10 @@ hwloop_setupi_p (rtx md_insn, rtx start_ref, rtx end_ref)
   if (next_active_insn (insn) != next_active_insn (start))
     return false;
 
-  /* Loops with >= 2K instructions can't be setup with cv.setupi .  */
-  for (unsigned count = 0; ; insn = NEXT_INSN (insn))
-    {
-      if (!active_insn_p (insn))
-	continue;
-      if (recog_memoized (insn) == CODE_FOR_doloop_end_i)
-	{
-	  rtx label_use = XVECEXP (PATTERN (insn), 0, 4);
-	  if (label_ref_label (XEXP (label_use, 0)) == end)
-	    break;
-	}
-      if (++count > 2047)
-	return false;
-    }
+  /* Loops with >= 4K instructions can't be setup with cv.setupi .  */
+  if (doloop_end_range_check (insn, end, 4095) == 0)
+    return false;
+
   return true;
 }
 
@@ -285,17 +296,12 @@ pass_riscv_doloop_ranges::execute (function *)
 
       rtx_insn *end_label = label_ref_label (end_label_ref);
       unsigned count = (reload_completed ? 4095 : 585);
-      unsigned orig_count = count;
-      for (rtx_insn *scan = NEXT_INSN (insn);
-	   scan && scan != end_label && count > 0;
-	   scan = NEXT_INSN (scan))
-	if (active_insn_p (scan))
-	  count--;
+      unsigned rest = doloop_end_range_check (insn, end_label, count);
 
-      if (count)
+      if (rest)
 	{
 	  /* Check if an unsigned 5 bit offset is enough.  */
-	  bool short_p = orig_count - count <= 31;
+	  bool short_p = count - rest <= 31;
 	  HOST_WIDE_INT val
 	    = short_p ? UNSPEC_CV_LP_END_5 : UNSPEC_CV_LP_END_12;
 	  if (GET_CODE (*lref_e_loc) != UNSPEC
