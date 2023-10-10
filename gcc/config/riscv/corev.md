@@ -3353,8 +3353,8 @@
     [xcvl1s, CVl0, xcvl1e, xcvlb5, xcvl1c, CV12, X ; 4] cv.setupi\t1, %5, %3
     [xcvl0s, CVl0, xcvl0e, xcvlbe, xcvl0c, r,    X ; 4] cv.setup\t0, %5, %3
     [xcvl1s, CVl0, xcvl1e, xcvlbe, xcvl1c, r,    X ; 4] cv.setup\t1, %5, %3
-    [xcvl0s, ?i,   xcvl0e, ?i,     xcvl0c, ?ri, &r ; 12] #
-    [xcvl1s, ?i,   xcvl1e, ?i,     xcvl1c, ?ri, &r ; 12] #
+    [xcvl0s,?iCVl0,xcvl0e,?ixcvlbe,xcvl0c, ?ri, &r ; 12] #
+    [xcvl1s,?iCVl0,xcvl1e,?ixcvlbe,xcvl1c, ?ri, &r ; 12] #
   }
   ;; We don't know the loop length until after register allocation.
   ;; Even in the cases where we already can know before reload that we must
@@ -3366,7 +3366,12 @@
   [(set (match_dup 0) (match_dup 1))
    (set (match_dup 2) (match_dup 3))
    (set (match_dup 4) (match_dup 5))]
-  ""
+{
+  if (GET_CODE (operands[1]) == UNSPEC)
+    operands[1] = XVECEXP (operands[1], 0, 0);
+  if (GET_CODE (operands[3]) == UNSPEC)
+    operands[3] = XVECEXP (operands[3], 0, 0);
+}
   [(set_attr "move_type" "move")]
 )
 
