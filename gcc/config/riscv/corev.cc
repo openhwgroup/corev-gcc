@@ -51,14 +51,6 @@ public:
 	&& flag_branch_on_count_reg && optimize > 0;
     }
   virtual unsigned int execute (function *);
-
-private:
-  typedef int_hash <HOST_WIDE_INT, 0> regno_hash;
-  typedef hash_map <regno_hash, int> regno_map;
-
-  regno_map * analyze (basic_block bb);
-  void transform (regno_map *m, basic_block bb);
-  bool get_si_mem_base_reg (rtx mem, rtx *addr, bool *extend);
 }; // class pass_riscv_doloop_begin
 
 unsigned int
@@ -111,7 +103,10 @@ make_pass_riscv_doloop_begin (gcc::context *ctxt)
 /* We'd like to check that there's no flow control inside the loop
    except for nested HW loops and the final branch back to the loop latch.
    However, we can't do that becaue we are not being passed the loop
-   structure.  */
+   structure.
+   Likewise, if there is a large loop that has hardly any iterations,
+   the loop setup can't be amortized, but we can't test here if the
+   loop is large.  */
 bool
 riscv_can_use_doloop_p (const widest_int &, const widest_int &,
 			unsigned int loop_depth, bool entered_at_top)
@@ -152,6 +147,10 @@ bool
 hwloop_setupi_p (rtx md_insn, rtx start_ref, rtx end_ref)
 {
   rtx_insn *insn = as_a <rtx_insn *> (md_insn);
+  if (GET_CODE (start_ref) == UNSPEC)
+    start_ref = XVECEXP (start_ref, 0, 0);
+  if (GET_CODE (end_ref) == UNSPEC)
+    end_ref = XVECEXP (end_ref, 0, 0);
   rtx_insn *start = label_ref_label (start_ref);
   rtx_insn *end = label_ref_label (end_ref);
 
@@ -183,4 +182,138 @@ add_label_op_ref (rtx_insn *insn, rtx label)
     label = label_ref_label (label);
   add_reg_note (insn, REG_LABEL_OPERAND, label);
   ++LABEL_NUSES (label);
+}
+
+
+/* Before register allocation, we need to know if a cv.setupi instruction
+   might need to replaced with instructions that use an extra scratch
+   register becasue the labels are out of range.  If we split into
+   cv.starti / cv.endi / cv.counti, all three parameters can use a
+   12 bit immediate.  Considering the instructions inside the loop,
+   we got a three-address machine, so a typical instruction has three
+   operands, each of which might need reloading.  To load or store a
+   register from a stack slot on a 32 bit RISC-V, worst case we might
+   need a LUI and a load or store instruction.  Thus seven instruction
+   after reload for one instruction before reload.  The 12 bit unsigned
+   offset allows 4095 instructions, so for a safe number before reload,
+   we divide by seven to arrive at 585.  That seems a comfortable number
+   that we don't have to worry too much about pessimizing the code when
+   reserve a scratch register when the loop gets that big.
+
+   For performance, we like to use sv.setupi or at least cv.setup where
+   possible, as it is only a single instruction; we assume that usually,
+   there will be no reloads for a HW loop if currently fit into the 5 bit
+   immeidate range, as that makes them a small inner loop.
+
+   loop start not immediatly following -> need to split
+   otherwise, if loop end won't fit in u5, probably in u12 -> aim for cv.setup
+   otherwise, if loop count won't fit in u12 -> aim for cv.setup
+   loop end might not fit into u12 after reload -> need scratch register
+    in case end needs to be loaded with cv.end .  */
+
+namespace {
+
+const pass_data pass_data_riscv_doloop_ranges =
+{
+  RTL_PASS, /* type */
+  "riscv_doloop_ranges", /* name */
+  OPTGROUP_LOOP, /* optinfo_flags */
+  TV_LOOP_DOLOOP, /* tv_id */
+  0, /* properties_required */
+  0, /* properties_provided */
+  0, /* properties_destroyed */
+  0, /* todo_flags_start */
+  0, /* todo_flags_finish */
+};
+
+class pass_riscv_doloop_ranges : public rtl_opt_pass
+{
+public:
+  pass_riscv_doloop_ranges (gcc::context *ctxt)
+    : rtl_opt_pass (pass_data_riscv_doloop_ranges, ctxt)
+  {}
+
+  /* opt_pass methods: */
+  virtual bool gate (function *)
+    {
+      return TARGET_XCVHWLP
+	&& flag_branch_on_count_reg && optimize > 0;
+    }
+  virtual unsigned int execute (function *);
+
+  opt_pass *clone ()
+  {
+    return new pass_riscv_doloop_ranges (m_ctxt);
+  }
+}; // class pass_riscv_doloop_ranges
+
+/* Look for doloop_begin_i patterns and make sure start labels are
+   appropriatly encapsulated or non-encapsulated in UNSPECs to show
+   if they satisfy offset range requirements.
+   We run this once just before register allocation and once afterwards,
+   so we can't just formulate this as a branch shortening problem.
+   In the post-reload pass, also add doloop_align if necessary.  */
+unsigned int
+pass_riscv_doloop_ranges::execute (function *)
+{
+  for (rtx_insn *insn = get_insns (); insn; insn = NEXT_INSN (insn))
+    {
+      if (!NONJUMP_INSN_P (insn)
+	  || recog_memoized (insn) != CODE_FOR_doloop_begin_i)
+	continue;
+      rtx *lref_s_loc = &SET_SRC (XVECEXP (PATTERN (insn), 0, 0));
+      rtx *lref_e_loc = &SET_SRC (XVECEXP (PATTERN (insn), 0, 1));
+      rtx start_label_ref = *lref_s_loc;
+      rtx end_label_ref = *lref_e_loc;
+      rtx_insn *before = insn;
+      if (GET_CODE (start_label_ref) == UNSPEC)
+	start_label_ref = XVECEXP (start_label_ref, 0, 0);
+      if (GET_CODE (end_label_ref) == UNSPEC)
+	end_label_ref = XVECEXP (end_label_ref, 0, 0);
+
+      if (next_active_insn (label_ref_label (start_label_ref))
+	  != next_active_insn (insn))
+	{
+	  *lref_s_loc = start_label_ref;
+	  before = label_ref_label (start_label_ref);
+	}
+      else if (GET_CODE (*lref_s_loc) != UNSPEC)
+	*lref_s_loc = gen_rtx_UNSPEC (SImode, gen_rtvec (1, start_label_ref),
+				      UNSPEC_CV_FOLLOWS);
+      if (reload_completed && TARGET_RVC)
+	emit_insn_before (gen_doloop_align (), before);
+
+      rtx_insn *end_label = label_ref_label (end_label_ref);
+      unsigned count = (reload_completed ? 4095 : 585);
+      unsigned orig_count = count;
+      for (rtx_insn *scan = NEXT_INSN (insn);
+	   scan && scan != end_label && count > 0;
+	   scan = NEXT_INSN (scan))
+	if (active_insn_p (scan))
+	  count--;
+
+      if (count)
+	{
+	  /* Check if an unsigned 5 bit offset is enough.  */
+	  bool short_p = orig_count - count <= 31;
+	  HOST_WIDE_INT val
+	    = short_p ? UNSPEC_CV_LP_END_5 : UNSPEC_CV_LP_END_12;
+	  if (GET_CODE (*lref_e_loc) != UNSPEC
+	      || XINT (*lref_e_loc, 1) != val)
+	    *lref_e_loc
+	      = gen_rtx_UNSPEC (SImode, gen_rtvec (1, end_label_ref), val);
+	}
+      else
+	*lref_e_loc = end_label_ref;
+    }
+
+  return 0;
+}
+
+} // anon namespace
+
+rtl_opt_pass *
+make_pass_riscv_doloop_ranges (gcc::context *ctxt)
+{
+  return new pass_riscv_doloop_ranges (ctxt);
 }

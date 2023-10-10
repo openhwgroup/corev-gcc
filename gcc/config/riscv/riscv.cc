@@ -1751,7 +1751,8 @@ riscv_unspec_address (rtx address, enum riscv_symbol_type symbol_type)
   return riscv_unspec_address_offset (base, offset, symbol_type);
 }
 
-/* If OP is an UNSPEC address, return the address to which it refers,
+/* If OP is an UNSPEC address, UNSPEC_CV_LP_END_5, or UNSPEC_CV_LP_END_12,
+   return the address to which it refers,
    otherwise return OP itself.  */
 
 static rtx
@@ -1760,7 +1761,10 @@ riscv_strip_unspec_address (rtx op)
   rtx base, offset;
 
   split_const (op, &base, &offset);
-  if (UNSPEC_ADDRESS_P (base))
+  if ((UNSPEC_ADDRESS_P (base))
+      || (GET_CODE (base) == UNSPEC
+	  && (XINT (base, 1) == UNSPEC_CV_LP_END_5
+	      || XINT (base, 1) == UNSPEC_CV_LP_END_12)))
     op = plus_constant (Pmode, UNSPEC_ADDRESS (base), INTVAL (offset));
   return op;
 }
