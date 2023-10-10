@@ -3332,6 +3332,13 @@
   ".balign\t4\;.option norvc"
   [(set_attr "type" "ghost")])
 
+;; Sometimes - e.g. newlib/libc/stdlib/src4random.c 
+;; -Os  -march=rv32imc_zicsr_xcvhwlp - we have spagetti code at split2, with
+;; the loop setup below the loop, and it's still spaghetti at peephole2, but
+;; it gets sorted out at bbro.  Should we delay the doloop_begin_i split
+;; until after bbro, and add another split pass - or always drive the split
+;; with a '#' output pattern, to avoid this issue?
+
 (define_insn_and_split "doloop_begin_i"
   [(set (match_operand:SI 0 "lpstart_reg_op")
 	(match_operand:SI 1))
@@ -3402,7 +3409,7 @@
   "TARGET_XCVHWLP"
 {
   if (!REG_P (operands[1]) && TARGET_RVC)
-    asm_fprintf (asm_out_file, "\t.balign\t4");
+    asm_fprintf (asm_out_file, "\t.balign\t4\n");
   operands[0] = GEN_INT (REGNO (operands[0]) == LPSTART0_REGNUM ? 0 : 1);
   return REG_P (operands[1]) ? "cv.start %0,%1" : "cv.starti %0, %1";
 }
@@ -3414,7 +3421,7 @@
   "TARGET_XCVHWLP"
 {
   if (!REG_P (operands[1]) && TARGET_RVC)
-    asm_fprintf (asm_out_file, "\t.balign\t4");
+    asm_fprintf (asm_out_file, "\t.balign\t4\n");
   operands[0] = GEN_INT (REGNO (operands[0]) == LPEND0_REGNUM ? 0 : 1);
   return REG_P (operands[1]) ? "cv.end %0,%1" : "cv.endi %0, %1";
 }
