@@ -147,6 +147,8 @@ doloop_end_range_check (rtx_insn *insn, rtx_insn *end, unsigned count)
 {
   for (; count > 0; insn = NEXT_INSN (insn))
     {
+      if (insn == NULL_RTX)
+	return 0;
       if (!active_insn_p (insn))
 	continue;
       if (recog_memoized (insn) == CODE_FOR_doloop_end_i)
