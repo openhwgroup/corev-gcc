@@ -1009,6 +1009,8 @@ extern enum riscv_cc get_riscv_cc (const rtx use);
   { "f31",	31 + FP_REG_FIRST },					\
 }
 
+#define LABEL_ALIGN(label) corev_label_align (label)
+
 /* Globalizing directive for a label.  */
 #define GLOBAL_ASM_OP "\t.globl\t"
 

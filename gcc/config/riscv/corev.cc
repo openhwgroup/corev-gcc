@@ -278,7 +278,6 @@ pass_riscv_doloop_ranges::execute (function *)
       rtx *lref_e_loc = &SET_SRC (XVECEXP (PATTERN (insn), 0, 1));
       rtx start_label_ref = *lref_s_loc;
       rtx end_label_ref = *lref_e_loc;
-      rtx_insn *before = insn;
       if (GET_CODE (start_label_ref) == UNSPEC)
 	start_label_ref = XVECEXP (start_label_ref, 0, 0);
       if (GET_CODE (end_label_ref) == UNSPEC)
@@ -288,13 +287,21 @@ pass_riscv_doloop_ranges::execute (function *)
 	  != next_active_insn (insn))
 	{
 	  *lref_s_loc = start_label_ref;
-	  before = label_ref_label (start_label_ref);
+	  /* We must not emit an insn outside of basic blocks, so
+	     emit the align after the  NOTE_INSN_BASIC_BLOCK note.  */
+	  rtx_insn *after = NEXT_INSN (label_ref_label (start_label_ref));
+	  if (reload_completed && TARGET_RVC)
+	    emit_insn_after (gen_doloop_align (), after);
 	}
-      else if (GET_CODE (*lref_s_loc) != UNSPEC)
-	*lref_s_loc = gen_rtx_UNSPEC (SImode, gen_rtvec (1, start_label_ref),
-				      UNSPEC_CV_FOLLOWS);
-      if (reload_completed && TARGET_RVC)
-	emit_insn_before (gen_doloop_align (), before);
+      else
+	{
+	  if (GET_CODE (*lref_s_loc) != UNSPEC)
+	    *lref_s_loc = gen_rtx_UNSPEC (SImode,
+					  gen_rtvec (1, start_label_ref),
+					  UNSPEC_CV_FOLLOWS);
+	  if (reload_completed && TARGET_RVC)
+	    emit_insn_before (gen_doloop_align (), insn);
+	}
 
       rtx_insn *end_label = label_ref_label (end_label_ref);
       unsigned count = (reload_completed ? 4095 : 585);
@@ -324,4 +331,21 @@ rtl_opt_pass *
 make_pass_riscv_doloop_ranges (gcc::context *ctxt)
 {
   return new pass_riscv_doloop_ranges (ctxt);
+}
+
+/* Return alignment requested for a label as a power of two.
+   We can't put doloop_align instructions before doloop start labels lest
+   they end up outside of basic blocks in case there's a preceding BARRIER,
+   so we put them after the label.  However, the label must be aligned.  */
+int
+corev_label_align (rtx_insn *label)
+{
+  rtx_insn *next = label;
+  do
+    next = NEXT_INSN (next);
+  while (next && NOTE_P (next));
+  if (next && NONJUMP_INSN_P (next)
+      && recog_memoized (next) == CODE_FOR_doloop_align)
+    return 2;
+  return 0;
 }
