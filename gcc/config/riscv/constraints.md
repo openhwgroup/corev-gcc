@@ -228,11 +228,26 @@
 (define_register_constraint "xcvl1c" "TARGET_XCVHWLP ? LP1COUNT_REGS : NO_REGS"
   "lpcount0 for Xcv")
 
-(define_constraint "xcvu12"
+(define_constraint "CVl0"
+  "A label that follows immediately after the instruction that uses it"
+  (and (match_code "unspec")
+       (match_test "XINT (op, 1) == UNSPEC_CV_FOLLOWS")))
+
+(define_constraint "xcvlb5"
+  "A label for a loop end that can probably be addressed with a 5-bit-offset"
+  (and (match_code "unspec")
+       (match_test "XINT (op, 1) == UNSPEC_CV_LP_END_5")))
+
+(define_constraint "xcvlbe"
+  "A label for a loop end that can definitely be addressed with a 12-bit-offset"
+  (and (match_code "unspec")
+       (ior (match_test "XINT (op, 1) == UNSPEC_CV_LP_END_5")
+	    (match_test "XINT (op, 1) == UNSPEC_CV_LP_END_12"))))
+
+(define_constraint "CV12"
   "A 12-bit unsigned immediate to set up a loop counter with cv.setupi"
   (and (match_code "const_int")
-       (match_test "IN_RANGE (ival, 0, 31)")))
-
+       (match_test "IN_RANGE (ival, 0, 4095)")))
 
 ;; Vector constraints.
 

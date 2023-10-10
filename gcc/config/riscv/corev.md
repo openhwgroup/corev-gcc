@@ -207,6 +207,10 @@
 
   ;; CORE-V HWLP
   UNSPEC_CV_LOOPBUG
+  UNSPECV_CV_LOOPALIGN
+  UNSPEC_CV_FOLLOWS
+  UNSPEC_CV_LP_END_5
+  UNSPEC_CV_LP_END_12
 
 ])
 
@@ -3233,7 +3237,7 @@
     asm_fprintf (asm_out_file, "\tnop\n");
   output_asm_insn ("%4:", operands);
   if (TARGET_RVC)
-    asm_fprintf (asm_out_file, ".option rvc\n");
+    asm_fprintf (asm_out_file, "\t.option rvc\n");
   return "";
 }
   [(set_attr "type" "branch")
@@ -3318,41 +3322,45 @@
   DONE;
 })
 
-; FIXME: should do something about large loops.  We could always split,
-; but that'd be wasteful if the loop starts immediately and the end offset
-; fits into u12, and we just need to put the loop counter into a general
-; purpose register.  Maybe disallow immediate loop count alternatives if
-; the loop size is too large for short, but OK for u12 immediate.
-; Wrap end label in unspec or not to allow pattern to distinguish loop length?
-; Or should we always allocate a scatch when using a loop count immediate, and
-; leave the final decision to the assembler (or even linker with relaxation)?
+;; Although the alignment can be thought of taking up to two bytes, that is
+;; only the case if the assembler first saved space by creating a short insn.
+;; The compiler doesn't generally take short insn into account when calculating
+;; lengths.
+(define_insn "doloop_align"
+  [(unspec_volatile [(const_int 0)] UNSPECV_CV_LOOPALIGN)]
+  "TARGET_XCVHWLP && TARGET_RVC"
+  ".balign\t4\;.option norvc"
+  [(set_attr "type" "ghost")])
+
 (define_insn_and_split "doloop_begin_i"
-  [(set (match_operand:SI 0 "lpstart_reg_op" "=xcvl0s,xcvl1s,xcvl0s,xcvl1s")
+  [(set (match_operand:SI 0 "lpstart_reg_op")
 	(match_operand:SI 1))
-   (set (match_operand:SI 2 "lpend_reg_op" "=xcvl0s,xcvl1s,xcvl0e,xcvl1e")
+   (set (match_operand:SI 2 "lpend_reg_op")
 	(match_operand:SI 3))
-   (set (match_operand:SI 4 "register_operand" "=xcvl0s,xcvl1s,xcvl0c,xcvl1c")
-	(match_operand:SI 5 "immediate_register_operand" "xcvu12,xcvu12,r,r"))]
+   (set (match_operand:SI 4 "register_operand")
+	(match_operand:SI 5 "immediate_register_operand"))
+   (clobber (match_scratch:SI 6))]
   "TARGET_XCVHWLP"
-{
-  unsigned loopnum = REGNO (operands[0]) - LPSTART0_REGNUM;
-  operands[0] = GEN_INT (loopnum);
-  if (TARGET_RVC)
-    asm_fprintf (asm_out_file, ".balign 4\n"
-			       ".option norvc\n");
-  if ((which_alternative & 1) == 0)
-    return "cv.setupi %0, %5, %3";
-  else
-    return "cv.setup %0, %5, %3";
-}
-  "&& GET_CODE (operands[1]) == LABEL_REF
+  {@ [cons: =0, 1, =2, 3, =4, 5, =6; attrs: length ]
+    [xcvl0s, CVl0, xcvl0e, xcvlb5, xcvl0c, CV12, X ; 4] cv.setupi\t0, %5, %3
+    [xcvl1s, CVl0, xcvl1e, xcvlb5, xcvl1c, CV12, X ; 4] cv.setupi\t1, %5, %3
+    [xcvl0s, CVl0, xcvl0e, xcvlbe, xcvl0c, r,    X ; 4] cv.setup\t0, %5, %3
+    [xcvl1s, CVl0, xcvl1e, xcvlbe, xcvl1c, r,    X ; 4] cv.setup\t1, %5, %3
+    [xcvl0s, ?i,   xcvl0e, ?i,     xcvl0c, ?ri, &r ; 12] #
+    [xcvl1s, ?i,   xcvl1e, ?i,     xcvl1c, ?ri, &r ; 12] #
+  }
+  ;; We don't know the loop length until after register allocation.
+  ;; Even in the cases where we already can know before reload that we must
+  ;; split, the test is costly, and splitting early could confuse RA.
+  "&& reload_completed
+   && (GET_CODE (operands[1]) == LABEL_REF
+       || GET_CODE (operands[1]) == UNSPEC)
    && !hwloop_setupi_p (insn, operands[1], operands[3])"
   [(set (match_dup 0) (match_dup 1))
    (set (match_dup 2) (match_dup 3))
    (set (match_dup 4) (match_dup 5))]
   ""
-  [(set_attr "move_type" "move")
-   (set_attr "length" "4")]
+  [(set_attr "move_type" "move")]
 )
 
 (define_expand "doloop_begin"
@@ -3393,6 +3401,8 @@
 	(match_operand:SI 1 "label_register_operand" "i,i,r,r"))]
   "TARGET_XCVHWLP"
 {
+  if (!REG_P (operands[1]) && TARGET_RVC)
+    asm_fprintf (asm_out_file, "\t.balign\t4");
   operands[0] = GEN_INT (REGNO (operands[0]) == LPSTART0_REGNUM ? 0 : 1);
   return REG_P (operands[1]) ? "cv.start %0,%1" : "cv.starti %0, %1";
 }
@@ -3403,6 +3413,8 @@
 	(match_operand:SI 1 "label_register_operand" "i,i,r,r"))]
   "TARGET_XCVHWLP"
 {
+  if (!REG_P (operands[1]) && TARGET_RVC)
+    asm_fprintf (asm_out_file, "\t.balign\t4");
   operands[0] = GEN_INT (REGNO (operands[0]) == LPEND0_REGNUM ? 0 : 1);
   return REG_P (operands[1]) ? "cv.end %0,%1" : "cv.endi %0, %1";
 }
@@ -3410,7 +3422,7 @@
 
 (define_insn "*cv_count"
   [(set (match_operand:SI 0 "lpcount_reg_op" "=xcvl0c,xcvl1c,xcvl0c,xcvl1c")
-	(match_operand:SI 1 "immediate_register_operand" "xcvu12,xcvu12,r,r"))]
+	(match_operand:SI 1 "immediate_register_operand" "CV12,CV12,r,r"))]
   "TARGET_XCVHWLP"
 {
   operands[0] = GEN_INT (REGNO (operands[0]) == LPCOUNT0_REGNUM ? 0 : 1);
