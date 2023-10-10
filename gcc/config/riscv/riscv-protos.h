@@ -595,6 +595,7 @@ extern bool riscv_can_use_doloop_p (const widest_int &, const widest_int &,
 extern const char *riscv_invalid_within_doloop (const rtx_insn *insn);
 extern bool hwloop_setupi_p (rtx insn, rtx start_ref, rtx end_ref);
 extern void add_label_op_ref (rtx_insn *insn, rtx label);
+extern int corev_label_align (rtx_insn *);
 
 
 #endif /* ! GCC_RISCV_PROTOS_H */
