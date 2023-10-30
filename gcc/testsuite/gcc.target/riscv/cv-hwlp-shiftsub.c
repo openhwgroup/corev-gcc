@@ -8,4 +8,4 @@ int f (int i, int j)
    i = (i << 1) - 13;
   return i;
 }
-/* { dg-final { scan-assembler {\mcv.setupi\M} } } */
+/* { dg-final { scan-assembler {\mcv.setup\M} } } */
