@@ -35,6 +35,16 @@
 
 ;; General constraints
 
+(define_memory_constraint "m"
+  "An address that is not base reg + index reg or post modify."
+  (and (match_code "mem")
+       (and (match_test "memory_address_addr_space_p (GET_MODE (op), XEXP (op, 0),
+                                                 MEM_ADDR_SPACE (op))")
+            (not (match_test "(GET_CODE (XEXP (op, 0)) == PLUS
+                && GET_CODE (XEXP (XEXP (op, 0), 0)) == REG
+                && GET_CODE (XEXP (XEXP (op, 0), 1)) == REG)
+                || GET_CODE (XEXP (op, 0)) == POST_MODIFY")))))
+
 (define_constraint "I"
   "An I-type 12-bit signed immediate."
   (and (match_code "const_int")
@@ -128,11 +138,6 @@
   (and (match_code "mem")
        (match_test "GET_CODE(XEXP(op,0)) == REG")))
 
-(define_memory_constraint "am"
-  "An address that is held in a general-purpose register."
-  (and (match_code "mem")
-       (match_test "!(GET_CODE(XEXP(op,0)) == PLUS && GET_CODE(XEXP(XEXP(op,0),0)) == REG && GET_CODE(XEXP(XEXP(op,0),1)) == REG)")))
-
 (define_constraint "S"
   "A constraint that matches an absolute symbolic address."
   (match_operand 0 "absolute_symbolic_operand"))
@@ -167,6 +172,21 @@
   (and (match_code "const_int")
        (and (match_test "IN_RANGE (ival, 0, 1073741823)")
             (match_test "exact_log2 (ival + 1) != -1"))))
+
+(define_constraint "CVmr"
+  "An address for reg+reg stores and loads"
+  (and (match_code "mem")
+       (match_test "GET_CODE (XEXP (op, 0)) == PLUS
+                && GET_CODE (XEXP (XEXP (op, 0), 0)) == REG
+                && GET_CODE (XEXP (XEXP (op, 0), 1)) == REG")))
+
+(define_constraint "CVmp"
+  "An address for post-modify or reg+reg stores and loads"
+  (and (match_code "mem")
+       (match_test "(GET_CODE (XEXP (op, 0)) == PLUS
+                && GET_CODE (XEXP (XEXP (op, 0), 0)) == REG
+                && GET_CODE (XEXP (XEXP (op, 0), 1)) == REG)
+		|| GET_CODE (XEXP (op, 0)) == POST_MODIFY")))
 
 (define_constraint "MVs10"
   "A 10-bit unsigned immediate for CORE-V bitmanip."
