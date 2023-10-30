@@ -236,11 +236,16 @@
 
 (define_predicate "mem_post_inc"
   (and (match_code "mem")
-       (match_test "TARGET_XCVMEM && GET_CODE (XEXP (op, 0)) == POST_MODIFY")))
+       (match_test "TARGET_XCVMEM && GET_CODE (XEXP (op, 0)) == POST_MODIFY
+		    && GET_MODE (op) != DImode
+                    && GET_MODE (op) != DFmode
+                    && GET_MODE (op) != TImode
+                    && GET_MODE (op) != TFmode")))
 
 (define_predicate "mem_plus_reg"
   (and (match_code "mem")
-       (match_test "GET_CODE (XEXP (op, 0)) == PLUS
+       (match_test "TARGET_XCVMEM && GET_CODE (XEXP (op, 0)) == PLUS
+		    && GET_MODE_SIZE (GET_MODE (op)).to_constant () <= 4
 		    && REG_P (XEXP (XEXP (op, 0), 1))
 		    && REG_P (XEXP (XEXP (op, 0), 0))")))
 

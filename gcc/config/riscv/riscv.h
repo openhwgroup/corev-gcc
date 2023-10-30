@@ -44,6 +44,8 @@ along with GCC; see the file COPYING3.  If not see
 #define RISCV_TUNE_STRING_DEFAULT "rocket"
 #endif
 
+#define TARGET_MEM_CONSTRAINT 'w'
+
 extern const char *riscv_expand_arch (int argc, const char **argv);
 extern const char *riscv_expand_arch_from_cpu (int argc, const char **argv);
 extern const char *riscv_default_mtune (int argc, const char **argv);
