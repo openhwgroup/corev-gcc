@@ -168,15 +168,10 @@
        (and (match_test "IN_RANGE (ival, 0, 1073741823)")
             (match_test "exact_log2 (ival + 1) != -1"))))
 
-(define_constraint "M"
+(define_constraint "MVs10"
   "A 10-bit unsigned immediate for CORE-V bitmanip."
   (and (match_code "const_int")
        (match_test "IN_RANGE (ival, 0, 1023)")))
-
-(define_constraint "N"
-  "A 2-bit unsigned immediate for CORE-V bitmanip."
-  (and (match_code "const_int")
-       (match_test "IN_RANGE (ival, 0, 3)")))
 
 (define_constraint "CVs6"
   "A 6-bit signed immediate for SIMD."
