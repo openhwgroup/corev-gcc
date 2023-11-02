@@ -922,7 +922,7 @@
 (define_expand "riscv_cv_bitmanip_extract"
   [(set (match_operand:SI 0 "register_operand" "=r,r")
         (unspec:SI [(match_operand:SI 1 "register_operand" "r,r")
-                   (match_operand:HI 2 "bit_extract_operand" "M,r")]
+                   (match_operand:HI 2 "bit_extract_operand" "MVs10,r")]
          UNSPEC_CV_BITMANIP_EXTRACT))]
 
   "TARGET_XCVBITMANIP && !TARGET_64BIT"
@@ -972,7 +972,7 @@
 (define_expand "riscv_cv_bitmanip_extractu"
   [(set (match_operand:SI 0 "register_operand" "=r,r")
         (unspec:SI [(match_operand:SI 1 "register_operand" "r,r")
-                   (match_operand:HI 2 "bit_extract_operand" "M,r")]
+                   (match_operand:HI 2 "bit_extract_operand" "MVs10,r")]
          UNSPEC_CV_BITMANIP_EXTRACTU))]
 
   "TARGET_XCVBITMANIP && !TARGET_64BIT"
@@ -1024,7 +1024,7 @@
 (define_expand "riscv_cv_bitmanip_insert"
   [(set (match_operand:SI 0 "register_operand" "=r,r")
         (unspec:SI [(match_operand:SI 1 "register_operand" "r,r")
-                   (match_operand:HI 2 "bit_extract_operand" "M,r")
+                   (match_operand:HI 2 "bit_extract_operand" "MVs10,r")
                    (match_operand:SI 3 "register_operand" "0,0")]
          UNSPEC_CV_BITMANIP_INSERT))]
 
@@ -1077,7 +1077,7 @@
 (define_expand "riscv_cv_bitmanip_bclr"
   [(set (match_operand:SI 0 "register_operand" "=r,r")
         (unspec:SI [(match_operand:SI 1 "register_operand" "r,r")
-                   (match_operand:HI 2 "bit_extract_operand" "M,r")]
+                   (match_operand:HI 2 "bit_extract_operand" "MVs10,r")]
          UNSPEC_CV_BITMANIP_BCLR))]
 
   "TARGET_XCVBITMANIP && !TARGET_64BIT"
@@ -1127,7 +1127,7 @@
 (define_expand "riscv_cv_bitmanip_bset"
   [(set (match_operand:SI 0 "register_operand" "=r,r")
         (unspec:SI [(match_operand:SI 1 "register_operand" "r,r")
-                   (match_operand:HI 2 "bit_extract_operand" "M,r")]
+                   (match_operand:HI 2 "bit_extract_operand" "MVs10,r")]
          UNSPEC_CV_BITMANIP_BSET))]
 
   "TARGET_XCVBITMANIP && !TARGET_64BIT"
@@ -1207,7 +1207,7 @@
   [(set (match_operand:SI 0 "register_operand" "=r")
         (unspec:SI [(match_operand:SI 1 "register_operand" "r")
                     (match_operand:QI 2 "const_csr_operand" "K")
-                    (match_operand:QI 3 "const_int2_operand" "N")]
+                    (match_operand:QI 3 "const_int2_operand" "D03")]
          UNSPEC_CV_BITMANIP_BITREV))]
 
   "TARGET_XCVBITMANIP && !TARGET_64BIT"
