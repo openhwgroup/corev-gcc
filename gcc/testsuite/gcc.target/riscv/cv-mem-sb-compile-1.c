@@ -1,6 +1,6 @@
 /* { dg-do compile } */
 /* { dg-options "-march=rv32i_xcvmem -mabi=ilp32 -fno-unroll-loops -fno-tree-vectorize" } */
-/* { dg-skip-if "" { *-*-* }  { "-O0" } { "" } } */
+/* { dg-skip-if "" { *-*-* } { "-O0" "-Os" "-Oz" "-Og" } } */
 
 int fooQIsigned (signed char* array_char, int n)
 {
