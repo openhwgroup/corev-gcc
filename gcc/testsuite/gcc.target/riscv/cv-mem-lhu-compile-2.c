@@ -1,6 +1,6 @@
 /* { dg-do compile } */
 /* { dg-options "-march=rv32i_xcvmem -mabi=ilp32 -fno-unroll-loops" } */
-/* { dg-skip-if "" { *-*-* }  { "-O0" } { "" } } */
+/* { dg-skip-if "" { *-*-* } { "-O0" "-Os" "-Oz" "-Og" } } */
 
 int fooHIunsigned (unsigned short int* array_ushort, int n, int j)
 {

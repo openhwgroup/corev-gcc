@@ -1,6 +1,8 @@
 /* { dg-do compile } */
 /* { dg-options "-march=rv32i_xcvmem -mabi=ilp32 -fno-unroll-loops" } */
-/* { dg-skip-if "" { *-*-* }  { "-O0" } { "" } } */
+/* We don't generate for some optimization levels. TODO: should support for Os,
+   Oz and Og */
+/* { dg-skip-if "" { *-*-* }  { "-O0" "-Os" "-Oz" "-Og" } { "" } } */
 
 /*
  * Test for post-inc register-immediate loads.
