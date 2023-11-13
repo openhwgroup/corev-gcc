@@ -1,3 +1,18 @@
+# CORE-V GCC Development
+
+NOTE: This is NOT the official GCC repository.
+
+This is the repository for CORE-V GCC development prior to submitting
+for inclusion upstream. It has only one branch:
+
+1. development - this is where the active development continues.
+This branch tracks upstream GCC and incorporates changes for
+CORE-V. It should always compile and pass tests.
+
+See https://github.com/openhwgroup/core-v-sw/tree/master/projects/gnu-tools/2023 for latest report.
+
+# The GNU Complier Collection
+
 This directory contains the GNU Compiler Collection (GCC).
 
 The GNU Compiler Collection is free software.  See the files whose
