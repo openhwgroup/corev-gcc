@@ -343,3 +343,48 @@
                 && GET_CODE (XEXP (XEXP (op, 0), 1)) == REG)
                 || GET_CODE (XEXP (op, 0)) == POST_MODIFY)
                && TARGET_XCVMEM")))))
+
+(define_register_constraint "xcvl0s" "TARGET_XCVHWLP ? LP0START_REGS : NO_REGS"
+  "lpstart0 for Xcv")
+
+(define_register_constraint "xcvl0e" "TARGET_XCVHWLP ? LP0END_REGS : NO_REGS"
+  "lpend0 for Xcv")
+
+(define_register_constraint "xcvl0c" "TARGET_XCVHWLP ? LP0COUNT_REGS : NO_REGS"
+  "lpcount0 for Xcv")
+
+(define_register_constraint "xcvl1s" "TARGET_XCVHWLP ? LP1START_REGS : NO_REGS"
+  "lpstart1 for Xcv")
+
+(define_register_constraint "xcvl1e" "TARGET_XCVHWLP ? LP1END_REGS : NO_REGS"
+  "lpend1 for Xcv")
+
+(define_register_constraint "xcvl1c" "TARGET_XCVHWLP ? LP1COUNT_REGS : NO_REGS"
+  "lpcount1 for Xcv")
+
+(define_constraint "CV_hwlp_ul0"
+  "A label that follows immediately after the instruction that uses it"
+  (and (match_code "unspec")
+       (match_test "XINT (op, 1) == UNSPEC_CV_FOLLOWS")))
+
+(define_constraint "xcvlb5"
+  "A label for a loop end that can probably be addressed with a 5-bit-offset"
+  (and (match_code "unspec")
+       (match_test "XINT (op, 1) == UNSPEC_CV_LP_END_5")))
+
+(define_constraint "xcvlbs"
+  "A label for a loop start that can definitely be addressed with a 12-bit-offset"
+  (and (match_code "unspec")
+       (match_test "XINT (op, 1) == UNSPEC_CV_LP_END_12")))
+
+(define_constraint "xcvlbe"
+  "A label for a loop end that can definitely be addressed with a 12-bit-offset"
+  (and (match_code "unspec")
+       (ior (match_test "XINT (op, 1) == UNSPEC_CV_LP_END_5")
+	    (match_test "XINT (op, 1) == UNSPEC_CV_LP_END_12"))))
+
+(define_constraint "CV_hwlp_u12"
+  "A 12-bit unsigned immediate to set up a loop counter with cv.setupi"
+  (and (match_code "const_int")
+       (match_test "IN_RANGE (ival, 0, 4095)")))
+

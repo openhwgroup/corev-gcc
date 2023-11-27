@@ -720,7 +720,8 @@ doloop_optimize (class loop *loop)
   count = copy_rtx (desc->niter_expr);
   start_label = block_label (desc->in_edge->dest);
   doloop_reg = gen_reg_rtx (mode);
-  rtx_insn *doloop_seq = targetm.gen_doloop_end (doloop_reg, start_label);
+  rtx_insn *doloop_seq = targetm.gen_doloop_end (doloop_reg, start_label,
+						 BB_END (desc->in_edge->src));
 
   word_mode_size = GET_MODE_PRECISION (word_mode);
   word_mode_max = (HOST_WIDE_INT_1U << (word_mode_size - 1) << 1) - 1;
@@ -737,7 +738,8 @@ doloop_optimize (class loop *loop)
       else
 	count = lowpart_subreg (word_mode, count, mode);
       PUT_MODE (doloop_reg, word_mode);
-      doloop_seq = targetm.gen_doloop_end (doloop_reg, start_label);
+      doloop_seq = targetm.gen_doloop_end (doloop_reg, start_label,
+					   BB_END (desc->in_edge->src));
     }
   if (! doloop_seq)
     {
