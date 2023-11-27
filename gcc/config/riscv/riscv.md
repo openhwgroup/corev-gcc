@@ -165,6 +165,12 @@
    (VTYPE_REGNUM		67)
    (VXRM_REGNUM			68)
    (FRM_REGNUM			69)
+   (LPSTART0_REGNUM		70)
+   (LPEND0_REGNUM		71)
+   (LPCOUNT0_REGNUM		72)
+   (LPSTART1_REGNUM		73)
+   (LPEND1_REGNUM		74)
+   (LPCOUNT1_REGNUM		75)
 ])
 
 (include "predicates.md")
@@ -265,7 +271,7 @@
 	(const_string "no")))
 
 ;; ISA attributes.
-(define_attr "ext" "base,f,d,vector"
+(define_attr "ext" "base,f,d,vector,xcvhwlp"
   (const_string "base"))
 
 ;; True if the extension is enabled.
@@ -283,6 +289,10 @@
 
 	 (and (eq_attr "ext" "vector")
 	      (match_test "TARGET_VECTOR"))
+	 (const_string "yes")
+
+	 (and (eq_attr "ext" "xcvhwlp")
+	      (match_test "TARGET_XCVHWLP"))
 	 (const_string "yes")
 	]
 	(const_string "no")))
@@ -2211,7 +2221,7 @@
 (define_insn "*movsi_internal"
   [(set (match_operand:SI 0 "nonimmediate_operand" "=r,r,r, m,  *f,*f,*r,*m,r")
 	(match_operand:SI 1 "move_operand"         " r,T,m,rJ,*r*J,*m,*f,*f,vp"))]
-  "!TARGET_XCVMEM && (register_operand (operands[0], SImode)
+  "(!TARGET_XCVMEM && !TARGET_XCVHWLP) && (register_operand (operands[0], SImode)
     || reg_or_0_operand (operands[1], SImode))
     && !(REG_P (operands[1]) && VL_REG_P (REGNO (operands[1])))"
   { return riscv_output_move (operands[0], operands[1]); }

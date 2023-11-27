@@ -2534,6 +2534,9 @@ Test system has support for the CORE-V BITMANIP extension.
 @item cv_mem
 Test system has support for the CORE-V MEM extension.
 
+@item cv_hwlp
+Test system has support for the CORE-V HWLP extension.
+
 @end table
 
 @subsubsection Other hardware attributes

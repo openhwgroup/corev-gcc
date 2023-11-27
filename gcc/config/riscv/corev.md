@@ -187,6 +187,14 @@
 
   ;;CORE-V BITMANIP
   UNSPEC_CV_BITMANIP_BITREV
+
+  ;; CORE-V HWLP
+  UNSPEC_CV_LOOPBUG
+  UNSPECV_CV_LOOPALIGN
+  UNSPEC_CV_FOLLOWS
+  UNSPEC_CV_LP_START_12
+  UNSPEC_CV_LP_END_5
+  UNSPEC_CV_LP_END_12
 ])
 
 ;; XCVMAC extension.
@@ -2946,17 +2954,17 @@
    (set_attr "ext" "base,base,base,base,d,d,d,d,d,vector")])
 
 (define_insn "*movsi_internal"
-  [(set (match_operand:SI 0 "nonimmediate_nonpostinc" "=r,r,r,CV_mem_nopm,  *f,*f,*r,*CV_mem_nopm,r")
-        (match_operand:SI 1 "move_operand"      " r,T,CV_mem_nopm,rJ,*r*J,*CV_mem_nopm,*f,*f,vp"))]
-  "TARGET_XCVMEM && (register_operand (operands[0], SImode)
+  [(set (match_operand:SI 0 "move_dest_operand" "=r,r,r,CV_mem_nopm,  *f,*f,*r,*CV_mem_nopm,r,r,r")
+        (match_operand:SI 1 "move_operand"      " r,T,CV_mem_nopm,rJ,*r*J,*CV_mem_nopm,*f,*f,vp,xcvl0c,xcvl1c"))]
+  "(TARGET_XCVMEM || TARGET_XCVHWLP) && (register_operand (operands[0], SImode)
     || reg_or_0_operand (operands[1], SImode))
     && !(register_operand (operands[1], SImode)
          && reg_or_subregno (operands[1]) == VL_REGNUM)"
   { return riscv_output_move (operands[0], operands[1]); }
-  [(set_attr "move_type" "move,const,load,store,mtc,fpload,mfc,fpstore,rdvlenb")
+  [(set_attr "move_type" "move,const,load,store,mtc,fpload,mfc,fpstore,rdvlenb,move,move")
    (set_attr "mode" "SI")
-   (set_attr "type" "move,move,load,store,mtc,fpload,mfc,fpstore,move")
-   (set_attr "ext" "base,base,base,base,f,f,f,f,vector")])
+   (set_attr "type" "move,move,load,store,mtc,fpload,mfc,fpstore,move,move,move")
+   (set_attr "ext" "base,base,base,base,f,f,f,f,vector,xcvhwlp,xcvhwlp")])
 
 (define_insn "*movhi_internal"
   [(set (match_operand:HI 0 "nonimmediate_nonpostinc" "=r,r,r,CV_mem_nopm,  *f,*r,r")
@@ -3103,3 +3111,289 @@
   [(set_attr "move_type" "move,load,store")
    (set_attr "type" "move,load,store")
    (set_attr "mode" "SF")])
+
+;; XCVhwlp
+;; ??? The manual is unclear what the hardware loops actually do.
+;; We are just guessing here.
+(define_insn "doloop_end_i"
+  [(set (pc)
+	(if_then_else
+	  (ne (match_operand:SI 0 "nonimmediate_operand" "+xcvl0c,xcvl1c")
+	      (const_int 1))
+	  (label_ref (match_operand 1 "" ""))
+	  (pc)))
+   (set (match_dup 0)
+	(plus:SI (match_dup 0)
+		 (const_int -1)))
+   (use (match_operand:SI 2 "" "xcvl0s,xcvl1s"))
+   (use (match_operand:SI 3 "" "xcvl0e,xcvl1e"))
+   (use (match_operand:SI 4 "" "X,X"))]
+  "TARGET_XCVHWLP"
+{
+  unsigned n_nops = 3;
+  for (rtx_insn * curr = PREV_INSN (current_output_insn);
+       curr && n_nops && !LABEL_P (curr);
+       curr = PREV_INSN (curr))
+    if (active_insn_p (curr))
+      {
+	n_nops--;
+	if (recog_memoized (curr) == CODE_FOR_doloop_end_i)
+	  break;
+      }
+  while (n_nops--)
+    asm_fprintf (asm_out_file, "\tnop\n");
+  output_asm_insn ("%4:", operands);
+  if (TARGET_RVC)
+    asm_fprintf (asm_out_file, "\t.option rvc\n");
+  return "";
+}
+  [(set_attr "type" "branch")
+   (set_attr "length" "0")]
+)
+
+(define_expand "doloop_end"
+  [(match_operand:SI 0 "nonimmediate_operand" "")
+   (match_operand 1 "" "")
+   (match_operand 2 "" "")]
+  "TARGET_XCVHWLP"
+{
+  if (GET_MODE (operands[0]) != SImode)
+    FAIL;
+
+  rtx_insn *start_label = as_a<rtx_insn *> (operands[1]);
+
+  /* A HW loop must contain at least three insns.  If there are less than
+     two insns in the loop, we must add two or more nops, which is worse
+     than just using a normal loop with separate decrement and
+     branch instructions.  */
+  unsigned n_insns = 0;
+  /* We must not set the counter register inside the loop, except for the
+     increment that'll be folded into the doloop_end.  But that is already
+    taken care of by loop_optimize, which creates a new register just for
+    counting.  */
+
+  /* If nesting HW loops, the inner loop must be using
+     lpspart0, lpend0, lpcount0 .  It's OK if we have more than one inner
+     loop, as long as they are not nested into each other; we have already
+     checked the nesting depth in riscv_can_use_doloop_p.  */
+  bool inner_loop_p = false;
+  rtx_insn *bb_last = NULL;
+  rtx_insn *bb_succ = NULL;
+  for (rtx_insn *insn = start_label; ;
+       insn = (insn == bb_last ? bb_succ : NEXT_INSN (insn)))
+    {
+      if (!insn)
+	FAIL;
+
+      /* For: int f (int i, int j) { while (--j) i = (i << 1) - 13; return i; }
+	 we get passed a start label that's actually after the final branch.  */
+
+      if (NOTE_INSN_BASIC_BLOCK_P (insn))
+	{
+	  basic_block bb = NOTE_BASIC_BLOCK (insn);
+	  bb_last = BB_END (bb);
+	  if (single_succ_p (bb))
+	    bb_succ = BB_HEAD (single_succ (bb));
+	  else if (recog_memoized (bb_last) == CODE_FOR_doloop_end_i)
+	    bb_succ = BB_HEAD (FALLTHRU_EDGE (bb)->dest);
+	  else if (bb_last == operands[2])
+	    bb_succ = NULL;
+	  else
+	    FAIL;
+	}
+
+      if (NONJUMP_INSN_P (insn))
+	n_insns++;
+      else if (JUMP_P (insn))
+	{
+	  if (recog_memoized (insn) == CODE_FOR_doloop_end_i)
+	    inner_loop_p = true;
+	  else if (insn != operands[2])
+	    FAIL;
+	  else
+	    break;
+	}
+    }
+  /* We have counted in the counter decrement, so we need three insns for the
+     cost of the HW loop to be amortized.  */
+  if (n_insns < 3)
+    FAIL;
+
+  rtx start = gen_rtx_REG (SImode, LPSTART0_REGNUM + (inner_loop_p ? 3 : 0));
+  rtx end = gen_rtx_REG (SImode, LPEND0_REGNUM + (inner_loop_p ?  3 : 0));
+  rtx ref = gen_rtx_LABEL_REF (SImode, gen_label_rtx ());
+  rtx_insn *jump
+    = emit_jump_insn (gen_doloop_end_i (operands[0], operands[1],
+					start, end, ref));
+  add_label_op_ref (jump, ref);
+  DONE;
+})
+
+;; Although the alignment can be thought of taking up to two bytes, that is
+;; only the case if the assembler first saved space by creating a short insn.
+;; The compiler doesn't generally take short insn into account when calculating
+;; lengths.
+(define_insn "doloop_align"
+  [(unspec_volatile [(const_int 0)] UNSPECV_CV_LOOPALIGN)]
+  "TARGET_XCVHWLP && TARGET_RVC"
+  ".balign\t4\;.option norvc"
+  [(set_attr "type" "ghost")])
+
+; We use an actual doloop_begin pattern to make sure the loop counter
+; gets allocated to the right registers, and that we have a scratch GPR
+; if we nee it.
+; We do want the doloop_begin_i pattern to be right at the top of the loop
+; for efficiency, as we can use cv.setup / cv.setupi then.
+; If we must, we can, however, split the instruction into a triplet
+; of instruction that can go anywhere - with potentially some extra
+; instrustions to load constants into GPR registers first, particularily
+; if the loop start setup ends up below the loop.
+
+;; Sometimes - e.g. newlib/libc/stdlib/src4random.c
+;; -Os  -march=rv32imc_zicsr_xcvhwlp - we have spagetti code at split2, with
+;; the loop setup below the loop, and it's still spaghetti at peephole2, but
+;; it gets sorted out at bbro.  Should we delay the doloop_begin_i split
+;; until after bbro, and add another split pass - or always drive the split
+;; with a '#' output pattern, to avoid this issue?
+
+(define_insn_and_split "doloop_begin_i"
+  [(set (match_operand:SI 0 "lpstart_reg_op")
+	(match_operand:SI 1))
+   (set (match_operand:SI 2 "lpend_reg_op")
+	(match_operand:SI 3))
+   (set (match_operand:SI 4 "register_operand")
+	(match_operand:SI 5 "immediate_register_operand"))
+   (clobber (match_scratch:SI 6))]
+  "TARGET_XCVHWLP"
+  {@ [cons: =0, 1, =2, 3, =4, 5, =6; attrs: length ]
+    [xcvl0s, CV_hwlp_ul0, xcvl0e, xcvlb5, xcvl0c, CV_hwlp_u12, X ; 4] cv.setupi\t0, %5, %3
+    [xcvl1s, CV_hwlp_ul0, xcvl1e, xcvlb5, xcvl1c, CV_hwlp_u12, X ; 4] cv.setupi\t1, %5, %3
+    [xcvl0s, CV_hwlp_ul0, xcvl0e, xcvlbe, xcvl0c, r,    X ; 4] cv.setup\t0, %5, %3
+    [xcvl1s, CV_hwlp_ul0, xcvl1e, xcvlbe, xcvl1c, r,    X ; 4] cv.setup\t1, %5, %3
+    [xcvl0s,?iCV_hwlp_ul0,xcvl0e,?ixcvlbe,xcvl0c, ?ri, &r ; 12] #
+    [xcvl1s,?iCV_hwlp_ul0,xcvl1e,?ixcvlbe,xcvl1c, ?ri, &r ; 12] #
+  }
+  ;; We don't know the loop length until after register allocation.
+  ;; Even in the cases where we already can know before reload that we must
+  ;; split, the test is costly, and splitting early could confuse RA.
+  "&& reload_completed
+   && (GET_CODE (operands[1]) == LABEL_REF
+       || GET_CODE (operands[1]) == UNSPEC)
+   && !hwloop_setupi_p (insn, operands[1], operands[3])"
+  [(set (match_dup 4) (match_dup 5))]
+{
+  if (GET_CODE (operands[1]) == UNSPEC)
+    operands[1] = XVECEXP (operands[1], 0, 0);
+  else
+    {
+      emit_move_insn (operands[6], operands[1]);
+      operands[1] = operands[6];
+    }
+  emit_insn (gen_rtx_SET (operands[0], operands[1]));
+  if (GET_CODE (operands[3]) == UNSPEC)
+    operands[3] = XVECEXP (operands[3], 0, 0);
+  else
+    {
+      emit_move_insn (operands[6], operands[3]);
+      operands[3] = operands[6];
+    }
+  emit_insn (gen_rtx_SET (operands[2], operands[3]));
+  if (!REG_P (operands[5])
+      && !satisfies_constraint_CV__hwlp__u12 (operands[5]))
+    {
+      emit_move_insn (operands[6], operands[5]);
+      operands[5] = operands[6];
+    }
+}
+  [(set_attr "move_type" "move")]
+)
+
+;; If we have a doloop_begin_i instruction that has labels that
+;; statisfy cv.setup, but not cv.setupi, yet the loop count is an
+;; immediate, split to load the immediate into the scratch register.
+(define_split
+  [(set (match_operand:SI 0 "lpstart_reg_op")
+        (match_operand:SI 1))
+   (set (match_operand:SI 2 "lpend_reg_op")
+        (match_operand:SI 3))
+   (set (match_operand:SI 4 "register_operand")
+        (match_operand:SI 5 "immediate_operand"))
+   (clobber (match_operand:SI 6 "register_operand"))]
+  "TARGET_XCVHWLP
+   && reload_completed
+   && hwloop_setupi_p (insn, operands[1], operands[3])
+   && !satisfies_constraint_xcvlb5 (operands[3])"
+  [(set (match_dup 6) (match_dup 5))
+   (parallel
+     [(set (match_dup 0) (match_dup 1))
+      (set (match_dup 2) (match_dup 3))
+      (set (match_dup 4) (match_dup 6))
+      (clobber (scratch:SI))])]
+)
+
+(define_expand "doloop_begin"
+  [(use (match_operand 0 "register_operand"))
+   (use (match_operand 1 ""))]
+  "TARGET_XCVHWLP"
+{
+  rtx pat = PATTERN (operands[1]);
+  /* ??? cleanup_cfg, called from pass_rtl_loop_done::execute, deletes
+     loop latches without updating LABEL_REFS in non-jump instructions
+     even when marked with REG_LABEL_OPEREND notes.  */
+#if 0
+  rtx start_label_ref
+    = XEXP (SET_SRC (XVECEXP (pat, 0, 0)), 1);
+#else
+  rtx lst = gen_rtx_INSN_LIST (VOIDmode, operands[1], NULL_RTX);
+  rtx start_label_ref
+    = gen_rtx_UNSPEC (SImode, gen_rtvec (1, lst), UNSPEC_CV_LOOPBUG);
+#endif
+  rtx start_reg = XEXP (XVECEXP (pat, 0, 2), 0);
+  rtx end_reg = XEXP (XVECEXP (pat, 0, 3), 0);
+  rtx end_label_ref = XEXP (XVECEXP (pat, 0, 4), 0);
+  rtx_insn *insn = emit_insn (gen_doloop_begin_i (start_reg, start_label_ref,
+						  end_reg, end_label_ref,
+						  operands[0], operands[0]));
+  //add_label_op_ref (insn, start_label_ref);
+  add_label_op_ref (insn, end_label_ref);
+  DONE;
+})
+
+;; Although cv.start / cv.end / cv.count could be seen as move instructions
+;; and therefore belonging to movsi_internal, that is problematic because
+;; using them outside loopsetup contexts might confuse the HW loop logic
+;; of the processor.  We might model this with UNSPEC_VOLATILEs, but
+;; that'd likely get too much into the way of optimizations.
+(define_insn "*cv_start"
+  [(set (match_operand:SI 0 "lpstart_reg_op" "=xcvl0s,xcvl1s,xcvl0s,xcvl1s")
+	(match_operand:SI 1 "label_register_operand" "i,i,r,r"))]
+  "TARGET_XCVHWLP"
+{
+  if (!REG_P (operands[1]) && TARGET_RVC)
+    asm_fprintf (asm_out_file, "\t.balign\t4\n");
+  operands[0] = GEN_INT (REGNO (operands[0]) == LPSTART0_REGNUM ? 0 : 1);
+  return REG_P (operands[1]) ? "cv.start %0,%1" : "cv.starti %0, %1";
+}
+  [(set_attr "move_type" "move")])
+
+(define_insn "*cv_end"
+  [(set (match_operand:SI 0 "lpend_reg_op" "=xcvl0e,xcvl1e,xcvl0e,xcvl1e")
+	(match_operand:SI 1 "label_register_operand" "i,i,r,r"))]
+  "TARGET_XCVHWLP"
+{
+  if (!REG_P (operands[1]) && TARGET_RVC)
+    asm_fprintf (asm_out_file, "\t.balign\t4\n");
+  operands[0] = GEN_INT (REGNO (operands[0]) == LPEND0_REGNUM ? 0 : 1);
+  return REG_P (operands[1]) ? "cv.end %0,%1" : "cv.endi %0, %1";
+}
+  [(set_attr "move_type" "move")])
+
+(define_insn "*cv_count"
+  [(set (match_operand:SI 0 "lpcount_reg_op" "=xcvl0c,xcvl1c,xcvl0c,xcvl1c")
+	(match_operand:SI 1 "immediate_register_operand" "CV_hwlp_u12,CV_hwlp_u12,r,r"))]
+  "TARGET_XCVHWLP"
+{
+  operands[0] = GEN_INT (REGNO (operands[0]) == LPCOUNT0_REGNUM ? 0 : 1);
+  return REG_P (operands[1]) ? "cv.count %0,%1" : "cv.counti %0, %1";
+}
+  [(set_attr "move_type" "move")])

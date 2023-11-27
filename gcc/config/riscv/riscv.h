@@ -507,6 +507,12 @@ enum reg_class
   GR_REGS,			/* integer registers */
   FP_REGS,			/* floating-point registers */
   FRAME_REGS,			/* arg pointer and frame pointer */
+  LP0START_REGS,		/* xcv loop 0 start register */
+  LP0END_REGS,			/* xcv loop 0 end register */
+  LP0COUNT_REGS,		/* xcv loop 0 count register */
+  LP1START_REGS,		/* xcv loop 1 start register */
+  LP1END_REGS,			/* xcv loop 1 end register */
+  LP1COUNT_REGS,		/* xcv loop 1 count register */
   VM_REGS,			/* v0.t registers */
   VD_REGS,			/* vector registers except v0.t */
   V_REGS,			/* vector registers */
@@ -530,6 +536,12 @@ enum reg_class
   "GR_REGS",								\
   "FP_REGS",								\
   "FRAME_REGS",								\
+  "LP0START_REGS",							\
+  "LP0END_REGS",							\
+  "LP0COUNT_REGS",							\
+  "LP1START_REGS",							\
+  "LP1END_REGS",							\
+  "LP1COUNT_REGS",							\
   "VM_REGS",								\
   "VD_REGS",								\
   "V_REGS",								\
@@ -555,10 +567,16 @@ enum reg_class
   { 0xffffffff, 0x00000000, 0x00000000, 0x00000000 },	/* GR_REGS */		\
   { 0x00000000, 0xffffffff, 0x00000000, 0x00000000 },	/* FP_REGS */		\
   { 0x00000000, 0x00000000, 0x00000003, 0x00000000 },	/* FRAME_REGS */	\
+  { 0x00000000, 0x00000000, 0x00000040, 0x00000000 },	/* LP0START_REGS */\
+  { 0x00000000, 0x00000000, 0x00000080, 0x00000000 },	/* LP0END_REGS */\
+  { 0x00000000, 0x00000000, 0x00000100, 0x00000000 },	/* LP0COUNT_REGS */\
+  { 0x00000000, 0x00000000, 0x00000200, 0x00000000 },	/* LP1START_REGS */\
+  { 0x00000000, 0x00000000, 0x00000400, 0x00000000 },	/* LP1END_REGS */\
+  { 0x00000000, 0x00000000, 0x00000800, 0x00000000 },	/* LP1COUNT_REGS */\
   { 0x00000000, 0x00000000, 0x00000000, 0x00000001 },	/* V0_REGS */		\
   { 0x00000000, 0x00000000, 0x00000000, 0xfffffffe },	/* VNoV0_REGS */	\
   { 0x00000000, 0x00000000, 0x00000000, 0xffffffff },	/* V_REGS */		\
-  { 0xffffffff, 0xffffffff, 0x00000003, 0xffffffff }	/* ALL_REGS */		\
+  { 0xffffffff, 0xffffffff, 0x00000fc3, 0xffffffff }	/* ALL_REGS */		\
 }
 
 /* A C expression whose value is a register class containing hard
@@ -606,7 +624,7 @@ enum reg_class
   96,									\
   /* None of the remaining classes have defined call-saved		\
      registers.  */							\
-  64, 65, 66, 67							\
+  64, 65, 66, 67, 70, 71, 72, 73, 74, 75				\
 }
 
 /* True if VALUE is a signed 12-bit number.  */
@@ -933,8 +951,8 @@ extern enum riscv_cc get_riscv_cc (const rtx use);
   "fs0", "fs1", "fa0", "fa1", "fa2", "fa3", "fa4", "fa5",	\
   "fa6", "fa7", "fs2", "fs3", "fs4", "fs5", "fs6", "fs7",	\
   "fs8", "fs9", "fs10","fs11","ft8", "ft9", "ft10","ft11",	\
-  "arg", "frame", "vl", "vtype", "vxrm", "frm", "N/A", "N/A",   \
-  "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A",	\
+  "arg", "frame", "vl", "vtype", "vxrm", "frm", "lpstart0", "lpend0",   \
+  "lpcount0","lpstart1","lpend1","lpcount1", "N/A", "N/A", "N/A", "N/A",	\
   "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A",	\
   "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A",	\
   "v0",  "v1",  "v2",  "v3",  "v4",  "v5",  "v6",  "v7",	\
@@ -1009,6 +1027,8 @@ extern enum riscv_cc get_riscv_cc (const rtx use);
   { "f30",	30 + FP_REG_FIRST },					\
   { "f31",	31 + FP_REG_FIRST },					\
 }
+
+#define LABEL_ALIGN(label) corev_label_align (label)
 
 /* Globalizing directive for a label.  */
 #define GLOBAL_ASM_OP "\t.globl\t"
