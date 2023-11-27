@@ -126,6 +126,13 @@ thead.o: $(srcdir)/config/riscv/thead.cc \
 	$(COMPILE) $<
 	$(POSTCOMPILE)
 
+corev.o: $(srcdir)/config/riscv/corev.cc \
+  $(CONFIG_H) $(SYSTEM_H) coretypes.h $(TARGET_H) backend.h $(RTL_H) \
+  memmodel.h $(EMIT_RTL_H) insn-config.h $(RECOG_H) $(FUNCTION_H) \
+  $(TM_P.H) tree-pass.h df.h
+	$(COMPILE) $<
+	$(POSTCOMPILE)
+
 PASSES_EXTRA += $(srcdir)/config/riscv/riscv-passes.def
 
 $(common_out_file): $(srcdir)/config/riscv/riscv-cores.def \

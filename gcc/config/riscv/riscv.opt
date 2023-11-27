@@ -421,6 +421,8 @@ Mask(XCVSIMD) Var(riscv_xcv_subext)
 
 Mask(XCVMEM) Var(riscv_xcv_subext)
 
+Mask(XCVHWLP) Var(riscv_xcv_subext)
+
 TargetVariable
 int riscv_xthead_subext
 
