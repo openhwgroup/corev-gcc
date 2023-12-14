@@ -3206,6 +3206,121 @@
   [(set_attr "move_type" "store")
    (set_attr "mode" "HF")])
 
+(define_insn "*movsi_internal"
+  [(set (match_operand:SI 0 "move_dest_operand" "=r,r,r, m,  *f,*f,*r,*m,r,r,r")
+        (match_operand:SI 1 "move_operand"      " r,T,m,rJ,*r*J,*m,*f,*f,vp,xcvl0c,xcvl1c"))]
+  "TARGET_XCVMEM && (register_operand (operands[0], SImode)
+    || reg_or_0_operand (operands[1], SImode))
+    && !(register_operand (operands[1], SImode)
+         && reg_or_subregno (operands[1]) == VL_REGNUM)"
+  { return riscv_output_move (operands[0], operands[1]); }
+  [(set_attr "move_type" "move,const,load,store,mtc,fpload,mfc,fpstore,rdvlenb,move,move")
+   (set_attr "mode" "SI")
+   (set_attr "type" "move")
+   (set_attr "ext" "base,base,base,base,f,f,f,f,vector,xcvhwlp,xcvhwlp")])
+
+(define_insn "*movhi_internal"
+  [(set (match_operand:HI 0 "nonimmediate_nonpostinc" "=r,r,r, m,  *f,*r,r")
+        (match_operand:HI 1 "move_operand"         " r,T,m,rJ,*r*J,*f,vp"))]
+  "TARGET_XCVMEM && (register_operand (operands[0], HImode)
+    || reg_or_0_operand (operands[1], HImode))"
+  { return riscv_output_move (operands[0], operands[1]); }
+  [(set_attr "move_type" "move,const,load,store,mtc,mfc,rdvlenb")
+   (set_attr "mode" "HI")
+   (set_attr "type" "move")
+   (set_attr "ext" "base,base,base,base,f,f,vector")])
+
+(define_insn "*movqi_internal"
+  [(set (match_operand:QI 0 "nonimmediate_nonpostinc" "=r,r,r, m,  *f,*r,r")
+        (match_operand:QI 1 "move_operand"         " r,I,m,rJ,*r*J,*f,vp"))]
+  "TARGET_XCVMEM && (register_operand (operands[0], QImode)
+    || reg_or_0_operand (operands[1], QImode))"
+  { return riscv_output_move (operands[0], operands[1]); }
+  [(set_attr "move_type" "move,const,load,store,mtc,mfc,rdvlenb")
+   (set_attr "mode" "QI")
+   (set_attr "type" "move")
+   (set_attr "ext" "base,base,base,base,f,f,vector")])
+
+(define_insn "*movhf_hardfloat"
+  [(set (match_operand:HF 0 "nonimmediate_nonpostinc" "=f,   f,f,f,m,m,*f,*r,  *r,*r,*m")
+        (match_operand:HF 1 "move_operand"         " f,zfli,G,m,f,G,*r,*f,*G*r,*m,*r"))]
+  "TARGET_ZFHMIN && TARGET_XCVMEM
+   && (register_operand (operands[0], HFmode)
+       || reg_or_0_operand (operands[1], HFmode))"
+  { return riscv_output_move (operands[0], operands[1]); }
+  [(set_attr "move_type" "fmove,fmove,mtc,fpload,fpstore,store,mtc,mfc,move,load,store")
+   (set_attr "type" "fmove")
+   (set_attr "mode" "HF")])
+
+(define_insn "*movhf_softfloat"
+  [(set (match_operand:HF 0 "nonimmediate_nonpostinc" "=f, r,r,m,*f,*r")
+        (match_operand:HF 1 "move_operand"         " f,Gr,m,r,*r,*f"))]
+  "!TARGET_ZFHMIN && TARGET_XCVMEM
+   && (register_operand (operands[0], HFmode)
+       || reg_or_0_operand (operands[1], HFmode))"
+  { return riscv_output_move (operands[0], operands[1]); }
+  [(set_attr "move_type" "fmove,move,load,store,mtc,mfc")
+   (set_attr "type" "fmove")
+   (set_attr "mode" "HF")])
+
+(define_insn_and_split "*zero_extendhi<GPR:mode>2"
+  [(set (match_operand:GPR    0 "register_operand"     "=r,r")
+        (zero_extend:GPR
+            (match_operand:HI 1 "nonimmediate_nonpostinc" " r,m")))]
+  "!TARGET_ZBB && !TARGET_XTHEADBB && !TARGET_XTHEADMEMIDX && TARGET_XCVMEM"
+  "@
+   #
+   lhu\t%0,%1"
+  "&& reload_completed
+   && REG_P (operands[1])
+   && !paradoxical_subreg_p (operands[0])"
+  [(set (match_dup 0)
+        (ashift:GPR (match_dup 1) (match_dup 2)))
+   (set (match_dup 0)
+        (lshiftrt:GPR (match_dup 0) (match_dup 2)))]
+  {
+    operands[1] = gen_lowpart (<GPR:MODE>mode, operands[1]);
+    operands[2] = GEN_INT(GET_MODE_BITSIZE(<GPR:MODE>mode) - 16);
+  }
+  [(set_attr "move_type" "shift_shift,load")
+   (set_attr "type" "load")
+   (set_attr "mode" "<GPR:MODE>")])
+
+(define_insn "*zero_extendqi<SUPERQI:mode>2_internal"
+  [(set (match_operand:SUPERQI 0 "register_operand"    "=r,r")
+        (zero_extend:SUPERQI
+            (match_operand:QI 1 "nonimmediate_nonpostinc" " r,m")))]
+  "!TARGET_XTHEADMEMIDX && TARGET_XCVMEM"
+  "@
+   andi\t%0,%1,0xff
+   lbu\t%0,%1"
+  [(set_attr "move_type" "andi,load")
+   (set_attr "type" "multi")
+   (set_attr "mode" "<SUPERQI:MODE>")])
+
+(define_insn_and_split "*extend<SHORT:mode><SUPERQI:mode>2"
+  [(set (match_operand:SUPERQI   0 "register_operand"     "=r,r")
+        (sign_extend:SUPERQI
+            (match_operand:SHORT 1 "nonimmediate_nonpostinc" " r,m")))]
+  "!TARGET_ZBB && !TARGET_XTHEADBB && !TARGET_XTHEADMEMIDX && TARGET_XCVMEM"
+  "@
+   #
+   l<SHORT:size>\t%0,%1"
+  "&& reload_completed
+   && REG_P (operands[1])
+   && !paradoxical_subreg_p (operands[0])"
+  [(set (match_dup 0) (ashift:SI (match_dup 1) (match_dup 2)))
+   (set (match_dup 0) (ashiftrt:SI (match_dup 0) (match_dup 2)))]
+{
+  operands[0] = gen_lowpart (SImode, operands[0]);
+  operands[1] = gen_lowpart (SImode, operands[1]);
+  operands[2] = GEN_INT (GET_MODE_BITSIZE (SImode)
+                         - GET_MODE_BITSIZE (<SHORT:MODE>mode));
+}
+  [(set_attr "move_type" "shift_shift,load")
+   (set_attr "type" "load")
+   (set_attr "mode" "SI")])
+
 ;; XCVhwlp
 ;; ??? The manual is unclear what the hardware loops actually do.
 ;; We are just guessing here.
