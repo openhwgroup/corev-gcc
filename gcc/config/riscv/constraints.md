@@ -119,6 +119,11 @@
   (and (match_code "const_int")
        (match_test "SINGLE_BIT_MASK_OPERAND (~ival)")))
 
+(define_constraint "D03"
+  "@internal
+   0, 1, 2 or 3 immediate"
+  (match_test "IN_RANGE (ival, 0, 3)"))
+
 ;; Floating-point constant +0.0, used for FCVT-based moves when FMV is
 ;; not available in RV32.
 (define_constraint "G"
