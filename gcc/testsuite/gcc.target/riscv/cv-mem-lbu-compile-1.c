@@ -12,10 +12,8 @@ fooQIunsigned (unsigned char* array_uchar, int n)
 {
   int uns_char_sum = 1;
 
-  for(int i=0; i<n; i++)
-  {
-    uns_char_sum += array_uchar[i];
-  }
+  for (int i = 0; i < n; i++)
+    uns_char_sum += array_uchar [i];
 
   return uns_char_sum;
 }
