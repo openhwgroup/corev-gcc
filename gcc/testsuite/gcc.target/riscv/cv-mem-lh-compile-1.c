@@ -8,14 +8,12 @@
  */
 
 int
-fooHIsigned (signed short int* array_short, int n)
+fooHIsigned (signed short int* array_short)
 {
   int short_sum = 1;
 
-  for(int i=0; i<n; i++)
-  {
-    short_sum += array_short[i];
-  }
+  for (int i = 0; i < 200; i++)
+    short_sum += array_short [i];
 
   return short_sum;
 }

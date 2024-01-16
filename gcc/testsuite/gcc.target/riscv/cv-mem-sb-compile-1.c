@@ -12,10 +12,8 @@ fooQIsigned (signed char* array_char, int n)
 {
   int char_sum = 1;
 
-  for(int i=0; i<n; i++)
-  {
-    array_char[i] += char_sum;
-  }
+  for (int i = 0; i < n; i++)
+    array_char [i] += char_sum;
 
   return char_sum;
 }
@@ -25,10 +23,8 @@ fooQIunsigned (unsigned char* array_uchar, int n)
 {
   int uns_char_sum = 1;
 
-  for(int i=0; i<n; i++)
-  {
-    array_uchar[i] += uns_char_sum;
-  }
+  for (int i = 0; i < n; i++)
+    array_uchar [i] += uns_char_sum;
 
   return uns_char_sum;
 }

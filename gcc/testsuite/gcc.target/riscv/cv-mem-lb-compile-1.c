@@ -12,10 +12,8 @@ fooQIsigned (signed char* array_char, int n)
 {
   int char_sum = 1;
 
-  for(int i=0; i<n; i++)
-  {
-    char_sum += array_char[i];
-  }
+  for (int i = 0; i < n; i++)
+    char_sum += array_char [i];
 
   return char_sum;
 }

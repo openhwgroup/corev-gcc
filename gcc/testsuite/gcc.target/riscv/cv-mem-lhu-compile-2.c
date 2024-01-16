@@ -1,21 +1,21 @@
 /* { dg-do compile } */
 /* { dg-require-effective-target cv_mem } */
 /* { dg-options "-march=rv32i_xcvmem -mabi=ilp32 -fno-unroll-loops" } */
-/* { dg-skip-if "" { *-*-* } { "-O0" "-Os" "-Oz" "-Og" } } */
+/* { dg-skip-if "" { *-*-* } { "-O0" "-Og" } } */
 
 /*
  * Test for post-inc register-register loads.
  */
 
 int
-fooHIunsigned (unsigned short int* array_ushort, int n, int j)
+fooHIunsigned (unsigned short int* array_ushort, int j)
 {
   int uns_short_sum = 1;
 
-  for(int i=0; i<n; i+=j)
+  for (int i = 0; i < 200; i += j)
   {
     uns_short_sum += *array_ushort;
-    array_ushort+=j*sizeof(array_ushort);
+    array_ushort += j * sizeof (array_ushort);
   }
 
   return uns_short_sum;

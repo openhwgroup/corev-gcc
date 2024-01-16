@@ -12,7 +12,7 @@ fooSIsigned (signed int* array_int, int i, int j)
 {
   int int_sum = 1;
 
-  array_int[i+j] = int_sum;
+  array_int [i + j] = int_sum;
 
   return int_sum;
 }
@@ -22,7 +22,7 @@ fooSIunsigned (unsigned int* array_uint, int i, int j)
 {
   int uns_int_sum = 1;
 
-  array_uint[i+j] = uns_int_sum;
+  array_uint [i + j] = uns_int_sum;
 
   return uns_int_sum;
 }

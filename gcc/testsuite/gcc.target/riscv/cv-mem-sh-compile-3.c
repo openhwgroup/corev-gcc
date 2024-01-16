@@ -12,7 +12,7 @@ fooHIsigned (signed short int* array_short, int i, int j)
 {
   int short_sum = 1;
 
-  array_short[i+j] = short_sum;
+  array_short [i + j] = short_sum;
 
   return short_sum;
 }
@@ -22,7 +22,7 @@ fooHIunsigned (unsigned short int* array_ushort, int i, int j)
 {
   int uns_short_sum = 1;
 
-  array_ushort[i+j] += uns_short_sum;
+  array_ushort [i + j] += uns_short_sum;
 
   return uns_short_sum;
 }
