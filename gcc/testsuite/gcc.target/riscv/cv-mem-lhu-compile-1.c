@@ -8,14 +8,12 @@
  */
 
 int
-fooHIunsigned (unsigned short int* array_ushort, int n)
+fooHIunsigned (unsigned short int* array_ushort)
 {
   int uns_short_sum = 1;
 
-  for(int i=0; i<n; i++)
-  {
-    uns_short_sum += array_ushort[i];
-  }
+  for (int i = 0; i < 200; i++)
+    uns_short_sum += array_ushort [i];
 
   return uns_short_sum;
 }

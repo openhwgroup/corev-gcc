@@ -12,7 +12,7 @@ fooQIsigned (signed char* array_char, int i, int j)
 {
   int char_sum = 1;
 
-  array_char[i+j] += char_sum;
+  array_char [i + j] += char_sum;
 
   return char_sum;
 }
@@ -22,7 +22,7 @@ fooQIunsigned (unsigned char* array_uchar, int i, int j)
 {
   int uns_char_sum = 1;
 
-  array_uchar[i+j] += uns_char_sum;
+  array_uchar [i + j] += uns_char_sum;
 
   return uns_char_sum;
 }
