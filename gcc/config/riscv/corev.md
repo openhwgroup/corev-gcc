@@ -1054,10 +1054,7 @@
 
 (define_insn "riscv_cv_bitmanip_clb"
   [(set (match_operand:QI 0 "register_operand" "=r")
-        (if_then_else (eq:SI (match_operand:SI 1 "register_operand" "r") (const_int 0))
-                      (const_int 0)
-                      (clrsb:QI (match_dup 1))))]
-
+	(truncate:QI (clrsb:SI (match_operand:SI 1 "register_operand" "r"))))]
   "TARGET_XCVBITMANIP && !TARGET_64BIT"
   "cv.clb\t%0,%1"
   [(set_attr "type" "bitmanip")
