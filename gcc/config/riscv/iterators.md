@@ -72,6 +72,10 @@
 			      (DF "TARGET_DOUBLE_FLOAT || TARGET_ZDINX")
 			      (HF "TARGET_ZFHMIN || TARGET_ZHINXMIN")])
 
+;; Iterator for hardware-supported XCVMEM floating-point modes.
+(define_mode_iterator ANYXCVMEMF [(SF "TARGET_XCVMEM")
+			      (HF "TARGET_XCVMEM")])
+
 ;; Iterator for floating-point modes that can be loaded into X registers.
 (define_mode_iterator SOFTF [SF (DF "TARGET_64BIT") (HF "TARGET_ZFHMIN")])
 

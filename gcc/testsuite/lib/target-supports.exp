@@ -13401,6 +13401,19 @@ proc check_effective_target_cv_bitmanip { } {
     } "-march=rv32i_xcvbitmanip" ]
 }
 
+# Return 1 if the CORE-V MEM extension is available.
+proc check_effective_target_cv_mem { } {
+    if { !([istarget riscv*-*-*]) } {
+         return 0
+     }
+    return [check_no_compiler_messages cv_mem object {
+        void foo (void)
+        {
+          asm ("cv.lw t0, (t1), 4");
+        }
+    } "-march=rv32i_xcvmem" ]
+}
+
 proc check_effective_target_loongarch_sx { } {
     return [check_no_compiler_messages loongarch_lsx assembly {
        #if !defined(__loongarch_sx)

@@ -252,8 +252,22 @@
   return false;
 })
 
+(define_predicate "mem_post_inc"
+  (and (match_code "mem")
+       (match_test "TARGET_XCVMEM && GET_CODE (XEXP (op, 0)) == POST_MODIFY
+                    && GET_MODE_SIZE (GET_MODE (op)).to_constant () <= 4")))
+
+(define_predicate "mem_plus_reg"
+  (and (match_code "mem")
+       (match_test "TARGET_XCVMEM && GET_CODE (XEXP (op, 0)) == PLUS
+		    && GET_MODE_SIZE (GET_MODE (op)).to_constant () <= 4
+		    && REG_P (XEXP (XEXP (op, 0), 1))
+		    && REG_P (XEXP (XEXP (op, 0), 0))")))
+
 (define_predicate "move_operand"
-  (match_operand 0 "general_operand")
+  (and (match_operand 0 "general_operand")
+  (and (not (match_operand 0 "mem_post_inc"))
+       (not (match_operand 0 "mem_plus_reg"))))
 {
   enum riscv_symbol_type symbol_type;
 
@@ -459,6 +473,10 @@
 (define_predicate "const_int5s_operand"
   (and (match_code "const_int")
        (match_test "IN_RANGE (INTVAL (op), -16, 15)")))
+
+(define_predicate "nonimmediate_nonpostinc"
+  (and (match_operand 0 "nonimmediate_operand")
+	(not (match_operand 0 "mem_post_inc"))))
 
 ;; Predicates for the V extension.
 (define_special_predicate "vector_length_operand"

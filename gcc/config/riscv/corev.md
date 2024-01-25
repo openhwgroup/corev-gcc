@@ -2832,3 +2832,274 @@
   "cv.bitrev\t%0,%1,%3,%2"
   [(set_attr "type" "bitmanip")
   (set_attr "mode" "SI")])
+
+;; CORE-V Post Increment Load/ Store Instructions
+;; Post Increment Register-Immediate and Register-Register Load/Store
+
+(define_insn "*cv_load<mode>_postinc"
+   [(set (match_operand:ANYI 0 "register_operand" "=r")
+         (match_operand:ANYI 1 "mem_post_inc" "CV_mem_post"))]
+  "TARGET_XCVMEM && riscv_legitimate_xcvmem_address_p (<MODE>mode, XEXP (operands[1], 0), (lra_in_progress || reload_completed))"
+  "cv.<load>\t%0,%1"
+  [(set_attr "type" "load")
+   (set_attr "mode" "<MODE>")])
+
+(define_insn "*cv_load_<optab><SHORT:mode>_postinc"
+   [(set (match_operand:SI 0 "register_operand" "=r")
+     (any_extend:SI (match_operand:SHORT 1 "mem_post_inc" "CV_mem_post")))]
+  "TARGET_XCVMEM && riscv_legitimate_xcvmem_address_p (<MODE>mode, XEXP (operands[1], 0), (lra_in_progress || reload_completed))"
+  "cv.<load><u>\t%0,%1"
+  [(set_attr "type" "load")
+   (set_attr "mode" "<MODE>")])
+
+(define_insn "*cv_load<ANYXCVMEMF:mode>_postinc"
+   [(set (match_operand:ANYXCVMEMF 0 "register_operand" "=r")
+         (match_operand:ANYXCVMEMF 1 "mem_post_inc" "CV_mem_post"))]
+  "TARGET_XCVMEM
+   && riscv_legitimate_xcvmem_address_p (<ANYXCVMEMF:MODE>mode, XEXP (operands[1], 0), (lra_in_progress || reload_completed))
+   && (register_operand (operands[0], <ANYXCVMEMF:MODE>mode)
+       || reg_or_0_operand (operands[1], <ANYXCVMEMF:MODE>mode))"
+  "cv.<softload>\t%0,%1"
+  [(set_attr "type" "fpload")
+   (set_attr "mode" "<ANYXCVMEMF:MODE>")])
+
+(define_insn "*cv_store<mode>_postinc"
+   [(set (match_operand:ANYI 0 "mem_post_inc" "=CV_mem_post")
+         (match_operand:ANYI 1 "register_operand" "r"))]
+  "TARGET_XCVMEM && riscv_legitimate_xcvmem_address_p (<MODE>mode, XEXP (operands[0], 0), (lra_in_progress || reload_completed))"
+  "cv.<store>\t%1,%0"
+  [(set_attr "type" "store")
+   (set_attr "mode" "<MODE>")])
+
+(define_insn "*cv_store<ANYXCVMEMF:mode>_postinc"
+   [(set (match_operand:ANYXCVMEMF 0 "mem_post_inc" "=CV_mem_post")
+         (match_operand:ANYXCVMEMF 1 "register_operand" "r"))]
+  "TARGET_XCVMEM
+   && riscv_legitimate_xcvmem_address_p (<ANYXCVMEMF:MODE>mode, XEXP (operands[0], 0), (lra_in_progress || reload_completed))
+   && (register_operand (operands[0], <ANYXCVMEMF:MODE>mode)
+       || reg_or_0_operand (operands[1], <ANYXCVMEMF:MODE>mode))"
+  "cv.<softstore>\t%1,%0"
+  [(set_attr "type" "fpstore")
+   (set_attr "mode" "<ANYXCVMEMF:MODE>")])
+
+;; Normal Register-Register Load/Store
+(define_insn "*cv_load<mode>"
+   [(set (match_operand:ANYI 0 "register_operand" "=r")
+         (match_operand:ANYI 1 "mem_plus_reg" "CV_mem_plus"))]
+  "TARGET_XCVMEM && riscv_legitimate_xcvmem_address_p (<MODE>mode, XEXP (operands[1], 0), (lra_in_progress || reload_completed))"
+  "cv.<load>\t%0,%1"
+  [(set_attr "type" "load")
+   (set_attr "mode" "<MODE>")])
+
+(define_insn "*cv_load<optab><SHORT:mode>"
+   [(set (match_operand:SI 0 "register_operand" "=r")
+     (any_extend:SI (match_operand:SHORT 1 "mem_plus_reg" "CV_mem_plus")))]
+  "TARGET_XCVMEM && riscv_legitimate_xcvmem_address_p (<MODE>mode, XEXP (operands[1], 0), (lra_in_progress || reload_completed))"
+  "cv.<load><u>\t%0,%1"
+  [(set_attr "type" "load")
+   (set_attr "mode" "<MODE>")])
+
+(define_insn "*cv_load<ANYXCVMEMF:mode>"
+   [(set (match_operand:ANYXCVMEMF 0 "register_operand" "=r")
+         (match_operand:ANYXCVMEMF 1 "mem_plus_reg" "CV_mem_plus"))]
+  "TARGET_XCVMEM
+   && riscv_legitimate_xcvmem_address_p (<ANYXCVMEMF:MODE>mode, XEXP (operands[1], 0), (lra_in_progress || reload_completed))
+   && (register_operand (operands[0], <ANYXCVMEMF:MODE>mode)
+       || reg_or_0_operand (operands[1], <ANYXCVMEMF:MODE>mode))"
+  "cv.<softload>\t%0,%1"
+  [(set_attr "type" "fpload")
+   (set_attr "mode" "<ANYXCVMEMF:MODE>")])
+
+(define_insn "*cv_store<mode>"
+   [(set (match_operand:ANYI 0 "mem_plus_reg" "=CV_mem_plus")
+     (match_operand:ANYI 1 "register_operand" "r"))]
+  "TARGET_XCVMEM && riscv_legitimate_xcvmem_address_p (<MODE>mode, XEXP (operands[0], 0), (lra_in_progress || reload_completed))"
+  "cv.<store>\t%1,%0"
+  [(set_attr "type" "store")
+   (set_attr "mode" "<MODE>")])
+
+(define_insn "*cv_store<ANYXCVMEMF:mode>"
+  [(set (match_operand:ANYXCVMEMF 0 "mem_plus_reg"     "=CV_mem_plus")
+        (match_operand:ANYXCVMEMF 1 "register_operand" " r"))]
+  "TARGET_XCVMEM
+   && riscv_legitimate_xcvmem_address_p (<ANYXCVMEMF:MODE>mode, XEXP (operands[0], 0), (lra_in_progress || reload_completed))
+   && (register_operand (operands[0], <ANYXCVMEMF:MODE>mode)
+       || reg_or_0_operand (operands[1], <ANYXCVMEMF:MODE>mode))"
+  "cv.<softstore>\t%1,%0"
+  [(set_attr "move_type" "fpstore")
+   (set_attr "mode" "<ANYXCVMEMF:MODE>")])
+
+;;
+;; Generic RISC-V moves for XCVMEM
+;;
+
+(define_insn "*movdi_32bit"
+  [(set (match_operand:DI 0 "nonimmediate_nonpostinc" "=r,r,r,CV_mem_nopm,  *f,*f,*r,*f,*CV_mem_nopm,r")
+	(match_operand:DI 1 "move_operand"         " r,i,CV_mem_nopm,r,*J*r,*CV_mem_nopm,*f,*f,*f,vp"))]
+  "(!TARGET_64BIT && TARGET_XCVMEM)
+   && (register_operand (operands[0], DImode)
+       || reg_or_0_operand (operands[1], DImode))"
+  { return riscv_output_move (operands[0], operands[1]); }
+  [(set_attr "move_type" "move,const,load,store,mtc,fpload,mfc,fmove,fpstore,rdvlenb")
+   (set_attr "mode" "DI")
+   (set_attr "type" "move,move,load,store,move,fpload,move,fmove,fpstore,move")
+   (set_attr "ext" "base,base,base,base,d,d,d,d,d,vector")])
+
+(define_insn "*movsi_internal"
+  [(set (match_operand:SI 0 "nonimmediate_nonpostinc" "=r,r,r,CV_mem_nopm,  *f,*f,*r,*CV_mem_nopm,r")
+        (match_operand:SI 1 "move_operand"      " r,T,CV_mem_nopm,rJ,*r*J,*CV_mem_nopm,*f,*f,vp"))]
+  "TARGET_XCVMEM && (register_operand (operands[0], SImode)
+    || reg_or_0_operand (operands[1], SImode))
+    && !(register_operand (operands[1], SImode)
+         && reg_or_subregno (operands[1]) == VL_REGNUM)"
+  { return riscv_output_move (operands[0], operands[1]); }
+  [(set_attr "move_type" "move,const,load,store,mtc,fpload,mfc,fpstore,rdvlenb")
+   (set_attr "mode" "SI")
+   (set_attr "type" "move,move,load,store,mtc,fpload,mfc,fpstore,move")
+   (set_attr "ext" "base,base,base,base,f,f,f,f,vector")])
+
+(define_insn "*movhi_internal"
+  [(set (match_operand:HI 0 "nonimmediate_nonpostinc" "=r,r,r,CV_mem_nopm,  *f,*r,r")
+        (match_operand:HI 1 "move_operand"            " r,T,CV_mem_nopm,rJ,*r*J,*f,vp"))]
+  "TARGET_XCVMEM && (register_operand (operands[0], HImode)
+    || reg_or_0_operand (operands[1], HImode))"
+  { return riscv_output_move (operands[0], operands[1]); }
+  [(set_attr "move_type" "move,const,load,store,mtc,mfc,rdvlenb")
+   (set_attr "mode" "HI")
+   (set_attr "type" "move,move,load,store,mtc,mfc,move")
+   (set_attr "ext" "base,base,base,base,f,f,vector")])
+
+(define_insn "*movqi_internal"
+  [(set (match_operand:QI 0 "nonimmediate_nonpostinc" "=r,r,r,CV_mem_nopm,  *f,*r,r")
+        (match_operand:QI 1 "move_operand"            " r,I,CV_mem_nopm,rJ,*r*J,*f,vp"))]
+  "TARGET_XCVMEM && (register_operand (operands[0], QImode)
+    || reg_or_0_operand (operands[1], QImode))"
+  { return riscv_output_move (operands[0], operands[1]); }
+  [(set_attr "move_type" "move,const,load,store,mtc,mfc,rdvlenb")
+   (set_attr "mode" "QI")
+   (set_attr "type" "move,move,load,store,mtc,mfc,move")
+   (set_attr "ext" "base,base,base,base,f,f,vector")])
+
+(define_insn "*movhf_hardfloat"
+  [(set (match_operand:HF 0 "nonimmediate_nonpostinc" "=f,   f,f,f,CV_mem_nopm,CV_mem_nopm,*f,*r,  *r,*r,*CV_mem_nopm")
+        (match_operand:HF 1 "move_operand"         " f,zfli,G,CV_mem_nopm,f,G,*r,*f,*G*r,*CV_mem_nopm,*r"))]
+  "TARGET_ZFHMIN && TARGET_XCVMEM
+   && (register_operand (operands[0], HFmode)
+       || reg_or_0_operand (operands[1], HFmode))"
+  { return riscv_output_move (operands[0], operands[1]); }
+  [(set_attr "move_type" "fmove,fmove,mtc,fpload,fpstore,store,mtc,mfc,move,load,store")
+   (set_attr "type" "fmove,fmove,mtc,fpload,fpstore,store,mtc,mfc,move,load,store")
+   (set_attr "mode" "HF")])
+
+(define_insn "*movhf_softfloat"
+  [(set (match_operand:HF 0 "nonimmediate_nonpostinc" "=f, r,r,CV_mem_nopm,*f,*r")
+        (match_operand:HF 1 "move_operand"         " f,Gr,CV_mem_nopm,r,*r,*f"))]
+  "!TARGET_ZFHMIN && TARGET_XCVMEM
+   && (register_operand (operands[0], HFmode)
+       || reg_or_0_operand (operands[1], HFmode))"
+  { return riscv_output_move (operands[0], operands[1]); }
+  [(set_attr "move_type" "fmove,move,load,store,mtc,mfc")
+   (set_attr "type" "fmove,move,load,store,mtc,mfc")
+   (set_attr "mode" "HF")])
+
+(define_insn_and_split "*zero_extendhi<GPR:mode>2"
+  [(set (match_operand:GPR    0 "register_operand"     "=r,r")
+        (zero_extend:GPR
+            (match_operand:HI 1 "nonimmediate_nonpostinc" " r,CV_mem_nopm")))]
+  "!TARGET_ZBB && !TARGET_XTHEADBB && !TARGET_XTHEADMEMIDX && TARGET_XCVMEM"
+  "@
+   #
+   lhu\t%0,%1"
+  "&& reload_completed
+   && REG_P (operands[1])
+   && !paradoxical_subreg_p (operands[0])"
+  [(set (match_dup 0)
+        (ashift:GPR (match_dup 1) (match_dup 2)))
+   (set (match_dup 0)
+        (lshiftrt:GPR (match_dup 0) (match_dup 2)))]
+  {
+    operands[1] = gen_lowpart (<GPR:MODE>mode, operands[1]);
+    operands[2] = GEN_INT(GET_MODE_BITSIZE(<GPR:MODE>mode) - 16);
+  }
+  [(set_attr "move_type" "shift_shift,load")
+   (set_attr "type" "load")
+   (set_attr "mode" "<GPR:MODE>")])
+
+(define_insn "*zero_extendqi<SUPERQI:mode>2_internal"
+  [(set (match_operand:SUPERQI 0 "register_operand"    "=r,r")
+        (zero_extend:SUPERQI
+            (match_operand:QI 1 "nonimmediate_nonpostinc" " r,CV_mem_nopm")))]
+  "!TARGET_XTHEADMEMIDX && TARGET_XCVMEM"
+  "@
+   andi\t%0,%1,0xff
+   lbu\t%0,%1"
+  [(set_attr "move_type" "andi,load")
+   (set_attr "type" "multi")
+   (set_attr "mode" "<SUPERQI:MODE>")])
+
+(define_insn_and_split "*extend<SHORT:mode><SUPERQI:mode>2"
+  [(set (match_operand:SUPERQI   0 "register_operand"     "=r,r")
+        (sign_extend:SUPERQI
+            (match_operand:SHORT 1 "nonimmediate_nonpostinc" " r,CV_mem_nopm")))]
+  "!TARGET_ZBB && !TARGET_XTHEADBB && !TARGET_XTHEADMEMIDX && TARGET_XCVMEM"
+  "@
+   #
+   l<SHORT:size>\t%0,%1"
+  "&& reload_completed
+   && REG_P (operands[1])
+   && !paradoxical_subreg_p (operands[0])"
+  [(set (match_dup 0) (ashift:SI (match_dup 1) (match_dup 2)))
+   (set (match_dup 0) (ashiftrt:SI (match_dup 0) (match_dup 2)))]
+{
+  operands[0] = gen_lowpart (SImode, operands[0]);
+  operands[1] = gen_lowpart (SImode, operands[1]);
+  operands[2] = GEN_INT (GET_MODE_BITSIZE (SImode)
+                         - GET_MODE_BITSIZE (<SHORT:MODE>mode));
+}
+  [(set_attr "move_type" "shift_shift,load")
+   (set_attr "type" "load")
+   (set_attr "mode" "SI")])
+
+(define_insn "*movdf_hardfloat_rv32"
+  [(set (match_operand:DF 0 "nonimmediate_nonpostinc" "=f,   f,f,f,CV_mem_nopm,CV_mem_nopm,*zmvf,*zmvr,  *r,*r,*CV_mem_nopm")
+        (match_operand:DF 1 "move_operand"         " f,zfli,G,CV_mem_nopm,f,G,*zmvr,*zmvf,*r*G,*CV_mem_nopm,*r"))]
+  "!TARGET_64BIT && TARGET_DOUBLE_FLOAT && TARGET_XCVMEM
+   && (register_operand (operands[0], DFmode)
+       || reg_or_0_operand (operands[1], DFmode))"
+  { return riscv_output_move (operands[0], operands[1]); }
+  [(set_attr "move_type" "fmove,fmove,mtc,fpload,fpstore,store,mtc,mfc,move,load,store")
+   (set_attr "type" "fmove,fmove,mtc,fpload,fpstore,store,mtc,mfc,move,load,store")
+   (set_attr "mode" "DF")])
+
+(define_insn "*movdf_softfloat"
+  [(set (match_operand:DF 0 "nonimmediate_nonpostinc" "= r,r,CV_mem_nopm")
+        (match_operand:DF 1 "move_operand"         " rG,CV_mem_nopm,rG"))]
+  "!TARGET_DOUBLE_FLOAT && TARGET_XCVMEM
+   && (register_operand (operands[0], DFmode)
+       || reg_or_0_operand (operands[1], DFmode))"
+  { return riscv_output_move (operands[0], operands[1]); }
+  [(set_attr "move_type" "move,load,store")
+   (set_attr "type" "fmove,fpload,fpstore")
+   (set_attr "mode" "DF")])
+
+(define_insn "*movsf_hardfloat"
+  [(set (match_operand:SF 0 "nonimmediate_nonpostinc" "=f,   f,f,f,CV_mem_nopm,CV_mem_nopm,*f,*r,  *r,*r,*CV_mem_nopm")
+        (match_operand:SF 1 "move_operand"         " f,zfli,G,CV_mem_nopm,f,G,*r,*f,*G*r,*CV_mem_nopm,*r"))]
+  "TARGET_HARD_FLOAT && TARGET_XCVMEM
+   && (register_operand (operands[0], SFmode)
+       || reg_or_0_operand (operands[1], SFmode))"
+  { return riscv_output_move (operands[0], operands[1]); }
+  [(set_attr "move_type" "fmove,fmove,mtc,fpload,fpstore,store,mtc,mfc,move,load,store")
+   (set_attr "type" "fmove,fmove,mtc,fpload,fpstore,store,mtc,mfc,move,load,store")
+   (set_attr "mode" "SF")])
+
+(define_insn "*movsf_softfloat"
+  [(set (match_operand:SF 0 "nonimmediate_nonpostinc" "= r,r,CV_mem_nopm")
+        (match_operand:SF 1 "move_operand"         " Gr,CV_mem_nopm,r"))]
+  "!TARGET_HARD_FLOAT && TARGET_XCVMEM
+   && (register_operand (operands[0], SFmode)
+       || reg_or_0_operand (operands[1], SFmode))"
+  { return riscv_output_move (operands[0], operands[1]); }
+  [(set_attr "move_type" "move,load,store")
+   (set_attr "type" "move,load,store")
+   (set_attr "mode" "SF")])

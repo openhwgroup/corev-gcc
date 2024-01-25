@@ -314,3 +314,32 @@
   (and (match_code "const_int")
        (and (match_test "IN_RANGE (ival, 0, 1023)")
 	    (match_test "(ival & 31) + ((ival >> 5) & 31) <= 32"))))
+
+(define_memory_constraint "CV_mem_plus"
+  "@internal
+   An address for reg+reg stores and loads"
+  (and (match_code "mem")
+       (match_test "GET_CODE (XEXP (op, 0)) == PLUS
+                && GET_CODE (XEXP (XEXP (op, 0), 0)) == REG
+                && GET_CODE (XEXP (XEXP (op, 0), 1)) == REG")))
+
+(define_memory_constraint "CV_mem_post"
+  "@internal
+   An address for post-modify or reg+reg stores and loads"
+  (and (match_code "mem")
+       (match_test "(GET_CODE (XEXP (op, 0)) == PLUS
+                && GET_CODE (XEXP (XEXP (op, 0), 0)) == REG
+                && GET_CODE (XEXP (XEXP (op, 0), 1)) == REG)
+		|| GET_CODE (XEXP (op, 0)) == POST_MODIFY")))
+
+(define_memory_constraint "CV_mem_nopm"
+  "@internal
+   An address that is not base reg + index reg or post modify."
+  (and (match_code "mem")
+       (and (match_test "memory_address_addr_space_p (GET_MODE (op), XEXP (op, 0),
+                                                 MEM_ADDR_SPACE (op))")
+            (not (match_test "((GET_CODE (XEXP (op, 0)) == PLUS
+                && GET_CODE (XEXP (XEXP (op, 0), 0)) == REG
+                && GET_CODE (XEXP (XEXP (op, 0), 1)) == REG)
+                || GET_CODE (XEXP (op, 0)) == POST_MODIFY)
+               && TARGET_XCVMEM")))))
