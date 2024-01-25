@@ -185,6 +185,8 @@
   UNSPEC_CV_CPLXCONJ
   UNSPEC_CV_SUBROTMJ
 
+  ;;CORE-V BITMANIP
+  UNSPEC_CV_BITMANIP_BITREV
 ])
 
 ;; XCVMAC extension.
@@ -2651,3 +2653,182 @@
 }
   [(set_attr "type" "branch")
    (set_attr "mode" "none")])
+
+;; XCVBITMANIP builtins
+
+(define_insn "riscv_cv_bitmanip_extract"
+  [(set (match_operand:SI 0 "register_operand" "=r,r")
+        (sign_extract:SI
+          (match_operand:SI 1 "register_operand" "r,r")
+          (ashiftrt:SI
+            (match_operand:HI 2 "bit_extract_operand" "CV_bit_si10,r")
+            (const_int 5))
+          (plus:SI
+            (and:SI
+              (match_dup 2)
+              (const_int 31))
+            (const_int 1))))]
+
+  "TARGET_XCVBITMANIP && !TARGET_64BIT"
+  "@
+   cv.extract\t%0,%1,%Z2,%W2
+   cv.extractr\t%0,%1,%2"
+  [(set_attr "type" "bitmanip")
+  (set_attr "mode" "SI")])
+
+(define_insn "riscv_cv_bitmanip_extractu"
+  [(set (match_operand:SI 0 "register_operand" "=r,r")
+        (zero_extract:SI
+	  (match_operand:SI 1 "register_operand" "r,r")
+          (ashiftrt:SI
+            (match_operand:HI 2 "bit_extract_operand" "CV_bit_si10,r")
+            (const_int 5))
+          (plus:SI
+	    (and:SI
+              (match_dup 2)
+              (const_int 31))
+            (const_int 1))))]
+
+  "TARGET_XCVBITMANIP && !TARGET_64BIT"
+  "@
+   cv.extractu\t%0,%1,%Z2,%W2
+   cv.extractur\t%0,%1,%2"
+  [(set_attr "type" "bitmanip")
+  (set_attr "mode" "SI")])
+
+(define_insn "riscv_cv_bitmanip_insert"
+  [(set (match_operand:SI 0 "register_operand" "=r,r")
+	(plus:SI
+          (and:SI
+            (match_operand:SI 3 "register_operand" "0,0")
+            (zero_extract:SI
+              (const_int 0)
+            (ashiftrt:SI
+              (match_operand:HI 2 "bit_extract_operand" "CV_bit_si10,r")
+              (const_int 5))
+            (plus:SI
+              (and:SI
+                (match_dup 2)
+                (const_int 31))
+              (const_int 1))))
+	  (sign_extract:SI
+            (match_operand:SI 1 "register_operand" "r,r")
+            (ashiftrt:SI
+              (match_dup 2)
+              (const_int 5))
+            (plus:SI
+              (and:SI
+                (match_dup 2)
+                (const_int 31))
+              (const_int 1)))))]
+
+  "TARGET_XCVBITMANIP && !TARGET_64BIT"
+  "@
+   cv.insert\t%0,%1,%Z2,%W2
+   cv.insertr\t%0,%1,%2"
+  [(set_attr "type" "bitmanip")
+  (set_attr "mode" "SI")])
+
+(define_insn "riscv_cv_bitmanip_bclr"
+  [(set (match_operand:SI 0 "register_operand" "=r,r")
+	(and:SI
+          (match_operand:SI 1 "register_operand" "r,r")
+	  (zero_extract:SI
+	    (const_int 0)
+          (ashiftrt:SI
+            (match_operand:HI 2 "bit_extract_operand" "CV_bit_si10,r")
+            (const_int 5))
+          (plus:SI
+            (and:SI
+              (match_dup 2)
+              (const_int 31))
+            (const_int 1)))))]
+
+  "TARGET_XCVBITMANIP && !TARGET_64BIT"
+  "@
+   cv.bclr\t%0,%1,%Z2,%W2
+   cv.bclrr\t%0,%1,%2"
+  [(set_attr "type" "bitmanip")
+  (set_attr "mode" "SI")])
+
+(define_insn "riscv_cv_bitmanip_bset"
+  [(set (match_operand:SI 0 "register_operand" "=r,r")
+        (ior:SI
+          (match_operand:SI 1 "register_operand" "r,r")
+          (sign_extract:SI
+            (const_int -2)
+          (ashiftrt:SI
+            (match_operand:HI 2 "bit_extract_operand" "CV_bit_si10,r")
+            (const_int 5))
+          (plus:SI
+            (and:SI
+              (match_dup 2)
+              (const_int 31))
+            (const_int 1)))))]
+
+  "TARGET_XCVBITMANIP && !TARGET_64BIT"
+  "@
+   cv.bset\t%0,%1,%Z2,%W2
+   cv.bsetr\t%0,%1,%2"
+  [(set_attr "type" "bitmanip")
+  (set_attr "mode" "SI")])
+
+(define_insn "riscv_cv_bitmanip_ff1"
+  [(set (match_operand:SI 0 "register_operand" "=r")
+        (ctz:SI (match_operand:SI 1 "register_operand" "r")))]
+
+  "TARGET_XCVBITMANIP && !TARGET_64BIT"
+  "cv.ff1\t%0,%1"
+  [(set_attr "type" "bitmanip")
+  (set_attr "mode" "SI")])
+
+(define_insn "riscv_cv_bitmanip_fl1"
+  [(set (match_operand:SI 0 "register_operand" "=r")
+	(minus:SI
+	  (const_int 31)
+	  (clz:SI (match_operand:SI 1 "register_operand" "r"))))]
+
+  "TARGET_XCVBITMANIP && !TARGET_64BIT"
+  "cv.fl1\t%0,%1"
+  [(set_attr "type" "bitmanip")
+  (set_attr "mode" "SI")])
+
+(define_insn "riscv_cv_bitmanip_clb"
+  [(set (match_operand:QI 0 "register_operand" "=r")
+	(truncate:QI (clrsb:SI (match_operand:SI 1 "register_operand" "r"))))]
+
+  "TARGET_XCVBITMANIP && !TARGET_64BIT"
+  "cv.clb\t%0,%1"
+  [(set_attr "type" "bitmanip")
+  (set_attr "mode" "SI")])
+
+(define_insn "riscv_cv_bitmanip_cnt"
+  [(set (match_operand:SI 0 "register_operand" "=r")
+        (popcount:SI (match_operand:SI 1 "register_operand" "r")))]
+
+  "TARGET_XCVBITMANIP && !TARGET_64BIT"
+  "cv.cnt\t%0,%1"
+  [(set_attr "type" "bitmanip")
+  (set_attr "mode" "SI")])
+
+(define_insn "riscv_cv_bitmanip_ror"
+  [(set (match_operand:SI 0 "register_operand" "=r")
+        (rotatert:SI (match_operand:SI 1 "register_operand" "r")
+                     (match_operand:SI 2 "register_operand" "r")))]
+
+  "TARGET_XCVBITMANIP && !TARGET_64BIT"
+  "cv.ror\t%0,%1,%2"
+  [(set_attr "type" "bitmanip")
+  (set_attr "mode" "SI")])
+
+(define_insn "riscv_cv_bitmanip_bitrev"
+  [(set (match_operand:SI 0 "register_operand" "=r")
+        (unspec:SI [(match_operand:SI 1 "register_operand" "r")
+                    (match_operand:QI 2 "const_csr_operand" "K")
+                    (match_operand:QI 3 "const_int2_operand" "D03")]
+         UNSPEC_CV_BITMANIP_BITREV))]
+
+  "TARGET_XCVBITMANIP && !TARGET_64BIT"
+  "cv.bitrev\t%0,%1,%3,%2"
+  [(set_attr "type" "bitmanip")
+  (set_attr "mode" "SI")])

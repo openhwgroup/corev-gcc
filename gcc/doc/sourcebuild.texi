@@ -2507,9 +2507,6 @@ Test system has an integer register width of 32 bits.
 @item rv64
 Test system has an integer register width of 64 bits.
 
-@item cv_bi
-Test system has support for the CORE-V BI extension.
-
 @end table
 
 @subsubsection CORE-V specific attributes
@@ -2527,6 +2524,12 @@ Test system has support for the CORE-V ELW extension.
 
 @item cv_simd
 Test system has support for the CORE-V SIMD extension.
+
+@item cv_bi
+Test system has support for the CORE-V BI extension.
+
+@item cv_bitmanip
+Test system has support for the CORE-V BITMANIP extension.
 
 @end table
 

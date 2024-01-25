@@ -432,6 +432,17 @@
 (define_predicate "int6s_operand"
   (ior (match_operand 0 "const_int6s_operand")
        (match_operand 0 "register_operand")))
+(define_predicate "const_int10_operand"
+  (and (match_code "const_int")
+       (match_test "IN_RANGE (INTVAL (op), 0, 1023)")))
+
+(define_predicate "register_UHI_operand"
+  (and (match_code "reg,subreg")
+       (match_test "GET_MODE (op) == HImode")))
+
+(define_predicate "bit_extract_operand"
+  (ior (match_operand 0 "const_int10_operand")
+       (match_operand 0 "register_UHI_operand")))
 
 (define_predicate "const_int2_operand"
   (and (match_code "const_int")

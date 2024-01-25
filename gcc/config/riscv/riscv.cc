@@ -6007,6 +6007,12 @@ riscv_print_operand (FILE *file, rtx op, int letter)
 	output_addr_const (file, newop);
 	break;
       }
+    case 'W':
+      {
+	rtx newop = GEN_INT (INTVAL (op) & 31);
+	output_addr_const (file, newop);
+	break;
+      }
     case 'X':
       {
 	int ival = INTVAL (op) + 1;
@@ -6019,6 +6025,13 @@ riscv_print_operand (FILE *file, rtx op, int letter)
 	unsigned int imm = (UINTVAL (op) & 63);
 	gcc_assert (imm <= 63);
 	rtx newop = GEN_INT (imm);
+	output_addr_const (file, newop);
+	break;
+      }
+    case 'Z':
+      {
+	int ival = INTVAL (op) >> 5;
+	rtx newop = GEN_INT (ival & 31);
 	output_addr_const (file, newop);
 	break;
       }

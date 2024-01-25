@@ -430,7 +430,6 @@ Mask(ZCMP) Var(riscv_zc_subext)
 
 Mask(ZCMT) Var(riscv_zc_subext)
 
-Mask(XCVBI) Var(riscv_xcv_subext)
 
 TargetVariable
 int riscv_sv_subext
@@ -454,6 +453,10 @@ Mask(XCVALU) Var(riscv_xcv_subext)
 Mask(XCVELW) Var(riscv_xcv_subext)
 
 Mask(XCVSIMD) Var(riscv_xcv_subext)
+
+Mask(XCVBI) Var(riscv_xcv_subext)
+
+Mask(XCVBITMANIP) Var(riscv_xcv_subext)
 
 TargetVariable
 int riscv_xthead_subext
