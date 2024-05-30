@@ -30847,17 +30847,41 @@ to @samp{zvks} and @samp{zvkg}.
 @tab 1.0
 @tab Page-based memory types extension.
 
-@item xcvmac
-@tab 1.0
-@tab Core-V multiply-accumulate extension.
-
 @item xcvalu
 @tab 1.0
-@tab Core-V miscellaneous ALU extension.
+@tab CORE-V ALU extension.
+
+@item xcvbi
+@tab 1.0
+@tab CORE-V immediate branch extension.
+
+@item xcvbitmanip
+@tab 1.0
+@tab CORE-V bit manipulation extension.  @emph{Note}: This is not the same as the
+RISC-V `B' extension.
 
 @item xcvelw
 @tab 1.0
-@tab Core-V event load word extension.
+@tab CORE-V event load word extension.
+
+@item xcvhwlp
+@tab 1.0
+@tab CORE-V hardware loop extension.  @emph{Note}: Hardware loop state
+is not saved on interrupt, so this extension should not be used for
+any code that may form part of an interrupt handler.
+
+@item xcvmac
+@tab 1.0
+@tab CORE-V multiply-accumulate extension.
+
+@item xcvmem
+@tab 1.0
+@tab CORE-V post-increment and register-register memory extension.
+
+@item xcvsimd
+@tab 1.0
+@tab CORE-V SIMD extension.  @emph{Note}: This is not the same as the
+RISC-V `P' extension.
 
 @item xtheadba
 @tab 1.0
