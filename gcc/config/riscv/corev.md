@@ -640,8 +640,7 @@
 (define_insn "riscv_cv_alu_exths"
   [(set (match_operand:SI 0 "register_operand" "=r")
    (sign_extend:SI
-     (truncate:HI
-       (match_operand:HI 1 "register_operand" "r"))))]
+     (match_operand:HI 1 "register_operand" "r")))]
 
   "TARGET_XCVALU && !TARGET_64BIT"
   "cv.exths\t%0, %1"
@@ -651,8 +650,7 @@
 (define_insn "riscv_cv_alu_exthz"
   [(set (match_operand:SI 0 "register_operand" "=r")
    (zero_extend:SI
-     (truncate:HI
-       (match_operand:HI 1 "register_operand" "r"))))]
+     (match_operand:HI 1 "register_operand" "r")))]
 
   "TARGET_XCVALU && !TARGET_64BIT"
   "cv.exthz\t%0, %1"
@@ -662,8 +660,7 @@
 (define_insn "riscv_cv_alu_extbs"
   [(set (match_operand:SI 0 "register_operand" "=r")
    (sign_extend:SI
-     (truncate:QI
-       (match_operand:QI 1 "register_operand" "r"))))]
+     (match_operand:QI 1 "register_operand" "r")))]
 
   "TARGET_XCVALU && !TARGET_64BIT"
   "cv.extbs\t%0, %1"
@@ -673,8 +670,7 @@
 (define_insn "riscv_cv_alu_extbz"
   [(set (match_operand:SI 0 "register_operand" "=r")
    (zero_extend:SI
-     (truncate:QI
-   (match_operand:QI 1 "register_operand" "r"))))]
+     (match_operand:QI 1 "register_operand" "r")))]
 
   "TARGET_XCVALU && !TARGET_64BIT"
   "cv.extbz\t%0, %1"
@@ -3062,7 +3058,8 @@
    l<SHORT:size>\t%0,%1"
   "&& reload_completed
    && REG_P (operands[1])
-   && !paradoxical_subreg_p (operands[0])"
+   && !paradoxical_subreg_p (operands[0])
+   && !(TARGET_XCVALU && !TARGET_64BIT)"
   [(set (match_dup 0) (ashift:SI (match_dup 1) (match_dup 2)))
    (set (match_dup 0) (ashiftrt:SI (match_dup 0) (match_dup 2)))]
 {
